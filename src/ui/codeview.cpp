@@ -1186,24 +1186,37 @@ STDMETHODIMP CodeViewer::OnScriptError(IActiveScriptError *pscripterror)
 	PLOGE_(PLOG_NO_DBG_OUT_INSTANCE_ID) << "Script Error at line " << nLine << " : " << szT;
 
 #ifdef __STANDALONE__
-	// Log the actual script line content for debugging Wine VBScript issues
+	// Log surrounding script lines for debugging Wine VBScript issues
 	if (!m_script_text.empty() && nLine > 0)
 	{
 		std::istringstream iss(m_script_text);
 		std::string line;
 		ULONG currentLine = 0;
+		const ULONG contextLines = 5;
+		std::vector<std::pair<ULONG, std::string>> contextBuffer;
+
 		while (std::getline(iss, line))
 		{
 			currentLine++;
-			if (currentLine == nLine)
+			if (!line.empty() && line.back() == '\r')
+				line.pop_back();
+
+			if (currentLine >= (nLine > contextLines ? nLine - contextLines : 1) &&
+			    currentLine <= nLine + contextLines)
 			{
-				// Trim trailing \r if present
-				if (!line.empty() && line.back() == '\r')
-					line.pop_back();
-				PLOGE_(PLOG_NO_DBG_OUT_INSTANCE_ID) << "Script line " << nLine << " content: " << line;
-				break;
+				contextBuffer.push_back({currentLine, line});
 			}
+			if (currentLine > nLine + contextLines)
+				break;
 		}
+
+		PLOGI.printf("=== Script context around line %lu ===", nLine);
+		for (const auto& ctx : contextBuffer)
+		{
+			const char* marker = (ctx.first == nLine) ? ">>>" : "   ";
+			PLOGI.printf("%s %4lu: %s", marker, ctx.first, ctx.second.c_str());
+		}
+		PLOGI.printf("=== End script context ===");
 	}
 #endif
 

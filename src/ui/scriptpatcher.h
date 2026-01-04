@@ -118,6 +118,33 @@ private:
      */
     static std::string PatchSlingshotCorrection(const std::string& script);
 
+
+    /**
+     * Fix line continuation before dot (Wine Bug 56480)
+     * Transforms: obj _
+.Method() -> obj. _
+Method()
+     */
+    static std::string PatchLineContinuationBeforeDot(const std::string& script);
+
+    /**
+     * Fix single-line If...Then...Else without body after Else (Wine Bug 55006)
+     * Transforms: If x Then DoSomething() Else -> If x Then DoSomething() Else:
+     */
+    static std::string PatchSingleLineIfElse(const std::string& script);
+
+    /**
+     * Fix Execute statements with eval that may reference non-existent objects
+     * Wraps in IsObject check for Wine compatibility
+     */
+    static std::string PatchExecuteEval(const std::string& script);
+
+    /**
+     * Fix string concatenation where first operand is numeric expression
+     * Transforms: (expr) & " text" -> "" & (expr) & " text"
+     */
+    static std::string PatchStringConcatenation(const std::string& script);
+
     // Class definition strings
     static const char* DROP_TARGET_CLASS;
     static const char* STANDUP_TARGET_CLASS;

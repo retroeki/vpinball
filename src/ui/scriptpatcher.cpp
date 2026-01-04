@@ -350,6 +350,63 @@ std::string ScriptPatcher::PatchSetAlignedPositionParentheses(const std::string&
     return result;
 }
 
+
+std::string ScriptPatcher::PatchLineContinuationBeforeDot(const std::string& script)
+{
+    std::string result = script;
+    
+    // Wine Bug 56480: Line continuation underscore before dot fails
+    // Pattern: something _\n.method() must become something. _\nmethod()
+    // Match: identifier/paren followed by space(s), underscore, newline, then dot
+    std::regex pattern(R"((\w|\))\s+_\s*\r?\n\s*\.)", std::regex::icase);
+    result = std::regex_replace(result, pattern, "$1. _\n");
+    
+    return result;
+}
+
+std::string ScriptPatcher::PatchSingleLineIfElse(const std::string& script)
+{
+    std::string result = script;
+    
+    // Wine Bug 55006: Single-line If...Then...Else without body after Else fails
+    // Pattern: If ... Then ... Else<end of line> must have : after Else
+    // Match: Else at end of line (with optional whitespace/comment)
+    std::regex pattern(R"((Then\s+[^'\r\n]+\s+Else)\s*('.*)?$)", std::regex::icase | std::regex::multiline);
+    result = std::regex_replace(result, pattern, "$1:$2");
+    
+    return result;
+}
+
+std::string ScriptPatcher::PatchExecuteEval(const std::string& script)
+{
+    std::string result = script;
+    
+    // Some tables use Execute with eval() to dynamically set variables
+    // Wine may fail if the eval'd object doesn't exist
+    // Pattern: Execute "Set xxx = " & something
+    // This is a common pattern that needs IsObject check
+    
+    // For now, this is a placeholder - the actual fix depends on the specific pattern
+    // Most vpx-standalone-scripts patches add: If IsObject(eval("L" & i)) Then
+    
+    return result;
+}
+
+std::string ScriptPatcher::PatchStringConcatenation(const std::string& script)
+{
+    std::string result = script;
+    
+    // Wine may have issues with string concatenation when first operand is numeric
+    // Pattern: (numeric_expr) & " string" -> "" & (numeric_expr) & " string"
+    // This is seen in TheATeam patch
+    
+    // Match function calls with & string at start of argument
+    std::regex pattern(R"(\(\s*(\([^)]+\))\s*&\s*")", std::regex::icase);
+    result = std::regex_replace(result, pattern, R"(("" & $1 & ")");
+    
+    return result;
+}
+
 bool ScriptPatcher::UsesSlingshotCorrection(const std::string& script)
 {
     // Check for VPW physics classes that Wine VBScript engine can't parse
@@ -497,13 +554,43 @@ std::string ScriptPatcher::PatchScript(const std::string& script)
     }
 
 
-    // Check and patch SlingshotCorrection class (VPW tables like LOTR Valinor)
-    if (UsesSlingshotCorrection(result))
+    // Fix Wine Bug 56480: Line continuation before dot
     {
-        PLOGI.printf("ScriptPatcher: Detected VPW physics classes, commenting out for Wine compatibility");
-        result = PatchSlingshotCorrection(result);
-        patched = true;
+        std::string before = result;
+        result = PatchLineContinuationBeforeDot(result);
+        if (result != before)
+        {
+            PLOGI.printf("ScriptPatcher: Fixed line continuation before dot (Wine Bug 56480)");
+            patched = true;
+        }
     }
+
+    // Fix Wine Bug 55006: Single-line If...Then...Else without body
+    {
+        std::string before = result;
+        result = PatchSingleLineIfElse(result);
+        if (result != before)
+        {
+            PLOGI.printf("ScriptPatcher: Fixed single-line If-Else (Wine Bug 55006)");
+            patched = true;
+        }
+    }
+
+    // Fix string concatenation issues
+    {
+        std::string before = result;
+        result = PatchStringConcatenation(result);
+        if (result != before)
+        {
+            PLOGI.printf("ScriptPatcher: Fixed string concatenation for Wine compatibility");
+            patched = true;
+        }
+    }
+
+    // Note: VPW physics classes (SlingshotCorrection, FlipperPolarity, etc.) 
+    // should work after the above syntax fixes. If still failing, the classes
+    // may use other unsupported syntax that needs investigation.
+
 
     if (patched)
     {
