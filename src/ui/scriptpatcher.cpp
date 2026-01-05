@@ -304,6 +304,11 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
         if (std::regex_search(line, match, propertyDeclPattern)) {
             bool isPublic = EqualsIgnoreCase(Trim(match[1].str()), "Public");
             std::string varList = match[2].str();
+            // Strip VBScript comments (everything after ')
+            size_t commentPos = varList.find('\'');
+            if (commentPos != std::string::npos) {
+                varList = varList.substr(0, commentPos);
+            }
             std::istringstream varStream(varList);
             std::string varToken;
             while (std::getline(varStream, varToken, ',')) {
@@ -374,9 +379,11 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
     out << "' === " << classDef.name << " Class Emulation ===\n\n";
 
     // Emit global Dim statements for array properties (arrays can't be stored in Dictionary)
+    // Wine VBScript requires arrays to be ReDim'd before use
     for (const auto& prop : classDef.properties) {
         if (prop.isArray) {
             out << "Dim " << classDef.name << "_" << prop.name << "()\n";
+            out << "ReDim " << classDef.name << "_" << prop.name << "(0)\n";
         }
     }
     out << "\n";
@@ -1117,10 +1124,20 @@ std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& scrip
     // Transform: ArrayName(idx).property
     // To: VPX_GetArrObjProp(ArrayName, idx, "property")
     //
-    // IMPORTANT: Must NOT transform:
-    // - VBScript built-in functions: Atn(), Abs(), Sin(), Cos(), etc.
-    // - Already transformed VPX_ functions
-    // - Object method chains like Games(x).Settings
+    // IMPORTANT: Only transform if property is a KNOWN VPX object property.
+    // This avoids breaking object method chains like Games(x).Settings
+
+    // List of known VPX object properties that should be transformed
+    static const std::unordered_set<std::string> vpxProperties = {
+        "x", "y", "z", "velx", "vely", "velz", "id", "visible", "state",
+        "height", "mass", "radius", "name", "image", "bulbhaloheight",
+        "intensity", "opacity", "collidable", "rotation", "rotz", "rotx",
+        "roty", "size", "enabled", "timerinterval", "timerenabled",
+        "uservalue", "color", "falloff", "falloffpower", "blend",
+        "material", "isdropped", "objrotz", "objrotx", "objroty",
+        "transx", "transy", "transz", "scalex", "scaley", "scalez",
+        "intensityscale"
+    };
 
     // List of VBScript built-in functions to exclude
     static const std::unordered_set<std::string> excludedFunctions = {
@@ -1153,9 +1170,20 @@ std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& scrip
         std::string funcNameLower = funcName;
         std::transform(funcNameLower.begin(), funcNameLower.end(), funcNameLower.begin(), ::tolower);
 
-        // Check if this is an excluded function or already a VPX_ function
+        std::string indexExpr = match[2].str();
+        std::string propName = match[3].str();
+        std::string propNameLower = propName;
+        std::transform(propNameLower.begin(), propNameLower.end(), propNameLower.begin(), ::tolower);
+
+        // Only transform if:
+        // 1. Function name is NOT a VBScript built-in
+        // 2. Function name is NOT already a VPX_ function
+        // 3. Property name IS a known VPX property
+        // 4. Index expression does NOT contain '(' (nested function calls)
         if (excludedFunctions.count(funcNameLower) > 0 ||
-            funcNameLower.substr(0, 4) == "vpx_") {
+            funcNameLower.substr(0, 4) == "vpx_" ||
+            vpxProperties.count(propNameLower) == 0 ||
+            indexExpr.find('(') != std::string::npos) {
             // Keep original
             result += match[0].str();
         } else {
