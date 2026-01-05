@@ -1923,6 +1923,14 @@ std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
                              std::regex::icase);
     r = std::regex_replace(r, colonPattern, "$1VPX_SetDictArrItem $2, \"$3\", $4, $5");
 
+    // Transform READ access: dict("key")(idx) -> VPX_GetDictArrItem(dict, "key", idx)
+    // This handles cases like: LinearEnvelope(cor("ballvel")(aBall.id), ...)
+    // Need to be careful not to match patterns already transformed to VPX_SetDictArrItem
+    // Pattern: word("string")(expr) but NOT preceded by VPX_SetDictArrItem
+    std::regex readPattern(R"REGEX((\b(?!VPX_SetDictArrItem\b))(\w+)\s*\(\s*"([^"]+)"\s*\)\s*\(\s*([^)]+)\s*\))REGEX",
+                           std::regex::icase);
+    r = std::regex_replace(r, readPattern, "$1VPX_GetDictArrItem($2, \"$3\", $4)");
+
     PLOGI.printf("ScriptPatcher: Applied Dictionary/array access patch");
     return r;
 }
