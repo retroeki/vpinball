@@ -45,6 +45,7 @@ struct VBClassProperty {
     std::string name;
     bool isPublic = false;
     bool isArray = false;  // true if declared with () - e.g., "Private ballvel()"
+    int arraySize = -1;    // -1 = dynamic, 0+ = fixed size (e.g., "Private arr(300)" -> 300)
 };
 
 // A class method (Sub or Function)
@@ -204,6 +205,7 @@ private:
     static std::string PatchReDimWithUBound(const std::string& script);
     static std::string Patch2DArrayAccess(const std::string& script);
     static std::string PatchArrayElementAssignment(const std::string& script);
+    static std::string PatchDictArrayAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyRead(const std::string& script);
     static std::string InjectVPXSetArrObjProp(const std::string& script);
