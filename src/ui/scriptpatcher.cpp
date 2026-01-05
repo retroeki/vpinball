@@ -551,6 +551,49 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         }
         temp += result.substr(lastPos);
         if (!temp.empty()) result = temp;
+
+        // Pattern for function-style call with no arguments: methodName() in expressions
+        // E.g., If FlipperOn() Then -> If FlipperPolarity_FlipperOn(this_) Then
+        std::string funcCallPattern = "\\b" + escapedName + "\\s*\\(\\s*\\)";
+        std::regex funcCallRegex(funcCallPattern, std::regex::icase);
+
+        temp.clear();
+        std::sregex_iterator it3(result.begin(), result.end(), funcCallRegex);
+        lastPos = 0;
+
+        while (it3 != end) {
+            std::smatch match = *it3;
+            size_t matchPos = match.position();
+
+            // Check if already transformed (preceded by class name_)
+            bool skip = false;
+            if (matchPos >= classDef.name.length() + 1) {
+                std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
+                if (before == classDef.name + "_") {
+                    skip = true;
+                }
+            }
+
+            // Check if inside a string literal
+            int quoteCount = 0;
+            for (size_t i = 0; i < matchPos; ++i) {
+                if (result[i] == '"') quoteCount++;
+            }
+            if (quoteCount % 2 == 1) {
+                skip = true;
+            }
+
+            temp += result.substr(lastPos, matchPos - lastPos);
+            if (skip) {
+                temp += match[0].str();
+            } else {
+                temp += classDef.name + "_" + method.name + "(this_)";
+            }
+            lastPos = matchPos + match[0].length();
+            ++it3;
+        }
+        temp += result.substr(lastPos);
+        if (!temp.empty()) result = temp;
     }
 
     // Transform accessor calls within method bodies
