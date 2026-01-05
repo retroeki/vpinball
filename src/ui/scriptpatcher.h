@@ -194,6 +194,7 @@ private:
 
     static std::string PatchLineContinuationBeforeDot(const std::string& script);
     static std::string PatchSingleLineIfElse(const std::string& script);
+    static std::string PatchNestedSingleLineIf(const std::string& script);
     static std::string PatchExecuteEval(const std::string& script);
     static std::string PatchStringConcatenation(const std::string& script);
 

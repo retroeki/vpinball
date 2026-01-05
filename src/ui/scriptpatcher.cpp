@@ -609,6 +609,15 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             std::regex letRegex(letPattern, std::regex::icase);
             result = std::regex_replace(result, letRegex,
                 classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $1, $2");
+
+            // Transform: accessor = value -> ClassName_Let_accessor this_, value
+            // For accessors without index parameters (just the value param)
+            // Must be at start of statement (after newline, colon, or Then)
+            // Pattern: (^|\n|:|\bThen\s+)accessor = value
+            std::string letNoParamPattern = "(^|\\n|:|\\bThen\\s+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
+            std::regex letNoParamRegex(letNoParamPattern, std::regex::icase);
+            result = std::regex_replace(result, letNoParamRegex,
+                "$1" + classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $2");
         }
 
         if (EqualsIgnoreCase(accessor.type, "Get")) {
@@ -716,15 +725,19 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
         if (EqualsIgnoreCase(accessor.type, "Get")) {
             std::string funcName = classDef.name + "_Get_" + accessor.name;
             out << "Function " << funcName << "(" << paramList << ")\n";
-            std::string tb = TransformMethodBody(accessor.body, classDef);
-            // Transform return value: accessorName = ... -> FunctionName = ...
+            // IMPORTANT: Transform return value BEFORE TransformMethodBody
+            // Otherwise, the accessor-without-params transform will convert
+            // "state = value" to "ClassName_Let_state this_, value" instead of return
             // In VBScript Property Get, you assign to the property name to return
             // Handle both "accessorName =" and "Set accessorName ="
             std::string escapedAccessorName = EscapeRegex(accessor.name);
             std::regex returnPattern("(^|:|\\s)" + escapedAccessorName + "\\s*=", std::regex::icase);
             std::regex setReturnPattern("(^|:|\\s)(Set\\s+)" + escapedAccessorName + "\\s*=", std::regex::icase);
-            tb = std::regex_replace(tb, setReturnPattern, "$1$2" + funcName + " =");
-            tb = std::regex_replace(tb, returnPattern, "$1" + funcName + " =");
+            std::string bodyWithReturn = accessor.body;
+            bodyWithReturn = std::regex_replace(bodyWithReturn, setReturnPattern, "$1$2" + funcName + " =");
+            bodyWithReturn = std::regex_replace(bodyWithReturn, returnPattern, "$1" + funcName + " =");
+            // Now transform the rest of the body
+            std::string tb = TransformMethodBody(bodyWithReturn, classDef);
             std::istringstream s(tb); std::string l;
             while (std::getline(s, l)) out << "    " << l << "\n";
             out << "End Function\n\n";
@@ -2054,6 +2067,22 @@ std::string ScriptPatcher::PatchSingleLineIfElse(const std::string& script) {
     return r;
 }
 
+std::string ScriptPatcher::PatchNestedSingleLineIf(const std::string& script) {
+    std::string r = script;
+    // Wine VBScript doesn't support nested single-line If:
+    //   if COND1 then if COND2 then STATEMENT end if end if
+    // Convert to:
+    //   if COND1 then
+    //       if COND2 then STATEMENT
+    //   end if
+    // Pattern: if ... then if ... then ... end if end if (ALL ON ONE LINE)
+    // Use [ \t] instead of \s to prevent matching across lines (newlines)
+    std::regex p(R"((^|[\r\n])([ \t]*)(if[ \t]+[^\r\n]+?[ \t]+then)[ \t]+(if[ \t]+[^\r\n]+?[ \t]+then[ \t]+[^\r\n]+?)[ \t]+end[ \t]+if[ \t]+end[ \t]+if)",
+                 std::regex::icase);
+    r = std::regex_replace(r, p, "$1$2$3\n$2    $4\n$2end if");
+    return r;
+}
+
 std::string ScriptPatcher::PatchExecuteEval(const std::string& script) { return script; }
 
 std::string ScriptPatcher::PatchStringConcatenation(const std::string& script) {
@@ -2096,6 +2125,9 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
             std::regex typeNameRegex(R"(\bTypeName\s*\()", std::regex::icase);
             result = std::regex_replace(result, typeNameRegex, "VPX_SafeTypeName(");
             PLOGI.printf("ScriptPatcher: Replaced TypeName with VPX_SafeTypeName");
+
+            // Fix nested single-line If statements (Wine VBScript doesn't support them)
+            result = PatchNestedSingleLineIf(result);
         }
     }
 
