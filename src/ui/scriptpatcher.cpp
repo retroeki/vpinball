@@ -2080,6 +2080,7 @@ std::string ScriptPatcher::PatchSlingshotCorrection(const std::string& script) {
 std::string ScriptPatcher::PatchScript(const std::string& script) {
     std::string result = StripBOM(script);
     bool patched = result.length() != script.length();
+    bool classEmulationApplied = false;
     PLOGI.printf("ScriptPatcher: Checking script (length=%zu)", result.length());
 
     // Class emulation (must run first)
@@ -2089,6 +2090,7 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         if (result != before) {
             PLOGI.printf("ScriptPatcher: Applied class emulation");
             patched = true;
+            classEmulationApplied = true;
 
             // Replace TypeName with VPX_SafeTypeName to avoid crashes on Dictionary objects
             std::regex typeNameRegex(R"(\bTypeName\s*\()", std::regex::icase);
@@ -2134,8 +2136,12 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         result = PatchReDimWithUBound(result);
         result = Patch2DArrayAccess(result);
         result = PatchArrayElementAssignment(result);
-        result = PatchDictArrayAccess(result);
-        result = PatchArrayObjectPropertyAccess(result);
+        // Only apply Dict/Array transformation if class emulation was used
+        // (these patterns only appear in emulated Dictionary-based classes)
+        if (classEmulationApplied) {
+            result = PatchDictArrayAccess(result);
+            result = PatchArrayObjectPropertyAccess(result);
+        }
         // DISABLED: PatchArrayObjectPropertyRead causes compile errors when VPX_GetArrObjProp is used as
         // argument in Sub calls. Wine VBScript's parser doesn't handle this well.
         // For native VPX objects, arr(idx).property works fine. Only emulated classes have issues.
