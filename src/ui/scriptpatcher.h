@@ -1,151 +1,214 @@
 #pragma once
 
 #include <string>
+#include <vector>
+#include <unordered_map>
+#include <unordered_set>
 #include <regex>
 
 #ifdef __STANDALONE__
 
+// ============================================================================
+// VBScript Class Emulation - Data Structures
+// ============================================================================
+//
+// PROBLEM:
+// Wine's VBScript engine doesn't support the "Class" keyword. Tables using
+// VPW physics classes (SlingshotCorrection, FlipperPolarity, etc.) fail.
+//
+// SOLUTION:
+// Transform VBScript classes into Dictionary-based objects that Wine can handle.
+//
+// HOW IT WORKS:
+//
+//   ORIGINAL:                          TRANSFORMED:
+//   ---------                          ------------
+//   Class Foo                          Function Foo_Create()
+//       Public Value                       Dim this_
+//       Public Sub Init(x)                 Set this_ = CreateObject("Scripting.Dictionary")
+//           Value = x                      this_("Value") = Empty
+//       End Sub                            Set Foo_Create = this_
+//   End Class                          End Function
+//
+//   Set obj = New Foo                  Sub Foo_Init(this_, x)
+//   obj.Init 5                             this_("Value") = x
+//   x = obj.Value                      End Sub
+//
+//                                      Set obj = Foo_Create()
+//                                      Foo_Init obj, 5
+//                                      x = obj("Value")
+//
+// ============================================================================
+
+// A class property (member variable)
+struct VBClassProperty {
+    std::string name;
+    bool isPublic = false;
+    bool isArray = false;  // true if declared with () - e.g., "Private ballvel()"
+};
+
+// A class method (Sub or Function)
+struct VBClassMethod {
+    std::string name;
+    bool isPublic;
+    bool isFunction;                       // true = Function, false = Sub
+    bool isDefault;                        // "Public Default Function"
+    std::vector<std::string> params;
+    std::string body;                      // Everything between declaration and End Sub/Function
+};
+
+// Property Get/Let/Set accessor
+struct VBClassAccessor {
+    std::string name;
+    std::string type;                      // "Get", "Let", or "Set"
+    std::vector<std::string> params;
+    std::string body;
+};
+
+// Complete parsed class
+struct VBClassDefinition {
+    std::string name;
+    std::vector<VBClassProperty> properties;
+    std::vector<VBClassMethod> methods;
+    std::vector<VBClassAccessor> accessors;
+    std::string initializeBody;            // Class_Initialize content
+    std::string terminateBody;             // Class_Terminate content
+    size_t startPos;                       // Position in script where class starts
+    size_t endPos;                         // Position where class ends
+};
+
 /**
  * VBScript Patcher for Wine/Android compatibility
  *
- * Wine's VBScript engine cannot handle multi-dimension array assignments like:
- *   DTArray(i)(4) = DTAnimate(...)
- *   STArray(i)(3) = STCheckHit(...)
- *
- * This patcher automatically rewrites scripts to use class-based patterns instead,
- * allowing tables that use these patterns to work on Android/Linux/Wine.
+ * Handles two main issues:
+ * 1. Multi-dimension array assignments (DTArray, STArray patterns)
+ * 2. VBScript Class keyword (not supported by Wine)
  */
 class ScriptPatcher
 {
 public:
     /**
      * Patch a VBScript to fix Wine VBScript engine incompatibilities.
-     *
-     * @param script The original VBScript source
-     * @return The patched VBScript source
      */
     static std::string PatchScript(const std::string& script);
 
 private:
+    // ========================================================================
+    // Class Emulation - Phase 1: Parsing
+    // ========================================================================
+
     /**
-     * Check if script uses DTArray pattern
+     * Check if script contains any VBScript Class definitions
      */
+    static bool HasClassDefinitions(const std::string& script);
+
+    /**
+     * Parse all Class definitions from the script.
+     * Returns a vector of parsed classes with their properties, methods, etc.
+     */
+    static std::vector<VBClassDefinition> ParseClassDefinitions(const std::string& script);
+
+    /**
+     * Parse parameters from a method/function declaration.
+     * Input: "ByVal x, y, ByRef z" -> ["x", "y", "z"]
+     */
+    static std::vector<std::string> ParseParameters(const std::string& paramStr);
+
+    // ========================================================================
+    // Class Emulation - Phase 2: Code Generation
+    // ========================================================================
+
+    /**
+     * Generate Wine-compatible emulation code for a parsed class.
+     * Creates: ClassName_Create(), ClassName_MethodName(), etc.
+     */
+    static std::string EmitClassEmulation(const VBClassDefinition& classDef);
+
+    /**
+     * Transform method body: replace Me.X with this_("X"), etc.
+     */
+    static std::string TransformMethodBody(const std::string& body,
+                                           const VBClassDefinition& classDef);
+
+    // ========================================================================
+    // Class Emulation - Phase 3: Usage Transformation
+    // ========================================================================
+
+    /**
+     * Transform the entire script to use emulated classes.
+     * Replaces class definitions with emulation code and transforms usage sites.
+     */
+    static std::string EmulateClasses(const std::string& script);
+
+    /**
+     * Transform "Set x = New ClassName" -> "Set x = ClassName_Create()"
+     */
+    static std::string TransformNewStatements(const std::string& script,
+                                              const std::unordered_set<std::string>& classNames);
+
+    /**
+     * Transform method calls: obj.Method(args) -> ClassName_Method(obj, args)
+     * Requires tracking which variables hold which class types.
+     */
+    static std::string TransformMethodCalls(const std::string& script,
+                                            const std::vector<VBClassDefinition>& classes);
+
+    /**
+     * Transform property access: obj.Property -> obj("Property")
+     */
+    static std::string TransformPropertyAccess(const std::string& script,
+                                               const std::vector<VBClassDefinition>& classes);
+
+    /**
+     * Transform accessor access: obj.accessor(idx) -> ClassName_Get/Let_accessor(obj, idx, ...)
+     */
+    static std::string TransformAccessorAccess(const std::string& script,
+                                               const std::vector<VBClassDefinition>& classes);
+
+    // ========================================================================
+    // Existing Patches (DTArray, STArray, etc.)
+    // ========================================================================
+
     static bool UsesDTArray(const std::string& script);
-
-    /**
-     * Check if script uses STArray pattern
-     */
     static bool UsesSTArray(const std::string& script);
-
-    /**
-     * Inject the DropTarget class definition at the start of the script
-     */
     static std::string InjectDropTargetClass(const std::string& script);
-
-    /**
-     * Inject the StandupTarget class definition at the start of the script
-     */
     static std::string InjectStandupTargetClass(const std::string& script);
-
-    /**
-     * Convert DTxx = Array(...) to Set DTxx = (new DropTarget)(...)
-     */
     static std::string PatchDTArrayDefinitions(const std::string& script);
-
-    /**
-     * Convert STxx = Array(...) to Set STxx = (new StandupTarget)(...)
-     */
     static std::string PatchSTArrayDefinitions(const std::string& script);
-
-    /**
-     * Replace DTArray(i)(N) with DTArray(i).propertyName
-     * Also handles DTArray(ind)(N), DTArray(x)(N), etc.
-     */
     static std::string PatchDTArrayAccess(const std::string& script);
-
-    /**
-     * Replace STArray(i)(N) with STArray(i).propertyName
-     */
     static std::string PatchSTArrayAccess(const std::string& script);
 
-    /**
-     * Check if script uses Controller.Pause
-     */
     static bool UsesControllerPause(const std::string& script);
-
-    /**
-     * Comment out Controller.Pause lines (not supported on Wine/standalone)
-     */
     static std::string PatchControllerPause(const std::string& script);
 
-    /**
-     * Check if script has PuPlayer.playstop pDMD in playclear function
-     */
     static bool UsesPuPlayerPlaystopInPlayclear(const std::string& script);
-
-    /**
-     * Comment out PuPlayer.playstop pDMD in playclear (stops background video on Android)
-     */
     static std::string PatchPuPlayerPlaystopInPlayclear(const std::string& script);
 
-    /**
-     * Strip BOM (Byte Order Mark) from start of script
-     * Fixes scripts that fail at line 1 due to UTF-8/UTF-16 BOM
-     */
     static std::string StripBOM(const std::string& script);
-
-    /**
-     * Fix AddScore parentheses for Wine VBScript compatibility
-     * Game of Thrones: AddScore (expr)+expr2 -> AddScore ((expr)+expr2)
-     */
     static std::string PatchAddScoreParentheses(const std::string& script);
-
-    /**
-     * Fix SetAlignedPosition parentheses for Wine VBScript compatibility
-     * Game of Thrones: .SetAlignedPosition ((i-1)*25)+14,... -> .SetAlignedPosition (((i-1)*25)+14),...
-     */
     static std::string PatchSetAlignedPositionParentheses(const std::string& script);
 
-    /**
-     * Check if script has SlingshotCorrection class (VPW tables)
-     * Wine VBScript engine cannot parse certain class constructs
-     */
     static bool UsesSlingshotCorrection(const std::string& script);
-
-    /**
-     * Comment out SlingshotCorrection class and related code
-     * LOTR Valinor Edition and other VPW tables use this
-     */
     static std::string PatchSlingshotCorrection(const std::string& script);
 
-
-    /**
-     * Fix line continuation before dot (Wine Bug 56480)
-     * Transforms: obj _
-.Method() -> obj. _
-Method()
-     */
     static std::string PatchLineContinuationBeforeDot(const std::string& script);
-
-    /**
-     * Fix single-line If...Then...Else without body after Else (Wine Bug 55006)
-     * Transforms: If x Then DoSomething() Else -> If x Then DoSomething() Else:
-     */
     static std::string PatchSingleLineIfElse(const std::string& script);
-
-    /**
-     * Fix Execute statements with eval that may reference non-existent objects
-     * Wraps in IsObject check for Wine compatibility
-     */
     static std::string PatchExecuteEval(const std::string& script);
-
-    /**
-     * Fix string concatenation where first operand is numeric expression
-     * Transforms: (expr) & " text" -> "" & (expr) & " text"
-     */
     static std::string PatchStringConcatenation(const std::string& script);
 
-    // Class definition strings
+    // Wine VBScript Array Compatibility
+    static bool UsesProblematicArrays(const std::string& script);
+    static std::string InjectWineArrayHelpers(const std::string& script);
+    static std::string PatchUBoundInConditions(const std::string& script);
+    static std::string PatchUBoundInForLoops(const std::string& script);
+    static std::string PatchReDimWithUBound(const std::string& script);
+    static std::string Patch2DArrayAccess(const std::string& script);
+    static std::string PatchArrayElementAssignment(const std::string& script);
+    static std::string PatchArrayObjectPropertyAccess(const std::string& script);
+    static std::string PatchArrayObjectPropertyRead(const std::string& script);
+    static std::string InjectVPXSetArrObjProp(const std::string& script);
+
+    // Class definition strings for DTArray/STArray
     static const char* DROP_TARGET_CLASS;
     static const char* STANDUP_TARGET_CLASS;
 };
