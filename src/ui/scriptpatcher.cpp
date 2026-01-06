@@ -768,6 +768,41 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             }
             temp += result.substr(lastPos);
             if (!temp.empty()) result = temp;
+
+            // Transform: accessor -> ClassName_Get_accessor(this_)
+            // For parameterless Property Get - must not be followed by ( or =
+            // Must not be part of an already-transformed call (preceded by ClassName_)
+            std::string getNoParamPattern = "\\b" + escapedName + "\\b(?!\\s*[=(])";
+            std::regex getNoParamRegex(getNoParamPattern, std::regex::icase);
+
+            std::string temp2;
+            std::sregex_iterator it2(result.begin(), result.end(), getNoParamRegex);
+            std::sregex_iterator end2;
+            size_t lastPos2 = 0;
+
+            for (; it2 != end2; ++it2) {
+                std::smatch match = *it2;
+                size_t matchPos = match.position();
+                bool alreadyTransformed = false;
+
+                // Check if preceded by class name_ (already transformed)
+                if (matchPos > classDef.name.length() + 1) {
+                    std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
+                    if (before.find(classDef.name + "_") != std::string::npos) {
+                        alreadyTransformed = true;
+                    }
+                }
+
+                temp2 += result.substr(lastPos2, matchPos - lastPos2);
+                if (alreadyTransformed) {
+                    temp2 += match[0].str();
+                } else {
+                    temp2 += classDef.name + "_Get_" + accessor.name + "(this_)";
+                }
+                lastPos2 = matchPos + match[0].length();
+            }
+            temp2 += result.substr(lastPos2);
+            if (!temp2.empty()) result = temp2;
         }
     }
 
