@@ -203,6 +203,11 @@ private:
     static std::string InjectWineArrayHelpers(const std::string& script);
     static std::string PatchUBoundInConditions(const std::string& script);
     static std::string PatchUBoundInForLoops(const std::string& script);
+    static std::string PatchAllUBound(const std::string& script);
+    static std::string PatchSafeUBoundArrayAccess(const std::string& script);
+    static std::string PatchLinearEnvelopeGuard(const std::string& script);
+    static std::string PatchBallArrayAccess(const std::string& script);
+    static std::string PatchBallLoopGuard(const std::string& script);
     static std::string PatchReDimWithUBound(const std::string& script);
     static std::string Patch2DArrayAccess(const std::string& script);
     static std::string PatchArrayElementAssignment(const std::string& script);

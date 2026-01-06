@@ -13,55 +13,104 @@
 // DropTarget and StandupTarget class definitions (for DTArray/STArray patches)
 // ============================================================================
 
+// Dictionary-based DropTarget with helper functions (Wine compatible)
+// Wine VBScript can't handle chained indexing like arr(i)("key"), so we use helpers
 const char* ScriptPatcher::DROP_TARGET_CLASS = R"(
-Class DropTarget
-  Private m_primary, m_secondary, m_prim, m_sw, m_animate, m_isDropped
-  Public Property Get Primary(): Set Primary = m_primary: End Property
-  Public Property Let Primary(input): Set m_primary = input: End Property
-  Public Property Get Secondary(): Set Secondary = m_secondary: End Property
-  Public Property Let Secondary(input): Set m_secondary = input: End Property
-  Public Property Get Prim(): Set Prim = m_prim: End Property
-  Public Property Let Prim(input): Set m_prim = input: End Property
-  Public Property Get Sw(): Sw = m_sw: End Property
-  Public Property Let Sw(input): m_sw = input: End Property
-  Public Property Get Animate(): Animate = m_animate: End Property
-  Public Property Let Animate(input): m_animate = input: End Property
-  Public Property Get IsDropped(): IsDropped = m_isDropped: End Property
-  Public Property Let IsDropped(input): m_isDropped = input: End Property
-  Public default Function init(primary, secondary, prim, sw, animate, isDropped)
-    Set m_primary = primary
-    Set m_secondary = secondary
-    Set m_prim = prim
-    m_sw = sw
-    m_animate = animate
-    m_isDropped = isDropped
-    Set Init = Me
-  End Function
-End Class
+Function DropTarget_Create(primary, secondary, prim, sw, animate, isDropped)
+  Dim this_
+  Set this_ = CreateObject("Scripting.Dictionary")
+  Set this_("primary") = primary
+  Set this_("secondary") = secondary
+  Set this_("prim") = prim
+  this_("sw") = sw
+  this_("animate") = animate
+  this_("isDropped") = isDropped
+  Set DropTarget_Create = this_
+End Function
+
+' Get property from DTArray element - avoids Wine chaining issue
+Function DTGet(arr, idx, propName)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "primary": Set DTGet = obj("primary")
+    Case "secondary": Set DTGet = obj("secondary")
+    Case "prim": Set DTGet = obj("prim")
+    Case "sw": DTGet = obj("sw")
+    Case "animate": DTGet = obj("animate")
+    Case "isdropped": DTGet = obj("isDropped")
+  End Select
+End Function
+
+' Get object property from DTArray element (returns object reference)
+Function DTGetObj(arr, idx, propName)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "primary": Set DTGetObj = obj("primary")
+    Case "secondary": Set DTGetObj = obj("secondary")
+    Case "prim": Set DTGetObj = obj("prim")
+  End Select
+End Function
+
+' Set property on DTArray element - avoids Wine chaining issue
+Sub DTSet(arr, idx, propName, val)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "sw": obj("sw") = val
+    Case "animate": obj("animate") = val
+    Case "isdropped": obj("isDropped") = val
+  End Select
+End Sub
 )";
 
+// Dictionary-based StandupTarget with helper functions (Wine compatible)
 const char* ScriptPatcher::STANDUP_TARGET_CLASS = R"(
-Class StandupTarget
-  Private m_primary, m_prim, m_sw, m_animate, m_target
-  Public Property Get Primary(): Set Primary = m_primary: End Property
-  Public Property Let Primary(input): Set m_primary = input: End Property
-  Public Property Get Prim(): Set Prim = m_prim: End Property
-  Public Property Let Prim(input): Set m_prim = input: End Property
-  Public Property Get Sw(): Sw = m_sw: End Property
-  Public Property Let Sw(input): m_sw = input: End Property
-  Public Property Get Animate(): Animate = m_animate: End Property
-  Public Property Let Animate(input): m_animate = input: End Property
-  Public Property Get Target(): Target = m_target: End Property
-  Public Property Let Target(input): m_target = input: End Property
-  Public default Function init(primary, prim, sw, animate, target)
-    Set m_primary = primary
-    Set m_prim = prim
-    m_sw = sw
-    m_animate = animate
-    m_target = target
-    Set Init = Me
-  End Function
-End Class
+Function StandupTarget_Create(primary, prim, sw, animate, target)
+  Dim this_
+  Set this_ = CreateObject("Scripting.Dictionary")
+  Set this_("primary") = primary
+  Set this_("prim") = prim
+  this_("sw") = sw
+  this_("animate") = animate
+  this_("target") = target
+  Set StandupTarget_Create = this_
+End Function
+
+' Get property from STArray element - avoids Wine chaining issue
+Function STGet(arr, idx, propName)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "primary": Set STGet = obj("primary")
+    Case "prim": Set STGet = obj("prim")
+    Case "sw": STGet = obj("sw")
+    Case "animate": STGet = obj("animate")
+    Case "target": STGet = obj("target")
+  End Select
+End Function
+
+' Get object property from STArray element (returns object reference)
+Function STGetObj(arr, idx, propName)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "primary": Set STGetObj = obj("primary")
+    Case "prim": Set STGetObj = obj("prim")
+  End Select
+End Function
+
+' Set property on STArray element - avoids Wine chaining issue
+Sub STSet(arr, idx, propName, val)
+  Dim obj
+  Set obj = arr(idx)
+  Select Case LCase(propName)
+    Case "sw": obj("sw") = val
+    Case "animate": obj("animate") = val
+    Case "target": obj("target") = val
+  End Select
+End Sub
 )";
 
 // Utility: Trim whitespace
@@ -72,6 +121,7 @@ static std::string Trim(const std::string& str) {
     return str.substr(first, last - first + 1);
 }
 
+
 // Utility: Case-insensitive compare
 static bool EqualsIgnoreCase(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
@@ -79,6 +129,7 @@ static bool EqualsIgnoreCase(const std::string& a, const std::string& b) {
         if (std::tolower(a[i]) != std::tolower(b[i])) return false;
     return true;
 }
+
 // ============================================================================
 // CLASS EMULATION - Phase 1: Parsing
 // ============================================================================
@@ -87,6 +138,7 @@ bool ScriptPatcher::HasClassDefinitions(const std::string& script) {
     std::regex classPattern(R"(\bClass\s+\w+)", std::regex::icase);
     return std::regex_search(script, classPattern);
 }
+
 
 std::vector<std::string> ScriptPatcher::ParseParameters(const std::string& paramStr) {
     std::vector<std::string> params;
@@ -104,6 +156,7 @@ std::vector<std::string> ScriptPatcher::ParseParameters(const std::string& param
     }
     return params;
 }
+
 
 std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::string& script) {
     std::vector<VBClassDefinition> classes;
@@ -154,6 +207,13 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
         }
         
         if (!inClass && std::regex_search(line, match, classStartPattern)) {
+            // Check for single-line class definition (Class X : ... : End Class on same line)
+            std::regex singleLineClassPattern(R"(\bEnd\s+Class\b)", std::regex::icase);
+            if (std::regex_search(line, singleLineClassPattern)) {
+                // Single-line stub class - skip it entirely (don't emulate)
+                PLOGI.printf("ScriptPatcher: Skipping single-line stub class '%s'", match[1].str().c_str());
+                continue;
+            }
             inClass = true;
             inMethod = false;  // Reset method state when entering new class
             inAccessor = false;  // Reset accessor state when entering new class
@@ -345,6 +405,7 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
     }
     return classes;
 }
+
 // ============================================================================
 // CLASS EMULATION - Phase 2: Code Generation
 // ============================================================================
@@ -354,6 +415,7 @@ static std::string EscapeRegex(const std::string& str) {
     static const std::regex specialChars(R"([-[\]{}()*+?.,\\^$|#\s])");
     return std::regex_replace(str, specialChars, "\\$&");
 }
+
 
 std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VBClassDefinition& classDef) {
     std::string result = body;
@@ -368,20 +430,70 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         std::string escapedName = EscapeRegex(prop.name);
 
         if (prop.isArray) {
-            // Array properties: replace ALL occurrences with global variable name
+            // Array properties: replace occurrences with global variable name
             // e.g., ballvel -> CoRTracker_ballvel (used as global)
+            // Array properties are global (shared) because Dictionaries can't hold arrays
             std::string globalName = classDef.name + "_" + prop.name;
 
-            // First handle object.PropName pattern -> just global name (remove object reference)
-            // e.g., aObj.ModIn -> Dampener_ModIn
-            std::string objPropPattern = "\\b\\w+\\." + escapedName + "\\b";
-            std::regex objPropRegex(objPropPattern, std::regex::icase);
-            result = std::regex_replace(result, objPropRegex, globalName);
+            // VPX object properties that should NOT be transformed when accessed on external objects
+            // These exist on VPX visual objects (lamps, etc.) and aren't class-specific
+            static const std::unordered_set<std::string> vpxProperties = {
+                "fadespeedup", "fadespeeddown", "state", "timerenabled", "timerinterval",
+                "x", "y", "width", "height", "name", "visible", "enabled", "image"
+            };
+            std::string lowerPropName = prop.name;
+            std::transform(lowerPropName.begin(), lowerPropName.end(), lowerPropName.begin(), ::tolower);
+            bool isVpxProperty = vpxProperties.count(lowerPropName) > 0;
+
+            // Transform object.PropName -> global name
+            // For VPX properties (like FadeSpeedUp), only transform Me./this_. prefix
+            // For class-specific properties (like ModIn), transform any object prefix
+            if (isVpxProperty) {
+                // Only transform Me.PropName or this_.PropName (not arbitrary objects)
+                std::string mePropPattern = "\\b(Me|this_)\\." + escapedName + "\\b";
+                std::regex mePropRegex(mePropPattern, std::regex::icase);
+                result = std::regex_replace(result, mePropRegex, globalName);
+            } else {
+                // Transform any object.PropName (class-specific array, aObj must be same class)
+                std::string objPropPattern = "\\b\\w+\\." + escapedName + "\\b";
+                std::regex objPropRegex(objPropPattern, std::regex::icase);
+                result = std::regex_replace(result, objPropRegex, globalName);
+            }
 
             // Then replace standalone PropName -> ClassName_PropName
             std::string propPattern = "\\b" + escapedName + "\\b";
             std::regex allPattern(propPattern, std::regex::icase);
-            result = std::regex_replace(result, allPattern, globalName);
+            {
+                std::string temp;
+                std::sregex_iterator it(result.begin(), result.end(), allPattern);
+                std::sregex_iterator end;
+                size_t lastPos = 0;
+                for (; it != end; ++it) {
+                    std::smatch match = *it;
+                    size_t matchPos = match.position();
+                    bool skip = false;
+                    // Skip if preceded by dot (for VPX properties, this was left as aObj.PropName)
+                    if (isVpxProperty && matchPos > 0 && result[matchPos - 1] == '.') {
+                        skip = true;
+                    }
+                    // Skip if already transformed (preceded by ClassName_)
+                    if (!skip && matchPos >= globalName.length()) {
+                        std::string before = result.substr(matchPos - globalName.length(), globalName.length());
+                        if (before == globalName.substr(0, globalName.length() - prop.name.length())) {
+                            skip = true;  // Already has ClassName_ prefix
+                        }
+                    }
+                    temp += result.substr(lastPos, matchPos - lastPos);
+                    if (skip) {
+                        temp += match[0].str();
+                    } else {
+                        temp += globalName;
+                    }
+                    lastPos = matchPos + match[0].length();
+                }
+                temp += result.substr(lastPos);
+                if (!temp.empty()) result = temp;
+            }
         } else {
             // Non-array properties: use Dictionary-based approach
             // First transform assignments: prop = value -> this_("prop") = value
@@ -604,7 +716,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
         if (EqualsIgnoreCase(accessor.type, "Let") || EqualsIgnoreCase(accessor.type, "Set")) {
             // Transform: accessor(params) = value -> ClassName_Let_accessor this_, params, value
-            // Pattern: accessor(params) = value
+            //// Pattern: accessor(params) = value
             std::string letPattern = "\\b" + escapedName + "\\s*\\(([^)]+)\\)\\s*=\\s*(.+)";
             std::regex letRegex(letPattern, std::regex::icase);
             result = std::regex_replace(result, letRegex,
@@ -612,9 +724,9 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             // Transform: accessor = value -> ClassName_Let_accessor this_, value
             // For accessors without index parameters (just the value param)
-            // Must be at start of statement (after newline, colon, or Then)
-            // Pattern: (^|\n|:|\bThen\s+)accessor = value
-            std::string letNoParamPattern = "(^|\\n|:|\\bThen\\s+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
+            // Must be at start of statement (after newline, colon+space, or Then+space)
+            //// Pattern: (^|\n|:[ \t]*|\bThen[ \t]+)accessor = value
+            std::string letNoParamPattern = "(^|\\n|:[ \\t]*|\\bThen[ \\t]+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
             std::regex letNoParamRegex(letNoParamPattern, std::regex::icase);
             result = std::regex_replace(result, letNoParamRegex,
                 "$1" + classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $2");
@@ -661,6 +773,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
     return result;
 }
+
 
 std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef) {
     std::ostringstream out;
@@ -752,6 +865,7 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
     out << "' === End " << classDef.name << " ===\n\n";
     return out.str();
 }
+
 // ============================================================================
 // CLASS EMULATION - Phase 3: Usage Transformation
 // ============================================================================
@@ -773,6 +887,7 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
     }
     return result;
 }
+
 
 std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                                                  const std::vector<VBClassDefinition>& classes) {
@@ -804,24 +919,30 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
         std::string escapedVar = EscapeRegex(varName);
         for (const auto& methodName : methods) {
             std::string escapedMethod = EscapeRegex(methodName);
-            // var.Method(args)
-            std::string wp = escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            // var.Method(args) in expression context (after =) -> ClassName_Method(varName, args)
+            std::string wpExpr = "=\\s*\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
+            std::regex wprExpr(wpExpr, std::regex::icase);
+            result = std::regex_replace(result, wprExpr, "= " + className + "_" + methodName + "(" + varName + ", $1)");
+            // var.Method(args) as statement -> ClassName_Method varName, args
+            std::string wp = "\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
             std::regex wpr(wp, std::regex::icase);
             result = std::regex_replace(result, wpr, className + "_" + methodName + " " + varName + ", $1");
             // var.Method args (but NOT if followed only by a comment)
             // First char of args must NOT be quote or whitespace to prevent matching comments
             // Use [ \t]+ instead of \s+ to avoid matching across newlines
-            std::string np = escapedVar + "\\." + escapedMethod + "[ \\t]+([^'\\s:\\r\\n][^:\\r\\n]*)";
+            std::string np = "\\b" + escapedVar + "\\." + escapedMethod + "[ \\t]+([^'\\s:\\r\\n][^:\\r\\n]*)";
             std::regex npr(np, std::regex::icase);
             result = std::regex_replace(result, npr, className + "_" + methodName + " " + varName + ", $1");
             // var.Method (no args)
-            std::string na = escapedVar + "\\." + escapedMethod + "\\b(?!\\s*[=(])";
+            std::string na = "\\b" + escapedVar + "\\." + escapedMethod + "\\b(?!\\s*[=(])";
             std::regex nar(na, std::regex::icase);
             result = std::regex_replace(result, nar, className + "_" + methodName + " " + varName);
         }
     }
     return result;
 }
+
 
 std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
                                                     const std::vector<VBClassDefinition>& classes) {
@@ -851,22 +972,24 @@ std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
         std::string escapedVar = EscapeRegex(varName);
         for (const auto& propName : props) {
             std::string escapedProp = EscapeRegex(propName);
+            // Use word boundary \b before variable name to avoid matching substrings
             // Read: var.Prop (not = )
-            std::string rp = escapedVar + "\\." + escapedProp + "\\b(?!\\s*=)";
+            std::string rp = "\\b" + escapedVar + "\\." + escapedProp + "\\b(?!\\s*=)";
             std::regex rr(rp, std::regex::icase);
             result = std::regex_replace(result, rr, varName + "(\"" + propName + "\")");
             // Write: var.Prop =
-            std::string wp = escapedVar + "\\." + escapedProp + "\\s*=";
+            std::string wp = "\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
             std::regex wr(wp, std::regex::icase);
             result = std::regex_replace(result, wr, varName + "(\"" + propName + "\") =");
             // Set: Set var.Prop =
-            std::string sp = "Set\\s+" + escapedVar + "\\." + escapedProp + "\\s*=";
+            std::string sp = "Set\\s+\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
             std::regex sr(sp, std::regex::icase);
             result = std::regex_replace(result, sr, "Set " + varName + "(\"" + propName + "\") =");
         }
     }
     return result;
 }
+
 
 std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
                                                     const std::vector<VBClassDefinition>& classes) {
@@ -908,32 +1031,37 @@ std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
             // Statement start: line start (with optional indent), after :, after Then, after Else
             // Value capture must stop at : or Else (for single-line If statements)
             // Use balanced parentheses matching by allowing nested parens: ([^()]*(?:\([^()]*\)[^()]*)*)
-            std::string wp = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string wp = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
             std::regex wr(wp, std::regex::icase | std::regex::multiline);
             result = std::regex_replace(result, wr, "$1" + className + "_Let_" + accName + " " + varName + ", $2, $3");
 
             // Write WITHOUT params: var.accessor = value  →  ClassName_Let_accessor var, value
             // For Property Let with only one parameter (the value being assigned)
-            std::string spw = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string spw = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
             std::regex swr(spw, std::regex::icase | std::regex::multiline);
             result = std::regex_replace(result, swr, "$1" + className + "_Let_" + accName + " " + varName + ", $2");
 
             // Read WITH params: var.accessor(idx)  →  ClassName_Get_accessor(var, idx)
             // Match all remaining accessor calls (those not converted to Let above are reads)
             // Use balanced parentheses matching
-            std::string rp = escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)";
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string rp = "\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)";
             std::regex rr(rp, std::regex::icase);
             result = std::regex_replace(result, rr, className + "_Get_" + accName + "(" + varName + ", $1)");
 
             // Read WITHOUT params: var.accessor  →  ClassName_Get_accessor(var)
             // For Property Get with no parameters - must not be followed by ( or =
-            std::string spr = escapedVar + "\\." + escapedAcc + "\\b(?!\\s*[=(])";
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string spr = "\\b" + escapedVar + "\\." + escapedAcc + "\\b(?!\\s*[=(])";
             std::regex srr(spr, std::regex::icase);
             result = std::regex_replace(result, srr, className + "_Get_" + accName + "(" + varName + ")");
         }
     }
     return result;
 }
+
 
 std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     if (!HasClassDefinitions(script)) return script;
@@ -955,6 +1083,12 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         std::unordered_set<std::string> existingProps;
         for (const auto& prop : cls.properties) {
             std::string lowerName = prop.name;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+            existingProps.insert(lowerName);
+        }
+        // Also add accessor names - ReDim should not override Property Let/Get/Set
+        for (const auto& acc : cls.accessors) {
+            std::string lowerName = acc.name;
             std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
             existingProps.insert(lowerName);
         }
@@ -1008,6 +1142,34 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         PLOGI.printf("ScriptPatcher: Emulating '%s'", cls.name.c_str());
     }
 
+    // Handle single-line stub classes (e.g., "Class X : ... : End Class" all on one line)
+    // These are skipped by ParseClassDefinitions but need to be removed and stubbed
+    // First pass: just collect class names and build stub emulation (don't modify script yet)
+    std::ostringstream stubEmulation;
+    std::regex singleLineClassRegex(R"(^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t]*$)", std::regex::icase | std::regex::multiline);
+    std::smatch singleMatch;
+    std::string searchStr = script;
+    while (std::regex_search(searchStr, singleMatch, singleLineClassRegex)) {
+        std::string className = singleMatch[1].str();
+        PLOGI.printf("ScriptPatcher: Found single-line stub class '%s', creating minimal emulation", className.c_str());
+
+        // Add to classNames for TransformNewStatements
+        classNames.insert(className);
+
+        // Create minimal stub emulation (just a factory function that returns empty Dictionary)
+        stubEmulation << "' === " << className << " Stub Class Emulation ===\n";
+        stubEmulation << "Function " << className << "_Create()\n";
+        stubEmulation << "    Dim this_\n";
+        stubEmulation << "    Set this_ = CreateObject(\"Scripting.Dictionary\")\n";
+        stubEmulation << "    this_(\"__class__\") = \"" << className << "\"\n";
+        stubEmulation << "    Set " << className << "_Create = this_\n";
+        stubEmulation << "End Function\n\n";
+
+        searchStr = singleMatch.suffix().str();
+    }
+
+    std::string result = script;
+
     // Sort by position descending
     std::sort(classes.begin(), classes.end(),
               [](const VBClassDefinition& a, const VBClassDefinition& b) { return a.startPos > b.startPos; });
@@ -1024,11 +1186,19 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         }
     }
     arrayDecls << "' === End Array Declarations ===\n\n";
-
-    std::string result = script;
     for (const auto& cls : classes) {
         std::string emulation = EmitClassEmulation(cls);
         result = result.substr(0, cls.startPos) + emulation + result.substr(cls.endPos);
+    }
+
+    // Now remove single-line stub classes from the result (after main classes are processed)
+    // Using regex_replace for proper handling
+    result = std::regex_replace(result, singleLineClassRegex, "' [Stub class removed - emulated below]");
+
+    // Inject stub emulation code if any single-line classes were found
+    std::string stubCode = stubEmulation.str();
+    if (!stubCode.empty()) {
+        arrayDecls << stubCode;
     }
 
     // Inject array declarations at the start (after Option Explicit if present)
@@ -1049,7 +1219,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // to transform For Each loop bodies when we know the array element types
 
     // Step 1: Find all variables assigned via ClassName_Create()
-    // Pattern: Set varname = ClassName_Create()
+    //// Pattern: Set varname = ClassName_Create()
     std::unordered_map<std::string, std::string> varTypes; // varname -> className
     for (const auto& cls : classes) {
         std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + cls.name + "_Create\\s*\\(";
@@ -1070,7 +1240,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
     // Step 2: Find For Each loops and transform method calls on loop variables
     // when the array contains known emulated class instances
-    // Pattern: For Each loopVar In Array(knownVar1, knownVar2, ...)
+    //// Pattern: For Each loopVar In Array(knownVar1, knownVar2, ...)
     // We'll transform: loopVar.method args -> ClassName_method loopVar, args
 
     // Build method map for quick lookup
@@ -1233,7 +1403,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // And: arrayName(idx).prop -> arrayName(idx)("prop")
 
     // Find arrays that contain emulated class instances
-    // Pattern: Set arrayName(idx) = ClassName_Create()
+    //// Pattern: Set arrayName(idx) = ClassName_Create()
     std::unordered_map<std::string, std::string> arrayElementTypes; // arrayName -> className
     for (const auto& cls : classes) {
         std::string pattern = "Set\\s+(\\w+)\\s*\\([^)]+\\)\\s*=\\s*" + cls.name + "_Create\\s*\\(";
@@ -1267,7 +1437,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (const auto& m : classDef->methods) {
             std::string escapedMethod = EscapeRegex(m.name);
 
-            // Pattern: arrayName(idx).method (no args, not followed by =)
+            //// Pattern: arrayName(idx).method (no args, not followed by =)
             // Must match case-insensitively for array name
             // Use [^()]+ for index to avoid matching nested parens
             std::string noArgsPattern = "\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(?!\\s*[=(])";
@@ -1312,7 +1482,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         }
 
         // Transform ALL property access in one pass - match any .property pattern
-        // Pattern: arrayName(idx).anyProperty
+        //// Pattern: arrayName(idx).anyProperty
         // Use [^()]+ for index to avoid matching nested parens like IsEmpty(arr(x).prop)
         std::string propPattern = "\\b(\\w+)\\s*\\(([^()]+)\\)\\.(\\w+)\\b";
         std::regex propRegex(propPattern, std::regex::icase);
@@ -1403,7 +1573,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // This needs to be transformed to use the emulated method call syntax.
     for (const auto& cls : classes) {
         for (const auto& m : cls.methods) {
-            // Pattern: & aName & ".methodName args
+            //// Pattern: & aName & ".methodName args
             // Transform to: FlipperPolarity_methodName " & aName & ", args
             std::string dotPattern = R"(\"\s*&\s*(\w+)\s*&\s*\"\.)" + EscapeRegex(m.name) + R"(\s+([^"]+))";
             std::regex dotRegex(dotPattern, std::regex::icase);
@@ -1435,6 +1605,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
     return result;
 }
+
 // ============================================================================
 // EXISTING PATCHES
 // ============================================================================
@@ -1444,10 +1615,12 @@ bool ScriptPatcher::UsesDTArray(const std::string& script) {
     return std::regex_search(script, p);
 }
 
+
 bool ScriptPatcher::UsesSTArray(const std::string& script) {
     std::regex p(R"(STArray\s*\(\s*\w+\s*\)\s*\(\s*\d+\s*\))", std::regex::icase);
     return std::regex_search(script, p);
 }
+
 
 std::string ScriptPatcher::InjectDropTargetClass(const std::string& script) {
     std::regex existing(R"(Class\s+DropTarget)", std::regex::icase);
@@ -1462,6 +1635,7 @@ std::string ScriptPatcher::InjectDropTargetClass(const std::string& script) {
     return std::string(DROP_TARGET_CLASS) + script;
 }
 
+
 std::string ScriptPatcher::InjectStandupTargetClass(const std::string& script) {
     std::regex existing(R"(Class\s+StandupTarget)", std::regex::icase);
     if (std::regex_search(script, existing)) return script;
@@ -1475,58 +1649,125 @@ std::string ScriptPatcher::InjectStandupTargetClass(const std::string& script) {
     return std::string(STANDUP_TARGET_CLASS) + script;
 }
 
+
 std::string ScriptPatcher::PatchDTArrayDefinitions(const std::string& script) {
     std::string r = script;
-    std::regex p5(R"(\b(DT\d+)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
-    r = std::regex_replace(r, p5, "Set $1 = (new DropTarget)($2, $3, $4, $5, $6, false)");
-    std::regex p6(R"(\b(DT\d+)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
-    r = std::regex_replace(r, p6, "Set $1 = (new DropTarget)($2, $3, $4, $5, $6, $7)");
+    // Match DT followed by digits and optional suffix letters (DT1, DT18, DT18a, DT18b, etc.)
+    // 5 args: primary, secondary, prim, sw, animate (default isDropped=false)
+    std::regex p5(R"(\b(DT\d+\w*)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
+    r = std::regex_replace(r, p5, "Set $1 = DropTarget_Create($2, $3, $4, $5, $6, false)");
+    // 6 args: primary, secondary, prim, sw, animate, isDropped
+    std::regex p6(R"(\b(DT\d+\w*)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
+    r = std::regex_replace(r, p6, "Set $1 = DropTarget_Create($2, $3, $4, $5, $6, $7)");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchSTArrayDefinitions(const std::string& script) {
     std::string r = script;
-    std::regex p(R"(\b(ST\d+)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
-    r = std::regex_replace(r, p, "Set $1 = (new StandupTarget)($2, $3, $4, $5, $6)");
+    // Match ST followed by digits and optional suffix letters (ST1, ST18, ST18a, ST18b, etc.)
+    // 5 args: primary, prim, sw, animate, target
+    std::regex p(R"(\b(ST\d+\w*)\s*=\s*Array\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,\)]+)\s*\))", std::regex::icase);
+    r = std::regex_replace(r, p, "Set $1 = StandupTarget_Create($2, $3, $4, $5, $6)");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchDTArrayAccess(const std::string& script) {
     std::string r = script;
+    // Wine VBScript can't handle chained indexing like DTArray(i)("key")
+    // Use DTGet/DTGetObj/DTSet helper functions instead
+
+    // WRITE patterns: DTArray(i)(idx) = value -> DTSet DTArray, i, "prop", value
+    // Must handle writes FIRST before reads to avoid partial transformations
+    std::regex dw4(R"((^[ \t]*|:[ \t]*)DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*4\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, dw4, "$1DTSet DTArray, $2, \"animate\", $3");
+    std::regex dw5(R"((^[ \t]*|:[ \t]*)DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*5\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, dw5, "$1DTSet DTArray, $2, \"isDropped\", $3");
+    std::regex dw3(R"((^[ \t]*|:[ \t]*)DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*3\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, dw3, "$1DTSet DTArray, $2, \"sw\", $3");
+
+    // READ patterns for object properties: DTArray(i)(0/1/2) -> DTGetObj(DTArray, i, "prop")
     std::regex d0(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*0\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d0, "DTArray($1).primary");
+    r = std::regex_replace(r, d0, "DTGetObj(DTArray, $1, \"primary\")");
     std::regex d1(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*1\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d1, "DTArray($1).secondary");
+    r = std::regex_replace(r, d1, "DTGetObj(DTArray, $1, \"secondary\")");
     std::regex d2(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*2\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d2, "DTArray($1).prim");
+    r = std::regex_replace(r, d2, "DTGetObj(DTArray, $1, \"prim\")");
+
+    // READ patterns for value properties: DTArray(i)(3/4/5) -> DTGet(DTArray, i, "prop")
     std::regex d3(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*3\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d3, "DTArray($1).sw");
+    r = std::regex_replace(r, d3, "DTGet(DTArray, $1, \"sw\")");
     std::regex d4(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*4\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d4, "DTArray($1).animate");
+    r = std::regex_replace(r, d4, "DTGet(DTArray, $1, \"animate\")");
     std::regex d5(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\(\s*5\s*\))", std::regex::icase);
-    r = std::regex_replace(r, d5, "DTArray($1).isDropped");
+    r = std::regex_replace(r, d5, "DTGet(DTArray, $1, \"isDropped\")");
+
+    // Dot notation WRITE: DTArray(i).animate = value -> DTSet DTArray, i, "animate", value
+    std::regex dpw(R"((^[ \t]*|:[ \t]*)DTArray\s*\(\s*(\w+)\s*\)\s*\.\s*(sw|animate|isDropped)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, dpw, "$1DTSet DTArray, $2, \"$3\", $4");
+
+    // Dot notation READ for objects: DTArray(i).primary -> DTGetObj(DTArray, i, "primary")
+    std::regex dpo(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\.\s*(primary|secondary|prim)\b)", std::regex::icase);
+    r = std::regex_replace(r, dpo, "DTGetObj(DTArray, $1, \"$2\")");
+
+    // Dot notation READ for values: DTArray(i).sw -> DTGet(DTArray, i, "sw")
+    std::regex dpv(R"(DTArray\s*\(\s*(\w+)\s*\)\s*\.\s*(sw|animate|isDropped)\b)", std::regex::icase);
+    r = std::regex_replace(r, dpv, "DTGet(DTArray, $1, \"$2\")");
+
     return r;
 }
 
+
 std::string ScriptPatcher::PatchSTArrayAccess(const std::string& script) {
     std::string r = script;
+    // Wine VBScript can't handle chained indexing like STArray(i)("key")
+    // Use STGet/STGetObj/STSet helper functions instead
+
+    // WRITE patterns: STArray(i)(idx) = value -> STSet STArray, i, "prop", value
+    // Must handle writes FIRST before reads to avoid partial transformations
+    std::regex sw2(R"((^[ \t]*|:[ \t]*)STArray\s*\(\s*(\w+)\s*\)\s*\(\s*2\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, sw2, "$1STSet STArray, $2, \"sw\", $3");
+    std::regex sw3(R"((^[ \t]*|:[ \t]*)STArray\s*\(\s*(\w+)\s*\)\s*\(\s*3\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, sw3, "$1STSet STArray, $2, \"animate\", $3");
+    std::regex sw4(R"((^[ \t]*|:[ \t]*)STArray\s*\(\s*(\w+)\s*\)\s*\(\s*4\s*\)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, sw4, "$1STSet STArray, $2, \"target\", $3");
+
+    // READ patterns for object properties: STArray(i)(0/1) -> STGetObj(STArray, i, "prop")
     std::regex s0(R"(STArray\s*\(\s*(\w+)\s*\)\s*\(\s*0\s*\))", std::regex::icase);
-    r = std::regex_replace(r, s0, "STArray($1).primary");
+    r = std::regex_replace(r, s0, "STGetObj(STArray, $1, \"primary\")");
     std::regex s1(R"(STArray\s*\(\s*(\w+)\s*\)\s*\(\s*1\s*\))", std::regex::icase);
-    r = std::regex_replace(r, s1, "STArray($1).prim");
+    r = std::regex_replace(r, s1, "STGetObj(STArray, $1, \"prim\")");
+
+    // READ patterns for value properties: STArray(i)(2/3/4) -> STGet(STArray, i, "prop")
     std::regex s2(R"(STArray\s*\(\s*(\w+)\s*\)\s*\(\s*2\s*\))", std::regex::icase);
-    r = std::regex_replace(r, s2, "STArray($1).sw");
+    r = std::regex_replace(r, s2, "STGet(STArray, $1, \"sw\")");
     std::regex s3(R"(STArray\s*\(\s*(\w+)\s*\)\s*\(\s*3\s*\))", std::regex::icase);
-    r = std::regex_replace(r, s3, "STArray($1).animate");
+    r = std::regex_replace(r, s3, "STGet(STArray, $1, \"animate\")");
     std::regex s4(R"(STArray\s*\(\s*(\w+)\s*\)\s*\(\s*4\s*\))", std::regex::icase);
-    r = std::regex_replace(r, s4, "STArray($1).target");
+    r = std::regex_replace(r, s4, "STGet(STArray, $1, \"target\")");
+
+    // Dot notation WRITE: STArray(i).animate = value -> STSet STArray, i, "animate", value
+    std::regex spw(R"((^[ \t]*|:[ \t]*)STArray\s*\(\s*(\w+)\s*\)\s*\.\s*(sw|animate|target)\s*=\s*([^\r\n:]+))", std::regex::icase | std::regex::multiline);
+    r = std::regex_replace(r, spw, "$1STSet STArray, $2, \"$3\", $4");
+
+    // Dot notation READ for objects: STArray(i).primary -> STGetObj(STArray, i, "primary")
+    std::regex spo(R"(STArray\s*\(\s*(\w+)\s*\)\s*\.\s*(primary|prim)\b)", std::regex::icase);
+    r = std::regex_replace(r, spo, "STGetObj(STArray, $1, \"$2\")");
+
+    // Dot notation READ for values: STArray(i).sw -> STGet(STArray, i, "sw")
+    std::regex spv(R"(STArray\s*\(\s*(\w+)\s*\)\s*\.\s*(sw|animate|target)\b)", std::regex::icase);
+    r = std::regex_replace(r, spv, "STGet(STArray, $1, \"$2\")");
+
     return r;
 }
+
 
 bool ScriptPatcher::UsesControllerPause(const std::string& script) {
     std::regex p(R"(Controller\.Pause\s*=)", std::regex::icase);
     return std::regex_search(script, p);
 }
+
 
 std::string ScriptPatcher::PatchControllerPause(const std::string& script) {
     std::string r = script;
@@ -1544,10 +1785,12 @@ std::string ScriptPatcher::PatchControllerPause(const std::string& script) {
     return r;
 }
 
+
 bool ScriptPatcher::UsesPuPlayerPlaystopInPlayclear(const std::string& script) {
     std::regex p(R"(if\s+chan\s*=\s*pBackglass\s+Then[\s\S]*?PuPlayer\.playstop\s+pDMD)", std::regex::icase);
     return std::regex_search(script, p);
 }
+
 
 std::string ScriptPatcher::PatchPuPlayerPlaystopInPlayclear(const std::string& script) {
     std::string r = script;
@@ -1555,6 +1798,7 @@ std::string ScriptPatcher::PatchPuPlayerPlaystopInPlayclear(const std::string& s
     r = std::regex_replace(r, p, "$1$2' $3 ' Android");
     return r;
 }
+
 std::string ScriptPatcher::StripBOM(const std::string& script) {
     if (script.length() >= 3 && (unsigned char)script[0] == 0xEF && (unsigned char)script[1] == 0xBB && (unsigned char)script[2] == 0xBF) {
         PLOGI.printf("ScriptPatcher: Stripping UTF-8 BOM");
@@ -1571,12 +1815,14 @@ std::string ScriptPatcher::StripBOM(const std::string& script) {
     return script;
 }
 
+
 std::string ScriptPatcher::PatchAddScoreParentheses(const std::string& script) {
     std::string r = script;
     std::regex p(R"(AddScore\s+\(([^)]+\([^)]*\)[^)]*)\)\s*\+\s*(\w+\([^)]*\)))", std::regex::icase);
     r = std::regex_replace(r, p, "AddScore (($1)+$2)");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchSetAlignedPositionParentheses(const std::string& script) {
     std::string r = script;
@@ -1585,12 +1831,14 @@ std::string ScriptPatcher::PatchSetAlignedPositionParentheses(const std::string&
     return r;
 }
 
+
 std::string ScriptPatcher::PatchLineContinuationBeforeDot(const std::string& script) {
     std::string r = script;
     std::regex p(R"((\w|\))\s+_\s*\r?\n\s*\.)", std::regex::icase);
     r = std::regex_replace(r, p, "$1. _\n");
     return r;
 }
+
 
 
 // Wine VBScript Array Compatibility Helpers
@@ -1604,6 +1852,7 @@ bool ScriptPatcher::UsesProblematicArrays(const std::string& script) {
     std::regex p2(R"(\w+\s*\(\s*\d+\s*,\s*\d+\s*\))", std::regex::icase);
     return std::regex_search(script, p1) || std::regex_search(script, p2);
 }
+
 
 std::string ScriptPatcher::InjectWineArrayHelpers(const std::string& script) {
     // Inject helper functions at the start of the script (after Option Explicit if present)
@@ -1619,6 +1868,109 @@ Function VPX_SafeUBound(arr)
     On Error Resume Next
     VPX_SafeUBound = -1
     VPX_SafeUBound = UBound(arr)
+    On Error Goto 0
+End Function
+
+' Safe array element access - returns Empty if index out of bounds
+Function VPX_SafeGet(arr, idx)
+    On Error Resume Next
+    VPX_SafeGet = Empty
+    If idx >= 0 Then VPX_SafeGet = arr(idx)
+    On Error Goto 0
+End Function
+
+' Safe ball X property access - returns -99999 if ball is invalid/Nothing
+Function VPX_BallX(ball)
+    On Error Resume Next
+    VPX_BallX = -99999
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallX = ball.X
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball Y property access - returns -99999 if ball is invalid/Nothing
+Function VPX_BallY(ball)
+    On Error Resume Next
+    VPX_BallY = -99999
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallY = ball.Y
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball Z property access
+Function VPX_BallZ(ball)
+    On Error Resume Next
+    VPX_BallZ = -99999
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallZ = ball.Z
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball VelX property access
+Function VPX_BallVelX(ball)
+    On Error Resume Next
+    VPX_BallVelX = 0
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelX = ball.VelX
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball VelY property access
+Function VPX_BallVelY(ball)
+    On Error Resume Next
+    VPX_BallVelY = 0
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelY = ball.VelY
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball VelZ property access
+Function VPX_BallVelZ(ball)
+    On Error Resume Next
+    VPX_BallVelZ = 0
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelZ = ball.VelZ
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball ID property access
+Function VPX_BallID(ball)
+    On Error Resume Next
+    VPX_BallID = -1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallID = ball.ID
+    End If
+    On Error Goto 0
+End Function
+
+' Safe ball Color property access
+Function VPX_BallColor(ball)
+    On Error Resume Next
+    VPX_BallColor = 0
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallColor = ball.Color
+    End If
+    On Error Goto 0
+End Function
+
+
+' Check if ball object is valid and usable
+Function VPX_IsValidBall(ball)
+    On Error Resume Next
+    VPX_IsValidBall = False
+    If IsEmpty(ball) Then Exit Function
+    If IsNull(ball) Then Exit Function
+    If Not IsObject(ball) Then Exit Function
+    If ball Is Nothing Then Exit Function
+    Dim testX : testX = ball.X
+    If Err.Number = 0 Then VPX_IsValidBall = True
+    Err.Clear
     On Error Goto 0
 End Function
 
@@ -1743,6 +2095,7 @@ End Function
     return r;
 }
 
+
 // Inject VPX_SetArrObjProp and VPX_GetArrObjProp AFTER array property transformations
 std::string ScriptPatcher::InjectVPXSetArrObjProp(const std::string& script) {
     // These helpers must be injected AFTER PatchArrayObjectPropertyAccess and PatchArrayObjectPropertyRead run,
@@ -1831,16 +2184,18 @@ End Sub
     return r;
 }
 
+
 std::string ScriptPatcher::PatchUBoundInConditions(const std::string& script) {
     std::string r = script;
 
     // Replace "If UBound(array)" with "If VPX_SafeUBound(array)"
-    // Pattern: If UBound(varname) followed by comparison
+    //// Pattern: If UBound(varname) followed by comparison
     std::regex p(R"(If\s+UBound\s*\(\s*(\w+)\s*\))", std::regex::icase);
     r = std::regex_replace(r, p, "If VPX_SafeUBound($1)");
 
     return r;
 }
+
 
 std::string ScriptPatcher::PatchUBoundInForLoops(const std::string& script) {
     std::string r = script;
@@ -1853,10 +2208,116 @@ std::string ScriptPatcher::PatchUBoundInForLoops(const std::string& script) {
     return r;
 }
 
+std::string ScriptPatcher::PatchAllUBound(const std::string& script) {
+    std::string r = script;
+    // Replace ALL remaining uBound( calls with VPX_SafeUBound(
+    std::regex p(R"(\buBound\s*\()", std::regex::icase);
+    r = std::regex_replace(r, p, "VPX_SafeUBound(");
+    return r;
+}
+
+std::string ScriptPatcher::PatchSafeUBoundArrayAccess(const std::string& script) {
+    std::string r = script;
+    // Replace arr(VPX_SafeUBound(arr)) with VPX_SafeGet(arr, VPX_SafeUBound(arr))
+    // BUT only when NOT followed by = (i.e., when reading, not writing)
+    // This prevents out-of-bounds when VPX_SafeUBound returns -1 for empty arrays
+    std::regex p(R"((\w+)\s*\(\s*VPX_SafeUBound\s*\(\s*\1\s*\)\s*\)(?!\s*=))", std::regex::icase);
+    r = std::regex_replace(r, p, "VPX_SafeGet($1, VPX_SafeUBound($1))");
+    return r;
+}
+
+std::string ScriptPatcher::PatchLinearEnvelopeGuard(const std::string& script) {
+    std::string r = script;
+    // Add early-exit guard to LinearEnvelope function for empty arrays
+    //// Pattern: Function LinearEnvelope(xInput, xKeyFrame, yLvl) followed by dim y
+    std::regex p(R"((Function\s+LinearEnvelope\s*\([^)]+\)\s*\r?\n)(\s*dim\s+y\b))", std::regex::icase);
+    r = std::regex_replace(r, p, "$1    If VPX_SafeUBound(xKeyFrame) < 0 Then LinearEnvelope = 0 : Exit Function\n$2");
+    return r;
+}
+
+std::string ScriptPatcher::PatchBallArrayAccess(const std::string& script) {
+    std::string r = script;
+    
+    // Ball arrays: gBOT (GetBallsOfTable) and BOT
+    // Properties: X, Y, Z, VelX, VelY, VelZ, ID, Color
+    
+    // gBOT array
+    std::regex gbot_x(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*X\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_x, "VPX_BallX(gBOT($1))");
+    
+    std::regex gbot_y(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Y\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_y, "VPX_BallY(gBOT($1))");
+    
+    std::regex gbot_z(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Z\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_z, "VPX_BallZ(gBOT($1))");
+    
+    std::regex gbot_velx(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelX\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_velx, "VPX_BallVelX(gBOT($1))");
+    
+    std::regex gbot_vely(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelY\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_vely, "VPX_BallVelY(gBOT($1))");
+    
+    std::regex gbot_velz(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelZ\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_velz, "VPX_BallVelZ(gBOT($1))");
+    
+    std::regex gbot_id(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*ID\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_id, "VPX_BallID(gBOT($1))");
+    
+    std::regex gbot_color(R"(\bgBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Color\b)", std::regex::icase);
+    r = std::regex_replace(r, gbot_color, "VPX_BallColor(gBOT($1))");
+    
+    // BOT array (same patterns)
+    std::regex bot_x(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*X\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_x, "VPX_BallX(BOT($1))");
+    
+    std::regex bot_y(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Y\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_y, "VPX_BallY(BOT($1))");
+    
+    std::regex bot_z(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Z\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_z, "VPX_BallZ(BOT($1))");
+    
+    std::regex bot_velx(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelX\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_velx, "VPX_BallVelX(BOT($1))");
+    
+    std::regex bot_vely(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelY\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_vely, "VPX_BallVelY(BOT($1))");
+    
+    std::regex bot_velz(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*VelZ\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_velz, "VPX_BallVelZ(BOT($1))");
+    
+    std::regex bot_id(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*ID\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_id, "VPX_BallID(BOT($1))");
+    
+    std::regex bot_color(R"(\bBOT\s*\(\s*(\w+)\s*\)\s*\.\s*Color\b)", std::regex::icase);
+    r = std::regex_replace(r, bot_color, "VPX_BallColor(BOT($1))");
+    
+    return r;
+}
+
+std::string ScriptPatcher::PatchBallLoopGuard(const std::string& script) {
+    std::string r = script;
+    
+    // Add guard to For loops over gBOT: skip if ball is invalid
+    // Pattern: For b = 0 to VPX_SafeUBound(gBOT) followed by newline
+    // Insert: If Not VPX_IsValidBall(gBOT(b)) Then [continue logic]
+    
+    // This is complex - instead, let's wrap entire loop bodies in On Error Resume Next
+    // by adding it after For statements that iterate over gBOT
+    std::regex p(R"((For\s+(\w+)\s*=\s*\d+\s+to\s+VPX_SafeUBound\s*\(\s*gBOT\s*\)\s*\r?\n))", std::regex::icase);
+    r = std::regex_replace(r, p, "$1        On Error Resume Next\n");
+    
+    // Same for BOT
+    std::regex p2(R"((For\s+(\w+)\s*=\s*\d+\s+to\s+VPX_SafeUBound\s*\(\s*BOT\s*\)\s*\r?\n))", std::regex::icase);
+    r = std::regex_replace(r, p2, "$1        On Error Resume Next\n");
+    
+    return r;
+}
+
+
 std::string ScriptPatcher::PatchReDimWithUBound(const std::string& script) {
     std::string r = script;
     
-    // Pattern: If UBound(arr) < val Then ReDim arr(val)
+    //// Pattern: If UBound(arr) < val Then ReDim arr(val)
     // This pattern is problematic because UBound fails on uninitialized arrays
     // We've already patched UBound -> VPX_SafeUBound, so the If check should work
     // But we also need to ensure the arrays are initialized
@@ -1865,10 +2326,11 @@ std::string ScriptPatcher::PatchReDimWithUBound(const std::string& script) {
     return r;
 }
 
+
 std::string ScriptPatcher::Patch2DArrayAccess(const std::string& script) {
     std::string r = script;
     
-    // Pattern: if not ArrayName(0,0) then ... 
+    //// Pattern: if not ArrayName(0,0) then ... 
     // This is problematic in Wine VBScript - wrap in error handling by commenting out
     // or replacing with a safe version
     
@@ -1883,10 +2345,11 @@ std::string ScriptPatcher::Patch2DArrayAccess(const std::string& script) {
     return r;
 }
 
+
 std::string ScriptPatcher::PatchArrayElementAssignment(const std::string& script) {
     std::string r = script;
 
-    // Pattern: arrayName(index) = value where array might not be initialized
+    //// Pattern: arrayName(index) = value where array might not be initialized
     // Wine VBScript has issues with array element assignments in certain contexts
     //
     // IMPORTANT: Only match ASSIGNMENTS at statement start, not comparisons in If conditions!
@@ -1916,6 +2379,7 @@ std::string ScriptPatcher::PatchArrayElementAssignment(const std::string& script
     return r;
 }
 
+
 std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
     std::string r = script;
 
@@ -1939,7 +2403,7 @@ std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
     // Transform READ access: dict("key")(idx) -> VPX_GetDictArrItem(dict, "key", idx)
     // This handles cases like: LinearEnvelope(cor("ballvel")(aBall.id), ...)
     // Need to be careful not to match patterns already transformed to VPX_SetDictArrItem
-    // Pattern: word("string")(expr) but NOT preceded by VPX_SetDictArrItem
+    //// Pattern: word("string")(expr) but NOT preceded by VPX_SetDictArrItem
     std::regex readPattern(R"REGEX((\b(?!VPX_SetDictArrItem\b))(\w+)\s*\(\s*"([^"]+)"\s*\)\s*\(\s*([^)]+)\s*\))REGEX",
                            std::regex::icase);
     r = std::regex_replace(r, readPattern, "$1VPX_GetDictArrItem($2, \"$3\", $4)");
@@ -1947,6 +2411,7 @@ std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
     PLOGI.printf("ScriptPatcher: Applied Dictionary/array access patch");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchArrayObjectPropertyAccess(const std::string& script) {
     std::string r = script;
@@ -1974,6 +2439,7 @@ std::string ScriptPatcher::PatchArrayObjectPropertyAccess(const std::string& scr
 
     return r;
 }
+
 
 std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& script) {
     std::string r = script;
@@ -2012,7 +2478,7 @@ std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& scrip
         "rgb", "ubound", "lbound", "redim", "erase"
     };
 
-    // Pattern: word(index).property - but we'll check exclusions in callback
+    //// Pattern: word(index).property - but we'll check exclusions in callback
     std::regex p(R"((\w+)\s*\(\s*([^)]+)\s*\)\s*\.(\w+)\b)", std::regex::icase);
 
     std::string result;
@@ -2059,6 +2525,7 @@ std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& scrip
     return result;
 }
 
+
 std::string ScriptPatcher::PatchSingleLineIfElse(const std::string& script) {
     std::string r = script;
     // Use [ \t]+ instead of \s+ to avoid matching across newlines
@@ -2066,6 +2533,7 @@ std::string ScriptPatcher::PatchSingleLineIfElse(const std::string& script) {
     r = std::regex_replace(r, p, "$1:$2");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchNestedSingleLineIf(const std::string& script) {
     std::string r = script;
@@ -2075,13 +2543,14 @@ std::string ScriptPatcher::PatchNestedSingleLineIf(const std::string& script) {
     //   if COND1 then
     //       if COND2 then STATEMENT
     //   end if
-    // Pattern: if ... then if ... then ... end if end if (ALL ON ONE LINE)
+    //// Pattern: if ... then if ... then ... end if end if (ALL ON ONE LINE)
     // Use [ \t] instead of \s to prevent matching across lines (newlines)
     std::regex p(R"((^|[\r\n])([ \t]*)(if[ \t]+[^\r\n]+?[ \t]+then)[ \t]+(if[ \t]+[^\r\n]+?[ \t]+then[ \t]+[^\r\n]+?)[ \t]+end[ \t]+if[ \t]+end[ \t]+if)",
                  std::regex::icase);
     r = std::regex_replace(r, p, "$1$2$3\n$2    $4\n$2end if");
     return r;
 }
+
 
 std::string ScriptPatcher::PatchExecuteEval(const std::string& script) { return script; }
 
@@ -2092,15 +2561,18 @@ std::string ScriptPatcher::PatchStringConcatenation(const std::string& script) {
     return r;
 }
 
+
 bool ScriptPatcher::UsesSlingshotCorrection(const std::string& script) {
     std::regex p(R"(Class\s+(SlingshotCorrection|FlipperPolarity|FlipperPhysics|BumperPhysics))", std::regex::icase);
     return std::regex_search(script, p);
 }
 
+
 std::string ScriptPatcher::PatchSlingshotCorrection(const std::string& script) {
     // Legacy - now handled by EmulateClasses
     return script;
 }
+
 
 // ============================================================================
 // MAIN ENTRY POINT
@@ -2128,6 +2600,12 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
 
             // Fix nested single-line If statements (Wine VBScript doesn't support them)
             result = PatchNestedSingleLineIf(result);
+
+            // Fix Dictionary boolean conditions: if varName("key") then -> if varName("key") <> 0 then
+            // Wine VBScript doesn't support using Dictionary item directly as boolean
+            // Match any variable name followed by dictionary access syntax
+            std::regex dictBoolPattern(R"(\bif\s+(\w+\s*\(\s*"[^"]+"\s*\))\s+then\b)", std::regex::icase);
+            result = std::regex_replace(result, dictBoolPattern, "if $1 <> 0 then");
         }
     }
 
@@ -2162,9 +2640,14 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
     // Wine VBScript Array Compatibility patches
     if (UsesProblematicArrays(result)) {
         PLOGI.printf("ScriptPatcher: Applying Wine array compatibility patches");
-        result = InjectWineArrayHelpers(result);
         result = PatchUBoundInConditions(result);
         result = PatchUBoundInForLoops(result);
+        result = PatchAllUBound(result);
+        result = PatchSafeUBoundArrayAccess(result);
+        result = PatchLinearEnvelopeGuard(result);
+        result = PatchBallArrayAccess(result);
+        result = PatchBallLoopGuard(result);
+        result = InjectWineArrayHelpers(result);
         result = PatchReDimWithUBound(result);
         result = Patch2DArrayAccess(result);
         result = PatchArrayElementAssignment(result);
@@ -2196,5 +2679,6 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
     }
     return result;
 }
+
 
 #endif // __STANDALONE__
