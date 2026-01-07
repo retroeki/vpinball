@@ -2331,6 +2331,33 @@ Function VPX_GetArrObjProp(arr, idx, propName)
         Case "image": VPX_GetArrObjProp = arr(idx).image
         Case "bulbhaloheight": VPX_GetArrObjProp = arr(idx).BulbHaloHeight
         Case "intensity": VPX_GetArrObjProp = arr(idx).intensity
+        Case "intensityscale": VPX_GetArrObjProp = arr(idx).intensityscale
+        Case "opacity": VPX_GetArrObjProp = arr(idx).opacity
+        Case "collidable": VPX_GetArrObjProp = arr(idx).collidable
+        Case "rotation": VPX_GetArrObjProp = arr(idx).rotation
+        Case "rotz": VPX_GetArrObjProp = arr(idx).rotz
+        Case "rotx": VPX_GetArrObjProp = arr(idx).rotx
+        Case "roty": VPX_GetArrObjProp = arr(idx).roty
+        Case "size": VPX_GetArrObjProp = arr(idx).size
+        Case "enabled": VPX_GetArrObjProp = arr(idx).enabled
+        Case "timerinterval": VPX_GetArrObjProp = arr(idx).timerinterval
+        Case "timerenabled": VPX_GetArrObjProp = arr(idx).timerenabled
+        Case "uservalue": VPX_GetArrObjProp = arr(idx).uservalue
+        Case "color": VPX_GetArrObjProp = arr(idx).color
+        Case "falloff": VPX_GetArrObjProp = arr(idx).falloff
+        Case "falloffpower": VPX_GetArrObjProp = arr(idx).falloffpower
+        Case "blend": VPX_GetArrObjProp = arr(idx).blend
+        Case "material": VPX_GetArrObjProp = arr(idx).material
+        Case "isdropped": VPX_GetArrObjProp = arr(idx).isdropped
+        Case "objrotz": VPX_GetArrObjProp = arr(idx).objrotz
+        Case "objrotx": VPX_GetArrObjProp = arr(idx).objrotx
+        Case "objroty": VPX_GetArrObjProp = arr(idx).objroty
+        Case "transx": VPX_GetArrObjProp = arr(idx).transx
+        Case "transy": VPX_GetArrObjProp = arr(idx).transy
+        Case "transz": VPX_GetArrObjProp = arr(idx).transz
+        Case "scalex": VPX_GetArrObjProp = arr(idx).scalex
+        Case "scaley": VPX_GetArrObjProp = arr(idx).scaley
+        Case "scalez": VPX_GetArrObjProp = arr(idx).scalez
     End Select
     On Error Goto 0
 End Function
@@ -2366,6 +2393,9 @@ Sub VPX_SetArrObjProp(arr, idx, propName, val)
         Case "material": arr(idx).material = val
         Case "isdropped": arr(idx).isdropped = val
         Case "objrotz": arr(idx).objrotz = val
+        Case "objrotx": arr(idx).objrotx = val
+        Case "objroty": arr(idx).objroty = val
+        Case "intensityscale": arr(idx).intensityscale = val
         Case "transx": arr(idx).transx = val
         Case "transy": arr(idx).transy = val
         Case "transz": arr(idx).transz = val
