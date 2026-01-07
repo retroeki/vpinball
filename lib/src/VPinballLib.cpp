@@ -51,6 +51,21 @@ MSGPI_EXPORT void MSGPIAPI WMPPluginUnload();
 MSGPI_EXPORT void MSGPIAPI UpscaleDMDPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI UpscaleDMDPluginUnload();
 
+// Global storage for PUP video source dimensions (updated by PUP plugin during render)
+static std::atomic<int> g_pupVideoSourceWidth{0};
+static std::atomic<int> g_pupVideoSourceHeight{0};
+
+extern "C" void SetPUPVideoSourceSize(int width, int height)
+{
+   g_pupVideoSourceWidth = width;
+   g_pupVideoSourceHeight = height;
+}
+
+static void GetPUPVideoSourceSize(int& width, int& height)
+{
+   width = g_pupVideoSourceWidth;
+   height = g_pupVideoSourceHeight;
+}
 
 namespace VPinballLib {
 
@@ -135,7 +150,7 @@ void VPinballLib::AppIterate()
          return;
       }
 
-      PLOGI.printf("Game Loop stopping");
+      PLOGI.printf("Game Loop stopping, close state: %d", g_pplayer ? (int)g_pplayer->GetCloseState() : -1);
 
       m_gameLoop = nullptr;
 
@@ -368,29 +383,36 @@ void VPinballLib::ResetLog()
 
 int VPinballLib::LoadValueInt(const string& sectionName, const string& key, int defaultValue)
 {
+   // Use table settings when a table is loaded, otherwise use global settings
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
       const auto* existingProp = Settings::GetRegistry().GetProperty(existingId.value());
       if (existingProp->m_type == VPX::Properties::PropertyDef::Type::Enum ||
           existingProp->m_type == VPX::Properties::PropertyDef::Type::Int ||
           existingProp->m_type == VPX::Properties::PropertyDef::Type::Bool)
-         return g_pvp->m_settings.GetInt(existingId.value());
+         return settings.GetInt(existingId.value());
 
       PLOGW << "LoadValueInt: property " << sectionName << '.' << key << " exists but is not int-compatible type";
       return defaultValue;
    }
 
    const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>(sectionName, key, ""s, ""s, true, INT_MIN, INT_MAX, defaultValue));
-   return g_pvp->m_settings.GetInt(propId);
+   return settings.GetInt(propId);
 }
 
 void VPinballLib::SaveValueInt(const string& sectionName, const string& key, int value)
 {
+   // Use table settings when a table is loaded, otherwise use global settings
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
-      g_pvp->m_settings.Set(existingId.value(), value, false);
+      settings.Set(existingId.value(), value, asTableOverride);
    else
-      g_pvp->m_settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>(sectionName, key, ""s, ""s, true, INT_MIN, INT_MAX, value)), value, false);
-   g_pvp->m_settings.Save();
+      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>(sectionName, key, ""s, ""s, true, INT_MIN, INT_MAX, value)), value, asTableOverride);
+   settings.Save();
 }
 
 float VPinballLib::LoadValueFloat(const string& sectionName, const string& key, float defaultValue)
@@ -605,10 +627,11 @@ VPINBALL_STATUS VPinballLib::SetViewMode(VPINBALL_VIEW_MODE mode)
          g_pplayer->m_ptable->SetViewSetupOverride(vm);
          if (g_pplayer->m_renderer)
          {
-            // Must disable static pre-pass before InitLayout to re-render static geometry for new view
-            // This matches what the in-game UI does in GraphicSettingsPage::OnStaticRenderDirty()
+            // Disable static pre-pass, recalculate layout, then re-enable
             g_pplayer->m_renderer->DisableStaticPrePass(true);
             g_pplayer->m_renderer->InitLayout();
+            // Re-enable static pre-pass so DT image renders again
+            g_pplayer->m_renderer->DisableStaticPrePass(false);
          }
       }
    }, &viewMode, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
@@ -639,11 +662,54 @@ VPINBALL_STATUS VPinballLib::CycleViewMode()
       g_pplayer->m_ptable->SetViewSetupOverride(next);
       if (g_pplayer->m_renderer)
       {
-         // Must disable static pre-pass before InitLayout to re-render static geometry for new view
+         // Disable static pre-pass, recalculate layout, then re-enable
          g_pplayer->m_renderer->DisableStaticPrePass(true);
          g_pplayer->m_renderer->InitLayout();
+         // Re-enable static pre-pass so DT image renders again
+         g_pplayer->m_renderer->DisableStaticPrePass(false);
       }
    }, nullptr, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+VPINBALL_STATUS VPinballLib::ToggleScoreView(bool enable, int x, int y, int width, int height)
+{
+   // Must have an active player with a table
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return VPINBALL_STATUS_FAILURE;
+
+   struct ScoreViewParams {
+      bool enable;
+      int x, y, width, height;
+   };
+   ScoreViewParams params = { enable, x, y, width, height };
+
+   // Must run on main thread for renderer operations
+   return SDL_RunOnMainThread([](void* userdata) {
+      ScoreViewParams* p = static_cast<ScoreViewParams*>(userdata);
+      if (!g_pplayer || !g_pplayer->m_ptable)
+         return;
+
+      if (p->enable)
+      {
+         // Enable ScoreView in embedded mode
+         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_EMBEDDED);
+         g_pplayer->m_scoreViewOutput.SetPos(p->x, p->y);
+         g_pplayer->m_scoreViewOutput.SetWidth(p->width);
+         g_pplayer->m_scoreViewOutput.SetHeight(p->height);
+      }
+      else
+      {
+         // Disable ScoreView
+         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_DISABLED);
+      }
+   }, &params, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+VPINBALL_STATUS VPinballLib::GetScoreViewSourceSize(int& width, int& height)
+{
+   // Get PUP video source dimensions (set by PUP plugin during render)
+   GetPUPVideoSourceSize(width, height);
+   return VPINBALL_STATUS_SUCCESS;
 }
 
 }

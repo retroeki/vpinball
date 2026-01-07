@@ -2670,8 +2670,11 @@ std::string ScriptPatcher::PatchArrayObjectPropertyAccess(const std::string& scr
     //   If x Then Glowing(b).state = 1
 
     // Pattern requires statement start position to avoid matching comparisons
+    // IMPORTANT: Do NOT match VPX_GetDictArrItem(...).property = value
+    // That pattern is created by class emulation + PatchDictArrayAccess for
+    // dict("key")(idx).prop = value and should work directly without further transformation.
     // Value capture stops at : or Then/Else keywords or newline (non-greedy)
-    std::regex p(R"((^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(\w+)\s*\(\s*([^)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)(?=[ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))",
+    std::regex p(R"((^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(?!VPX_GetDictArrItem\b)(\w+)\s*\(\s*([^)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)(?=[ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))",
                  std::regex::icase | std::regex::multiline);
     r = std::regex_replace(r, p, "$1VPX_SetArrObjProp $2, $3, \"$4\", $5");
 
