@@ -127,9 +127,11 @@ private:
 
     /**
      * Transform method body: replace Me.X with this_("X"), etc.
+     * @param methodParams - parameter names to exclude from transformation
      */
     static std::string TransformMethodBody(const std::string& body,
-                                           const VBClassDefinition& classDef);
+                                           const VBClassDefinition& classDef,
+                                           const std::vector<std::string>& methodParams = {});
 
     // ========================================================================
     // Class Emulation - Phase 3: Usage Transformation
@@ -143,9 +145,10 @@ private:
 
     /**
      * Transform "Set x = New ClassName" -> "Set x = ClassName_Create()"
+     * Also handles "(new ClassName)(args)" -> "ClassName_defaultMethod(ClassName_Create(), args)"
      */
     static std::string TransformNewStatements(const std::string& script,
-                                              const std::unordered_set<std::string>& classNames);
+                                              const std::vector<VBClassDefinition>& classes);
 
     /**
      * Transform method calls: obj.Method(args) -> ClassName_Method(obj, args)
