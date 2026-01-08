@@ -38,7 +38,7 @@
 // ============================================================================
 
 bool ScriptPatcher::HasClassDefinitions(const std::string& script) {
-    std::regex classPattern(R"(\bClass\s+\w+)", std::regex::icase);
+    static std::regex classPattern(R"(\bClass\s+\w+)", std::regex::icase);
     return std::regex_search(script, classPattern);
 }
 
@@ -872,18 +872,50 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
 }
 
 
+/**
+ * Transform method calls on emulated class instances.
+ *
+ * Converts: obj.Method(args)  ->  ClassName_Method(obj, args)   [expression context]
+ *           obj.Method(args)  ->  ClassName_Method obj, args    [statement context]
+ *           obj.Method args   ->  ClassName_Method obj, args    [space-separated args]
+ *           obj.Method        ->  ClassName_Method obj          [no args]
+ *
+ * OPTIMIZATION: This uses a single-pass approach with regex_iterator instead of
+ * multiple regex_replace calls. The old approach did O(V * M * 4) regex operations
+ * where V = number of variables and M = number of methods. This does O(N) where
+ * N = number of word.word patterns in the script.
+ *
+ * @param script The VBScript source after class definitions have been emulated
+ * @param classes The parsed class definitions for lookup
+ * @return The script with method calls transformed
+ */
 std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                                                  const std::vector<VBClassDefinition>& classes) {
-    // Build method lookup
-    std::unordered_map<std::string, std::unordered_set<std::string>> classMethods;
+    // =========================================================================
+    // PHASE 1: Build lookup tables for O(1) access during transformation
+    // =========================================================================
+
+    // Map: className -> (lowercase method name -> original case method name)
+    // This allows case-insensitive matching while preserving original case in output
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> classMethods;
+    std::unordered_set<std::string> classNames;
     for (const auto& cls : classes) {
-        std::unordered_set<std::string> methods;
-        for (const auto& m : cls.methods) methods.insert(m.name);
+        classNames.insert(cls.name);
+        std::unordered_map<std::string, std::string> methods;
+        for (const auto& m : cls.methods) {
+            methods[ToLower(m.name)] = m.name;  // lowercase key -> original value
+        }
         classMethods[cls.name] = methods;
     }
 
-    // Track variable types
-    std::unordered_map<std::string, std::string> varTypes;
+    // =========================================================================
+    // PHASE 2: Find all variables that hold emulated class instances
+    // =========================================================================
+
+    // Scan for: Set varName = ClassName_Create()
+    // Build maps: lowercase var -> className, lowercase var -> original case var
+    std::unordered_map<std::string, std::string> varTypes;       // lowerVar -> className
+    std::unordered_map<std::string, std::string> varOriginalCase; // lowerVar -> originalVar
     for (const auto& cls : classes) {
         std::string escapedClassName = EscapeRegex(cls.name);
         std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
@@ -891,40 +923,127 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
         std::smatch match;
         std::string::const_iterator searchStart(script.cbegin());
         while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
-            varTypes[match[1].str()] = cls.name;
+            std::string varName = match[1].str();
+            std::string lowerVar = ToLower(varName);
+            varTypes[lowerVar] = cls.name;
+            varOriginalCase[lowerVar] = varName;
             searchStart = match.suffix().first;
         }
     }
 
-    std::string result = script;
-    for (const auto& [varName, className] : varTypes) {
-        const auto& methods = classMethods[className];
-        std::string escapedVar = EscapeRegex(varName);
-        for (const auto& methodName : methods) {
-            std::string escapedMethod = EscapeRegex(methodName);
-            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
-            // var.Method(args) in expression context (after =) -> ClassName_Method(varName, args)
-            std::string wpExpr = "=\\s*\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
-            std::regex wprExpr(wpExpr, std::regex::icase);
-            result = std::regex_replace(result, wprExpr, "= " + className + "_" + methodName + "(" + varName + ", $1)");
-            // var.Method(args) as statement -> ClassName_Method varName, args
-            std::string wp = "\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
-            std::regex wpr(wp, std::regex::icase);
-            result = std::regex_replace(result, wpr, className + "_" + methodName + " " + varName + ", $1");
-            // var.Method args (but NOT if followed only by a comment)
-            // First char of args must NOT be quote or whitespace to prevent matching comments
-            // Use [ \t]+ instead of \s+ to avoid matching across newlines
-            std::string np = "\\b" + escapedVar + "\\." + escapedMethod + "[ \\t]+([^'\\s:\\r\\n][^:\\r\\n]*)";
-            std::regex npr(np, std::regex::icase);
-            result = std::regex_replace(result, npr, className + "_" + methodName + " " + varName + ", $1");
-            // var.Method (no args)
-            std::string na = "\\b" + escapedVar + "\\." + escapedMethod + "\\b(?!\\s*[=(])";
-            std::regex nar(na, std::regex::icase);
-            result = std::regex_replace(result, nar, className + "_" + methodName + " " + varName);
+    // Early exit if no emulated class instances found
+    if (varTypes.empty()) return script;
+
+    // =========================================================================
+    // PHASE 3: Single-pass transformation using regex_iterator
+    // =========================================================================
+
+    // Regex breakdown: \b(\w+)\.(\w+)(\s*\(([^)]*)\)|[ \t]+([^'=:\r\n\s][^:\r\n]*))?
+    //
+    // \b(\w+)          - Capture group 1: variable name (word boundary to avoid partial matches)
+    // \.               - Literal dot
+    // (\w+)            - Capture group 2: method name
+    // (                - Capture group 3: optional args section (either parens or space-separated)
+    //   \s*\(([^)]*)\) - Alternative A: parenthesized args, group 4 captures inside parens
+    //   |              - OR
+    //   [ \t]+         - Horizontal whitespace (NOT \s to avoid matching across newlines)
+    //   ([^'=:\r\n\s]  - Capture group 5: first char must not be quote/equals/colon/newline/space
+    //                    (prevents matching comments and assignment operators)
+    //   [^:\r\n]*)     - Rest of args until colon or newline
+    // )?               - Args section is optional (handles no-arg calls)
+    //
+    static std::regex dotAccess(R"(\b(\w+)\.(\w+)(\s*\(([^)]*)\)|[ \t]+([^'=:\r\n\s][^:\r\n]*))?)", std::regex::icase);
+
+    std::string result;
+    result.reserve(script.size() + script.size() / 10);  // Pre-allocate with 10% buffer
+
+    std::sregex_iterator it(script.begin(), script.end(), dotAccess);
+    std::sregex_iterator end;
+    size_t lastPos = 0;
+
+    while (it != end) {
+        std::smatch match = *it;
+        std::string lowerVar = ToLower(match[1].str());
+        std::string lowerMember = ToLower(match[2].str());
+
+        // Append any text between last match and this match (unchanged)
+        result.append(script, lastPos, match.position() - lastPos);
+
+        // Check if this is a known emulated class variable
+        auto varIt = varTypes.find(lowerVar);
+        if (varIt != varTypes.end()) {
+            const std::string& className = varIt->second;
+            const auto& methods = classMethods[className];
+            auto methodIt = methods.find(lowerMember);
+
+            if (methodIt != methods.end()) {
+                // Found a method call on an emulated class instance - transform it
+                const std::string& origMethod = methodIt->second;
+                const std::string& origVar = varOriginalCase[lowerVar];
+
+                std::string args;
+                bool hasParens = false;
+
+                if (match[3].matched) {
+                    // IMPORTANT: Check match[4].matched to determine if parens were used,
+                    // NOT by searching for '(' in the string. Comments like 'point# (note)'
+                    // contain parentheses but should use the space-separated args path.
+                    if (match[4].matched) {
+                        // Parenthesized args: var.Method(args) or var.Method()
+                        hasParens = true;
+                        args = match[4].str();
+                    } else if (match[5].matched) {
+                        // Space-separated args: var.Method arg1, arg2
+                        args = match[5].str();
+                        // Trim trailing whitespace (but preserve args content)
+                        size_t endPos = args.find_last_not_of(" \t\r\n");
+                        if (endPos != std::string::npos)
+                            args = args.substr(0, endPos + 1);
+                        else
+                            args.clear();
+                    }
+                }
+                // If match[3] not matched: no-args call like var.Method
+
+                // Determine output format based on expression vs statement context
+                // Expression context: preceded by '=' (e.g., "x = obj.Method()")
+                // Statement context: standalone call (e.g., "obj.Method arg")
+                size_t checkPos = result.size();
+                while (checkPos > 0 && (result[checkPos-1] == ' ' || result[checkPos-1] == '\t')) checkPos--;
+
+                if (checkPos > 0 && result[checkPos-1] == '=') {
+                    // Expression context: output as function call with parens
+                    // = obj.Method(args) -> = ClassName_Method(obj, args)
+                    result += className + "_" + origMethod + "(" + origVar;
+                    if (!args.empty()) result += ", " + args;
+                    result += ")";
+                } else {
+                    // Statement context: output as sub call without parens
+                    // obj.Method args -> ClassName_Method obj, args
+                    result += className + "_" + origMethod + " " + origVar;
+                    if (!args.empty()) result += ", " + args;
+                }
+
+                lastPos = match.position() + match.length();
+                ++it;
+                continue;
+            }
         }
+
+        // Not a method call on emulated class - keep original text
+        result += match[0].str();
+        lastPos = match.position() + match.length();
+        ++it;
     }
+
+    // Append any remaining text after the last match
+    result.append(script, lastPos, script.size() - lastPos);
     return result;
 }
+
+
+
+
 
 
 std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
