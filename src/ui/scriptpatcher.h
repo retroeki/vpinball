@@ -91,7 +91,7 @@ public:
     /**
      * Patch a VBScript to fix Wine VBScript engine incompatibilities.
      */
-    static std::string PatchScript(const std::string& script, bool skipHelperInjection = false);
+    static std::string PatchScript(const std::string& script);
 
 private:
     // ========================================================================
@@ -211,14 +211,12 @@ private:
     static std::string PatchLinearEnvelopeGuard(const std::string& script);
     static std::string PatchBallArrayAccess(const std::string& script);
     static std::string PatchBallLoopGuard(const std::string& script);
-    static std::string PatchDirectBallPropertyAccess(const std::string& script);
     static std::string PatchReDimWithUBound(const std::string& script);
     static std::string Patch2DArrayAccess(const std::string& script);
     static std::string PatchArrayElementAssignment(const std::string& script);
     static std::string PatchDictArrayAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyRead(const std::string& script);
-    static std::string PatchSimplePropertyAssignment(const std::string& script);
     static std::string InjectVPXSetArrObjProp(const std::string& script);
 
     // Class definition strings for DTArray/STArray
