@@ -34,42 +34,6 @@
 #include <algorithm>
 
 // ============================================================================
-// OPTIMIZATION HELPERS
-// ============================================================================
-
-namespace {
-
-// Pre-compiled static regex for finding variable type assignments
-// Matches: Set varName = ClassName_Create()
-static std::regex& GetVarTypeRegex() {
-    static std::regex r(R"(Set\s+(\w+)\s*=\s*(\w+)_Create\s*\()", std::regex::icase);
-    return r;
-}
-
-// Build variable type map: varName (lowercase) -> className
-// Also builds original case map: varName (lowercase) -> original varName
-void BuildVarTypeMaps(const std::string& script,
-                      const std::unordered_set<std::string>& classNames,
-                      std::unordered_map<std::string, std::string>& varTypes,
-                      std::unordered_map<std::string, std::string>& varOriginalCase) {
-    std::sregex_iterator it(script.begin(), script.end(), GetVarTypeRegex());
-    std::sregex_iterator end;
-    while (it != end) {
-        std::string varName = (*it)[1].str();
-        std::string className = (*it)[2].str();
-        if (classNames.count(className) > 0) {
-            std::string lowerVar = ToLower(varName);
-            varTypes[lowerVar] = className;
-            varOriginalCase[lowerVar] = varName;
-        }
-        ++it;
-    }
-}
-
-} // anonymous namespace
-
-
-// ============================================================================
 // CLASS EMULATION - Phase 1: Parsing
 // ============================================================================
 
@@ -88,7 +52,7 @@ std::vector<std::string> ScriptPatcher::ParseParameters(const std::string& param
     std::string token;
     while (std::getline(stream, token, ',')) {
         token = Trim(token);
-        std::regex byvalRef(R"(^(ByVal|ByRef)\s+)", std::regex::icase);
+        static std::regex byvalRef(R"(^(ByVal|ByRef)\s+)", std::regex::icase);
         token = std::regex_replace(token, byvalRef, "");
         token = Trim(token);
         if (!token.empty()) params.push_back(token);
@@ -112,19 +76,19 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
     VBClassAccessor currentAccessor;
     int accessorNestLevel = 0;
     
-    std::regex classStartPattern(R"(^\s*Class\s+(\w+))", std::regex::icase);
-    std::regex classEndPattern(R"(^\s*End\s+Class\s*$)", std::regex::icase);
-    std::regex propertyDeclPattern(R"(^\s*(Public|Private)\s+(?!Sub|Function|Property|Default)(.+)$)", std::regex::icase);
-    std::regex methodStartPattern(R"(^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
-    std::regex methodEndSubPattern(R"(^\s*End\s+Sub\s*$)", std::regex::icase);
-    std::regex methodEndFuncPattern(R"(^\s*End\s+Function\s*$)", std::regex::icase);
-    std::regex accessorStartPattern(R"(^\s*(Public\s+|Private\s+)?Property\s+(Get|Let|Set)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
-    std::regex accessorEndPattern(R"(^\s*End\s+Property\s*$)", std::regex::icase);
+    static std::regex classStartPattern(R"(^\s*Class\s+(\w+))", std::regex::icase);
+    static std::regex classEndPattern(R"(^\s*End\s+Class\s*$)", std::regex::icase);
+    static std::regex propertyDeclPattern(R"(^\s*(Public|Private)\s+(?!Sub|Function|Property|Default)(.+)$)", std::regex::icase);
+    static std::regex methodStartPattern(R"(^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
+    static std::regex methodEndSubPattern(R"(^\s*End\s+Sub\s*$)", std::regex::icase);
+    static std::regex methodEndFuncPattern(R"(^\s*End\s+Function\s*$)", std::regex::icase);
+    static std::regex accessorStartPattern(R"(^\s*(Public\s+|Private\s+)?Property\s+(Get|Let|Set)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
+    static std::regex accessorEndPattern(R"(^\s*End\s+Property\s*$)", std::regex::icase);
     // Nest patterns - match at line start (with whitespace) OR after statement separator (:)
     // For inline blocks like "Dim x : For x = 0 to N"
     // Use ^\s* to allow leading whitespace at line start
-    std::regex nestStartPattern(R"((^\s*|:\s*)(If\s+.*\s+Then\s*$|For\s+|Do\s+|While\s+|Select\s+Case))", std::regex::icase);
-    std::regex nestEndPattern(R"((^\s*|:\s*)(End\s+If|Next|Loop|Wend|End\s+Select))", std::regex::icase);
+    static std::regex nestStartPattern(R"((^\s*|:\s*)(If\s+.*\s+Then\s*$|For\s+|Do\s+|While\s+|Select\s+Case))", std::regex::icase);
+    static std::regex nestEndPattern(R"((^\s*|:\s*)(End\s+If|Next|Loop|Wend|End\s+Select))", std::regex::icase);
 
     while (std::getline(stream, line)) {
         std::smatch match;
@@ -147,7 +111,7 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
         
         if (!inClass && std::regex_search(line, match, classStartPattern)) {
             // Check for single-line class definition (Class X : ... : End Class on same line)
-            std::regex singleLineClassPattern(R"(\bEnd\s+Class\b)", std::regex::icase);
+            static std::regex singleLineClassPattern(R"(\bEnd\s+Class\b)", std::regex::icase);
             if (std::regex_search(line, singleLineClassPattern)) {
                 // Single-line stub class - skip it entirely (don't emulate)
                 PLOGI.printf("ScriptPatcher: Skipping single-line stub class '%s'", match[1].str().c_str());
@@ -234,8 +198,8 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
             // Check for single-line method: Sub Foo() : body : End Sub
             // Pattern to find : ... : End Sub or : ... : End Function on same line
             // Allow trailing comments ('...) after End Sub/Function
-            std::regex singleLineEndSub(R"(:\s*(.*):\s*End\s+Sub\s*('.*)?$)", std::regex::icase);
-            std::regex singleLineEndFunc(R"(:\s*(.*):\s*End\s+Function\s*('.*)?$)", std::regex::icase);
+            static std::regex singleLineEndSub(R"(:\s*(.*):\s*End\s+Sub\s*('.*)?$)", std::regex::icase);
+            static std::regex singleLineEndFunc(R"(:\s*(.*):\s*End\s+Function\s*('.*)?$)", std::regex::icase);
             std::smatch singleLineMatch;
             bool isSingleLine = false;
 
@@ -276,7 +240,7 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
 
             // Check for single-line accessor: Property Get Foo() : Foo = x : End Property
             // Allow trailing comments ('...) after End Property
-            std::regex singleLineEndProp(R"(:\s*(.*):\s*End\s+Property\s*('.*)?$)", std::regex::icase);
+            static std::regex singleLineEndProp(R"(:\s*(.*):\s*End\s+Property\s*('.*)?$)", std::regex::icase);
             std::smatch singleLineMatch;
             bool isSingleLine = false;
 
@@ -372,10 +336,10 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
     };
 
     // Me.Property -> this_("Property")
-    std::regex meDotPattern(R"(\bMe\.(\w+))", std::regex::icase);
+    static std::regex meDotPattern(R"(\bMe\.(\w+))", std::regex::icase);
     result = std::regex_replace(result, meDotPattern, "this_(\"$1\")");
     // Standalone Me -> this_
-    std::regex mePattern(R"(\bMe\b(?!\.))", std::regex::icase);
+    static std::regex mePattern(R"(\bMe\b(?!\.))", std::regex::icase);
     result = std::regex_replace(result, mePattern, "this_");
 
     for (const auto& prop : classDef.properties) {
@@ -908,252 +872,196 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
 }
 
 
-
 std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                                                  const std::vector<VBClassDefinition>& classes) {
-    // Build lookup tables ONCE
-    std::unordered_set<std::string> classNames;
-    // className -> methodName (lowercase) -> original method name
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> classMethods;
-    
+    // Build method lookup
+    std::unordered_map<std::string, std::unordered_set<std::string>> classMethods;
     for (const auto& cls : classes) {
-        classNames.insert(cls.name);
-        std::unordered_map<std::string, std::string> methods;
-        for (const auto& m : cls.methods) {
-            methods[ToLower(m.name)] = m.name;
-        }
+        std::unordered_set<std::string> methods;
+        for (const auto& m : cls.methods) methods.insert(m.name);
         classMethods[cls.name] = methods;
     }
 
-    // Build variable type maps using helper
-    std::unordered_map<std::string, std::string> varTypes;      // lowerVar -> className
-    std::unordered_map<std::string, std::string> varOriginalCase; // lowerVar -> original var
-    BuildVarTypeMaps(script, classNames, varTypes, varOriginalCase);
-
-    if (varTypes.empty()) return script;
-
-    // Single-pass: find all word.word patterns
-    static std::regex dotAccess(R"(\b(\w+)\.(\w+)\b(\s*\(([^)]*)\))?)", std::regex::icase);
-
-    std::string result;
-    result.reserve(script.size() + script.size() / 10);
-
-    std::sregex_iterator it(script.begin(), script.end(), dotAccess);
-    std::sregex_iterator end;
-    size_t lastPos = 0;
-
-    while (it != end) {
-        std::smatch match = *it;
-        std::string lowerVar = ToLower(match[1].str());
-        std::string lowerMember = ToLower(match[2].str());
-
-        result.append(script, lastPos, match.position() - lastPos);
-
-        auto varIt = varTypes.find(lowerVar);
-        if (varIt != varTypes.end()) {
-            const std::string& className = varIt->second;
-            const auto& methods = classMethods[className];
-            auto methodIt = methods.find(lowerMember);
-
-            if (methodIt != methods.end()) {
-                // Found a method call - transform it
-                const std::string& origMethod = methodIt->second;
-                const std::string& origVar = varOriginalCase[lowerVar];
-
-                if (match[3].matched) {
-                    // Has parentheses: var.Method(args)
-                    std::string args = match[4].str();
-                    // Check for expression context (preceded by =)
-                    size_t checkPos = result.size();
-                    while (checkPos > 0 && (result[checkPos-1] == ' ' || result[checkPos-1] == '\t')) checkPos--;
-                    if (checkPos > 0 && result[checkPos-1] == '=') {
-                        // Expression: = ClassName_Method(var, args)
-                        result += className + "_" + origMethod + "(" + origVar;
-                        if (!args.empty()) result += ", " + args;
-                        result += ")";
-                    } else {
-                        // Statement: ClassName_Method var, args
-                        result += className + "_" + origMethod + " " + origVar;
-                        if (!args.empty()) result += ", " + args;
-                    }
-                } else {
-                    // No parens: var.Method -> ClassName_Method var
-                    result += className + "_" + origMethod + " " + origVar;
-                }
-                lastPos = match.position() + match.length();
-                ++it;
-                continue;
-            }
+    // Track variable types
+    std::unordered_map<std::string, std::string> varTypes;
+    for (const auto& cls : classes) {
+        std::string escapedClassName = EscapeRegex(cls.name);
+        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
+        std::regex setPattern(pattern, std::regex::icase);
+        std::smatch match;
+        std::string::const_iterator searchStart(script.cbegin());
+        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
+            varTypes[match[1].str()] = cls.name;
+            searchStart = match.suffix().first;
         }
-
-        // Not a method - keep original
-        result += match[0].str();
-        lastPos = match.position() + match.length();
-        ++it;
     }
 
-    result.append(script, lastPos, script.size() - lastPos);
+    std::string result = script;
+    for (const auto& [varName, className] : varTypes) {
+        const auto& methods = classMethods[className];
+        std::string escapedVar = EscapeRegex(varName);
+        for (const auto& methodName : methods) {
+            std::string escapedMethod = EscapeRegex(methodName);
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            // var.Method(args) in expression context (after =) -> ClassName_Method(varName, args)
+            std::string wpExpr = "=\\s*\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
+            std::regex wprExpr(wpExpr, std::regex::icase);
+            result = std::regex_replace(result, wprExpr, "= " + className + "_" + methodName + "(" + varName + ", $1)");
+            // var.Method(args) as statement -> ClassName_Method varName, args
+            std::string wp = "\\b" + escapedVar + "\\." + escapedMethod + "\\s*\\(([^)]*)\\)";
+            std::regex wpr(wp, std::regex::icase);
+            result = std::regex_replace(result, wpr, className + "_" + methodName + " " + varName + ", $1");
+            // var.Method args (but NOT if followed only by a comment)
+            // First char of args must NOT be quote or whitespace to prevent matching comments
+            // Use [ \t]+ instead of \s+ to avoid matching across newlines
+            std::string np = "\\b" + escapedVar + "\\." + escapedMethod + "[ \\t]+([^'\\s:\\r\\n][^:\\r\\n]*)";
+            std::regex npr(np, std::regex::icase);
+            result = std::regex_replace(result, npr, className + "_" + methodName + " " + varName + ", $1");
+            // var.Method (no args)
+            std::string na = "\\b" + escapedVar + "\\." + escapedMethod + "\\b(?!\\s*[=(])";
+            std::regex nar(na, std::regex::icase);
+            result = std::regex_replace(result, nar, className + "_" + methodName + " " + varName);
+        }
+    }
     return result;
 }
-
 
 
 std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
                                                     const std::vector<VBClassDefinition>& classes) {
-    // Build lookup tables ONCE
-    std::unordered_set<std::string> classNames;
-    // className -> propName (lowercase) -> {original name, isArray}
-    struct PropInfo { std::string name; bool isArray; };
-    std::unordered_map<std::string, std::unordered_map<std::string, PropInfo>> classProps;
-    
+    // Collect regular props and array props separately
+    std::unordered_map<std::string, std::unordered_set<std::string>> classProps;      // non-array
+    std::unordered_map<std::string, std::unordered_set<std::string>> classArrayProps; // array
     for (const auto& cls : classes) {
-        classNames.insert(cls.name);
-        std::unordered_map<std::string, PropInfo> props;
+        std::unordered_set<std::string> props;
+        std::unordered_set<std::string> arrayProps;
         for (const auto& p : cls.properties) {
-            props[ToLower(p.name)] = {p.name, p.isArray};
+            if (p.isArray)
+                arrayProps.insert(p.name);
+            else
+                props.insert(p.name);
         }
         classProps[cls.name] = props;
+        classArrayProps[cls.name] = arrayProps;
     }
 
-    // Build variable type maps using helper
     std::unordered_map<std::string, std::string> varTypes;
-    std::unordered_map<std::string, std::string> varOriginalCase;
-    BuildVarTypeMaps(script, classNames, varTypes, varOriginalCase);
+    for (const auto& cls : classes) {
+        std::string escapedClassName = EscapeRegex(cls.name);
+        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
+        std::regex setPattern(pattern, std::regex::icase);
+        std::smatch match;
+        std::string::const_iterator searchStart(script.cbegin());
+        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
+            varTypes[match[1].str()] = cls.name;
+            searchStart = match.suffix().first;
+        }
+    }
 
-    if (varTypes.empty()) return script;
+    std::string result = script;
+    for (const auto& [varName, className] : varTypes) {
+        std::string escapedVar = EscapeRegex(varName);
 
-    // Single-pass: find all word.word patterns (with optional trailing ( for arrays or = for assignment)
-    static std::regex dotAccess(R"(\b(\w+)\.(\w+)\b(\s*\(|\s*=)?)", std::regex::icase);
-
-    std::string result;
-    result.reserve(script.size() + script.size() / 10);
-
-    std::sregex_iterator it(script.begin(), script.end(), dotAccess);
-    std::sregex_iterator end;
-    size_t lastPos = 0;
-
-    while (it != end) {
-        std::smatch match = *it;
-        std::string lowerVar = ToLower(match[1].str());
-        std::string lowerProp = ToLower(match[2].str());
-
-        result.append(script, lastPos, match.position() - lastPos);
-
-        auto varIt = varTypes.find(lowerVar);
-        if (varIt != varTypes.end()) {
-            const std::string& className = varIt->second;
-            const auto& props = classProps[className];
-            auto propIt = props.find(lowerProp);
-
-            if (propIt != props.end()) {
-                const PropInfo& info = propIt->second;
-                const std::string& origVar = varOriginalCase[lowerVar];
-                std::string suffix = match[3].matched ? match[3].str() : "";
-                
-                if (info.isArray) {
-                    // Array property: var.arrayProp( -> ClassName_arrayProp(
-                    if (!suffix.empty() && suffix.find('(') != std::string::npos) {
-                        result += className + "_" + info.name + "(";
-                        lastPos = match.position() + match.length();
-                        ++it;
-                        continue;
-                    }
-                } else {
-                    // Regular property
-                    // Check if preceded by "Set " for Set var.Prop = 
-                    bool isSetStatement = false;
-                    if (result.size() >= 4) {
-                        std::string last4 = result.substr(result.size() - 4);
-                        std::string last4Lower = ToLower(last4);
-                        if (last4Lower == "set ") isSetStatement = true;
-                    }
-                    
-                    if (!suffix.empty() && suffix.find('=') != std::string::npos) {
-                        // Write: var.Prop = -> var("Prop") =
-                        if (isSetStatement) {
-                            result += origVar + "(\"" + info.name + "\") =";
-                        } else {
-                            result += origVar + "(\"" + info.name + "\") =";
-                        }
-                    } else {
-                        // Read: var.Prop -> var("Prop")
-                        result += origVar + "(\"" + info.name + "\")";
-                        if (!suffix.empty()) result += suffix;
-                    }
-                    lastPos = match.position() + match.length();
-                    ++it;
-                    continue;
-                }
-            }
+        // Handle ARRAY properties: var.arrayProp(idx) -> ClassName_arrayProp(idx)
+        // Array props are stored as global arrays, not in dictionary
+        const auto& arrayProps = classArrayProps[className];
+        for (const auto& propName : arrayProps) {
+            std::string escapedProp = EscapeRegex(propName);
+            // Match var.arrayProp( - array access with opening paren
+            std::string ap = "\\b" + escapedVar + "\\." + escapedProp + "\\s*\\(";
+            std::regex ar(ap, std::regex::icase);
+            result = std::regex_replace(result, ar, className + "_" + propName + "(");
         }
 
-        // Not a property - keep original
-        result += match[0].str();
-        lastPos = match.position() + match.length();
-        ++it;
+        // Handle REGULAR properties: var.Prop -> var("Prop")
+        const auto& props = classProps[className];
+        for (const auto& propName : props) {
+            std::string escapedProp = EscapeRegex(propName);
+            // Use word boundary  before variable name to avoid matching substrings
+            // Read: var.Prop (not = )
+            std::string rp = "\\b" + escapedVar + "\\." + escapedProp + "\\b(?!\\s*=)";
+            std::regex rr(rp, std::regex::icase);
+            result = std::regex_replace(result, rr, varName + "(\"" + propName + "\")");
+            // Write: var.Prop =
+            std::string wp = "\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
+            std::regex wr(wp, std::regex::icase);
+            result = std::regex_replace(result, wr, varName + "(\"" + propName + "\") =");
+            // Set: Set var.Prop =
+            std::string sp = "Set\\s+\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
+            std::regex sr(sp, std::regex::icase);
+            result = std::regex_replace(result, sr, "Set " + varName + "(\"" + propName + "\") =");
+        }
     }
-
-    result.append(script, lastPos, script.size() - lastPos);
     return result;
 }
 
 
-
 std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
                                                     const std::vector<VBClassDefinition>& classes) {
-    // Build lookup tables ONCE
-    std::unordered_set<std::string> classNames;
-    // className -> accessorName (lowercase) -> {original name, type (Get/Let/Set)}
-    struct AccInfo { std::string name; std::string type; };
-    std::unordered_map<std::string, std::unordered_map<std::string, AccInfo>> classAccessors;
-    
+    // Collect accessor info: className -> {accessorName -> type (Get/Let/Set)}
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> classAccessors;
     for (const auto& cls : classes) {
-        classNames.insert(cls.name);
-        std::unordered_map<std::string, AccInfo> accessors;
+        std::unordered_map<std::string, std::string> accessors;
         for (const auto& acc : cls.accessors) {
-            accessors[ToLower(acc.name)] = {acc.name, acc.type};
+            // Store accessor type (Get, Let, Set)
+            accessors[acc.name] = acc.type;
         }
         classAccessors[cls.name] = accessors;
     }
 
-    // Build variable type maps using helper
+    // Build var -> className map
     std::unordered_map<std::string, std::string> varTypes;
-    std::unordered_map<std::string, std::string> varOriginalCase;
-    BuildVarTypeMaps(script, classNames, varTypes, varOriginalCase);
-
-    if (varTypes.empty()) return script;
+    for (const auto& cls : classes) {
+        std::string escapedClassName = EscapeRegex(cls.name);
+        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
+        std::regex setPattern(pattern, std::regex::icase);
+        std::smatch match;
+        std::string::const_iterator searchStart(script.cbegin());
+        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
+            varTypes[match[1].str()] = cls.name;
+            searchStart = match.suffix().first;
+        }
+    }
 
     std::string result = script;
-    
-    // Process each variable - accessors require context-sensitive patterns
-    // so we still need per-accessor regex, but we've optimized the varTypes building
-    for (const auto& [lowerVar, className] : varTypes) {
-        const std::string& varName = varOriginalCase[lowerVar];
+    for (const auto& [varName, className] : varTypes) {
         const auto& accessors = classAccessors[className];
         std::string escapedVar = EscapeRegex(varName);
 
-        for (const auto& [lowerAcc, accInfo] : accessors) {
-            std::string escapedAcc = EscapeRegex(accInfo.name);
+        for (const auto& [accName, accType] : accessors) {
+            std::string escapedAcc = EscapeRegex(accName);
 
-            // Write WITH params: var.accessor(idx) = value
-            std::string wp = R"((^[ \t]*|:[ \t]*|\bThen\s+|\bElse\s+)\b" + escapedVar + "\." + escapedAcc + "\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*=\s*([^:\r\n]*?)(?=\s*(?:Else\b|:|\r|\n|$))";
+            // Write WITH params: var.accessor(idx) = value  →  ClassName_Let_accessor var, idx, value
+            // ONLY match at statement start to avoid matching comparisons in If statements
+            // Statement start: line start (with optional indent), after :, after Then, after Else
+            // Value capture must stop at : or Else (for single-line If statements)
+            // Use balanced parentheses matching by allowing nested parens: ([^()]*(?:\([^()]*\)[^()]*)*)
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string wp = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
             std::regex wr(wp, std::regex::icase | std::regex::multiline);
-            result = std::regex_replace(result, wr, "$1" + className + "_Let_" + accInfo.name + " " + varName + ", $2, $3");
+            result = std::regex_replace(result, wr, "$1" + className + "_Let_" + accName + " " + varName + ", $2, $3");
 
-            // Write WITHOUT params: var.accessor = value
-            std::string spw = R"((^[ \t]*|:[ \t]*|\bThen\s+|\bElse\s+)\b" + escapedVar + "\." + escapedAcc + "\s*=\s*([^:\r\n]*?)(?=\s*(?:Else\b|:|\r|\n|$))";
+            // Write WITHOUT params: var.accessor = value  →  ClassName_Let_accessor var, value
+            // For Property Let with only one parameter (the value being assigned)
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string spw = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
             std::regex swr(spw, std::regex::icase | std::regex::multiline);
-            result = std::regex_replace(result, swr, "$1" + className + "_Let_" + accInfo.name + " " + varName + ", $2");
+            result = std::regex_replace(result, swr, "$1" + className + "_Let_" + accName + " " + varName + ", $2");
 
-            // Read WITH params: var.accessor(idx)
-            std::string rp = R"(b" + escapedVar + "\." + escapedAcc + "\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)";
+            // Read WITH params: var.accessor(idx)  →  ClassName_Get_accessor(var, idx)
+            // Match all remaining accessor calls (those not converted to Let above are reads)
+            // Use balanced parentheses matching
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string rp = "\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)";
             std::regex rr(rp, std::regex::icase);
-            result = std::regex_replace(result, rr, className + "_Get_" + accInfo.name + "(" + varName + ", $1)");
+            result = std::regex_replace(result, rr, className + "_Get_" + accName + "(" + varName + ", $1)");
 
-            // Read WITHOUT params: var.accessor
-            std::string spr = R"(b" + escapedVar + "\." + escapedAcc + "\b(?!\s*[=(])";
+            // Read WITHOUT params: var.accessor  →  ClassName_Get_accessor(var)
+            // For Property Get with no parameters - must not be followed by ( or =
+            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
+            std::string spr = "\\b" + escapedVar + "\\." + escapedAcc + "\\b(?!\\s*[=(])";
             std::regex srr(spr, std::regex::icase);
-            result = std::regex_replace(result, srr, className + "_Get_" + accInfo.name + "(" + varName + ")");
+            result = std::regex_replace(result, srr, className + "_Get_" + accName + "(" + varName + ")");
         }
     }
     return result;
