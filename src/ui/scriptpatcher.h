@@ -218,6 +218,7 @@ private:
     static std::string PatchDictArrayAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyRead(const std::string& script);
+    static std::string PatchSimplePropertyAssignment(const std::string& script);
     static std::string InjectVPXSetArrObjProp(const std::string& script);
 
     // Class definition strings for DTArray/STArray

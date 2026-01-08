@@ -605,7 +605,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         // Pattern for method call with arguments: methodName args
         // Match at statement boundaries (start of line, after :, after Then/Else)
         // Exclude function return assignments (methodName = value) using negative lookahead
-        std::string withArgsPattern = "(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "[ \\t]+([^=:\\r\\n][^:\\r\\n]*)";
+        std::string withArgsPattern = "(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "\\s+(?!=)([^:\\r\\n]+)";
         std::regex withArgsRegex(withArgsPattern, std::regex::icase | std::regex::multiline);
 
         std::string temp;
@@ -632,19 +632,6 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 if (result[i] == '"') quoteCount++;
             }
             if (quoteCount % 2 == 1) {
-                alreadyTransformed = true;
-            }
-
-            // Skip if matched "args" is actually an assignment (starts with = after whitespace)
-            // This is a function return value assignment, not a method call
-            std::string capturedArgs = match[2].str();
-            // Trim leading whitespace to check for =
-            size_t firstNonSpace = capturedArgs.find_first_not_of(" 	");
-            if (firstNonSpace != std::string::npos && capturedArgs[firstNonSpace] == '=') {
-                alreadyTransformed = true;
-            }
-            // Skip if "args" is just whitespace (no actual arguments)
-            if (firstNonSpace == std::string::npos) {
                 alreadyTransformed = true;
             }
 
@@ -709,13 +696,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             // Check if already transformed (preceded by class name_)
             bool skip = false;
-
-            // Skip if preceded by a dot (its being accessed on another object)
-            if (matchPos > 0 && result[matchPos - 1] == '.') {
-                skip = true;
-            }
-
-            if (!skip && matchPos >= classDef.name.length() + 1) {
+            if (matchPos >= classDef.name.length() + 1) {
                 std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
                 if (before == classDef.name + "_") {
                     skip = true;
@@ -787,13 +768,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 // Check if this is preceded by our class name (already transformed)
                 size_t matchPos = match.position();
                 bool alreadyTransformed = false;
-
-                // Skip if preceded by a dot (its being accessed on another object like native Dictionary)
-                if (matchPos > 0 && result[matchPos - 1] == '.') {
-                    alreadyTransformed = true;
-                }
-
-                if (!alreadyTransformed && matchPos > classDef.name.length() + 1) {
+                if (matchPos > classDef.name.length() + 1) {
                     std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
                     if (before.find(classDef.name + "_") != std::string::npos) {
                         alreadyTransformed = true;
@@ -830,11 +805,6 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
                 // Skip if this matches a method parameter name
                 if (isMethodParam(accessor.name)) {
-                    skip = true;
-                }
-
-                // Skip if preceded by a dot (its being accessed on another object like native Dictionary)
-                if (!skip && matchPos > 0 && result[matchPos - 1] == '.') {
                     skip = true;
                 }
 
@@ -1566,13 +1536,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         std::sregex_iterator end;
         while (it1 != end) {
             std::string arrayName = (*it1)[1].str();
-            // Skip this_ - its the Dictionary-based class instance, not an array
-            if (arrayName != "this_") {
-                std::string lowerArrayName = arrayName;
-                std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
-                arrayElementTypes[lowerArrayName] = cls.name;
-                PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 1)", arrayName.c_str(), cls.name.c_str());
-            }
+            std::string lowerArrayName = arrayName;
+            std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
+            arrayElementTypes[lowerArrayName] = cls.name;
+            PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 1)", arrayName.c_str(), cls.name.c_str());
             ++it1;
         }
 
@@ -1582,13 +1549,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         std::sregex_iterator it2(result.begin(), result.end(), arrayAssignRegex2);
         while (it2 != end) {
             std::string arrayName = (*it2)[1].str();
-            // Skip this_ - its the Dictionary-based class instance, not an array
-            if (arrayName != "this_") {
-                std::string lowerArrayName = arrayName;
-                std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
-                arrayElementTypes[lowerArrayName] = cls.name;
-                PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 2)", arrayName.c_str(), cls.name.c_str());
-            }
+            std::string lowerArrayName = arrayName;
+            std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
+            arrayElementTypes[lowerArrayName] = cls.name;
+            PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 2)", arrayName.c_str(), cls.name.c_str());
             ++it2;
         }
     }
@@ -1819,7 +1783,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (const auto& m : cls.methods) {
             //// Pattern: & aName & ".methodName args
             // Transform to: FlipperPolarity_methodName " & aName & ", args
-            std::string dotPattern = R"(\"\s*&\s*(\w+)\s*&\s*\"\\.)" + EscapeRegex(m.name) + R"(\s+([^"]+))";
+            std::string dotPattern = R"(\"\s*&\s*(\w+)\s*&\s*\"\.)" + EscapeRegex(m.name) + R"(\s+([^"]+))";
             std::regex dotRegex(dotPattern, std::regex::icase);
 
             std::string tempResult;
@@ -2100,13 +2064,6 @@ bool ScriptPatcher::UsesProblematicArrays(const std::string& script) {
 
 std::string ScriptPatcher::InjectWineArrayHelpers(const std::string& script) {
     // Inject helper functions at the start of the script (after Option Explicit if present)
-
-    // Skip injection if VPX_ helpers are already defined (e.g., from another script)
-    // This prevents duplicate definitions when multiple scripts are loaded
-    if (std::regex_search(script, std::regex(R"((^|\n)\s*Function\s+VPX_SafeUBound\b)", std::regex::icase))) {
-        PLOGI.printf("ScriptPatcher: Skipping helper injection - VPX_SafeUBound already defined");
-        return script;
-    }
     // Check if Atn2 is USED in the script (called as a function)
     bool usesAtn2 = std::regex_search(script, std::regex(R"(\bAtn2\s*\()", std::regex::icase));
     // Check if Atn2 is properly DEFINED (after newline + optional whitespace, not in comment)
@@ -2115,13 +2072,11 @@ std::string ScriptPatcher::InjectWineArrayHelpers(const std::string& script) {
 
     std::string helpers = R"(
 ' Wine VBScript Array Compatibility Helpers (Auto-injected by ScriptPatcher)
-Dim VPX_DebugCallDepth : VPX_DebugCallDepth = 0
-
 Function VPX_SafeUBound(arr)
     On Error Resume Next
     VPX_SafeUBound = -1
     VPX_SafeUBound = UBound(arr)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
 ' Safe array element access - returns Empty if index out of bounds
@@ -2129,135 +2084,87 @@ Function VPX_SafeGet(arr, idx)
     On Error Resume Next
     VPX_SafeGet = Empty
     If idx >= 0 Then VPX_SafeGet = arr(idx)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
-' Safe ball X property access with recursion guard
+' Safe ball X property access - returns -99999 if ball is invalid/Nothing
 Function VPX_BallX(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallX RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallX = -99999
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallX = -99999
-    VPX_BallX = ball.X
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallX = ball.X
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball Y property access with recursion guard
+' Safe ball Y property access - returns -99999 if ball is invalid/Nothing
 Function VPX_BallY(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallY RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallY = -99999
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallY = -99999
-    VPX_BallY = ball.Y
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallY = ball.Y
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball Z property access with recursion guard
+' Safe ball Z property access
 Function VPX_BallZ(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallZ RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallZ = -99999
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallZ = -99999
-    VPX_BallZ = ball.Z
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallZ = ball.Z
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball VelX property access with recursion guard
+' Safe ball VelX property access
 Function VPX_BallVelX(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallVelX RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallVelX = 0
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallVelX = 0
-    VPX_BallVelX = ball.VelX
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelX = ball.VelX
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball VelY property access with recursion guard
+' Safe ball VelY property access
 Function VPX_BallVelY(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallVelY RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallVelY = 0
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallVelY = 0
-    VPX_BallVelY = ball.VelY
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelY = ball.VelY
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball VelZ property access with recursion guard
+' Safe ball VelZ property access
 Function VPX_BallVelZ(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallVelZ RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallVelZ = 0
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallVelZ = 0
-    VPX_BallVelZ = ball.VelZ
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallVelZ = ball.VelZ
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball ID property access with recursion guard
+' Safe ball ID property access
 Function VPX_BallID(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallID RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallID = -1
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallID = -1
-    VPX_BallID = ball.ID
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallID = ball.ID
+    End If
+    On Error Goto 0
 End Function
 
-' Safe ball Color property access with recursion guard
+' Safe ball Color property access
 Function VPX_BallColor(ball)
-    VPX_DebugCallDepth = VPX_DebugCallDepth + 1
-    If VPX_DebugCallDepth > 50 Then
-        debug.print "VPX_BallColor RECURSION depth=" & VPX_DebugCallDepth
-        VPX_BallColor = 0
-        VPX_DebugCallDepth = VPX_DebugCallDepth - 1
-        Exit Function
-    End If
     On Error Resume Next
     VPX_BallColor = 0
-    VPX_BallColor = ball.Color
-    ' Wine: ' Error handling reset (Wine compatible) not supported
-    VPX_DebugCallDepth = VPX_DebugCallDepth - 1
+    If IsObject(ball) Then
+        If Not ball Is Nothing Then VPX_BallColor = ball.Color
+    End If
+    On Error Goto 0
 End Function
 
 
@@ -2272,7 +2179,7 @@ Function VPX_IsValidBall(ball)
     Dim testX : testX = ball.X
     If Err.Number = 0 Then VPX_IsValidBall = True
     Err.Clear
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
 ' Safe TypeName wrapper - avoids crash on Dictionary objects (emulated classes)
@@ -2282,16 +2189,16 @@ Function VPX_SafeTypeName(obj)
     If Err.Number = 0 Then
         If hasClass Then
             VPX_SafeTypeName = obj("__class__")
-            ' Wine: ' Error handling reset (Wine compatible) not supported
+            On Error Goto 0
             Exit Function
         End If
         ' obj has Exists method but no __class__ - raw Dictionary
         VPX_SafeTypeName = "Dictionary"
-        ' Wine: ' Error handling reset (Wine compatible) not supported
+        On Error Goto 0
         Exit Function
     End If
     Err.Clear
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
     ' Not a Dictionary - safe to call TypeName
     VPX_SafeTypeName = TypeName(obj)
 End Function
@@ -2300,32 +2207,32 @@ Function VPX_SafeArrayGet(arr, idx)
     On Error Resume Next
     VPX_SafeArrayGet = Empty
     VPX_SafeArrayGet = arr(idx)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
 Function VPX_SafeArray2DGet(arr, idx1, idx2)
     On Error Resume Next
     VPX_SafeArray2DGet = Empty
     VPX_SafeArray2DGet = arr(idx1, idx2)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
 Sub VPX_SafeArraySet(arr, idx, val)
     On Error Resume Next
     arr(idx) = val
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Sub
 
 Sub VPX_SafeReDim(ByRef arr, newSize)
     On Error Resume Next
     ReDim Preserve arr(newSize)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Sub
 
 Function VPX_ArrObj(arr, idx)
     On Error Resume Next
     Set VPX_ArrObj = arr(idx)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 
 ' Helper for chained Dictionary/array assignment: dict("key")(idx) = val
@@ -2334,7 +2241,7 @@ Sub VPX_SetDictArrItem(dict, key, idx, val)
     Dim arr : arr = dict(key)
     arr(idx) = val
     dict(key) = arr
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Sub
 
 ' Helper for chained Dictionary/array read: dict("key")(idx)
@@ -2343,7 +2250,7 @@ Function VPX_GetDictArrItem(dict, key, idx)
     VPX_GetDictArrItem = Empty
     Dim arr : arr = dict(key)
     VPX_GetDictArrItem = arr(idx)
-    ' Wine: ' Error handling reset (Wine compatible) not supported
+    On Error Goto 0
 End Function
 )";
 
@@ -2381,50 +2288,8 @@ End Function
 
     helpers += "' End Wine VBScript Array Compatibility Helpers\n\n";
 
-    // Check if SolCallBack is USED but not DECLARED
-    // Wine VBScript requires arrays to be declared before use
-    // Match both numeric indices like SolCallBack(1) and variable indices like SolCallback(sLRFlipper)
-    bool usesSolCallBack = std::regex_search(script, std::regex(R"(SolCallBack\s*\()", std::regex::icase));
-    bool hasSolCallBack = std::regex_search(script, std::regex(R"((^|\n)\s*Dim\s+SolCallBack\b)", std::regex::icase));
-    if (usesSolCallBack && !hasSolCallBack) {
-        helpers += "' SolCallBack array declaration (Wine requires pre-declaration)\nDim SolCallBack(68)\n\n";
-        PLOGI.printf("ScriptPatcher: Injecting SolCallBack(68) declaration (used but not declared)");
-    }
-
-    // Inject common VPM solenoid constants if used but not defined
-    // These are normally defined in core.vbs but the table script may use them before loading external scripts
-    std::string vpmConstants = "' VPM Solenoid Constants (Wine requires pre-declaration)\n";
-    bool needVpmConstants = false;
-
-    // Check for flipper solenoid constants
-    if (std::regex_search(script, std::regex(R"(\bsLRFlipper\b)", std::regex::icase)) &&
-        !std::regex_search(script, std::regex(R"((^|\n)\s*Const\s+sLRFlipper\b)", std::regex::icase))) {
-        vpmConstants += "Const sLRFlipper = 46\n";
-        needVpmConstants = true;
-    }
-    if (std::regex_search(script, std::regex(R"(\bsLLFlipper\b)", std::regex::icase)) &&
-        !std::regex_search(script, std::regex(R"((^|\n)\s*Const\s+sLLFlipper\b)", std::regex::icase))) {
-        vpmConstants += "Const sLLFlipper = 48\n";
-        needVpmConstants = true;
-    }
-    if (std::regex_search(script, std::regex(R"(\bsURFlipper\b)", std::regex::icase)) &&
-        !std::regex_search(script, std::regex(R"((^|\n)\s*Const\s+sURFlipper\b)", std::regex::icase))) {
-        vpmConstants += "Const sURFlipper = 34\n";
-        needVpmConstants = true;
-    }
-    if (std::regex_search(script, std::regex(R"(\bsULFlipper\b)", std::regex::icase)) &&
-        !std::regex_search(script, std::regex(R"((^|\n)\s*Const\s+sULFlipper\b)", std::regex::icase))) {
-        vpmConstants += "Const sULFlipper = 36\n";
-        needVpmConstants = true;
-    }
-
-    if (needVpmConstants) {
-        helpers += vpmConstants + "\n";
-        PLOGI.printf("ScriptPatcher: Injecting VPM solenoid constants");
-    }
-
     std::string r = script;
-
+    
     // Find insertion point - after Option Explicit or at start
     std::regex optionExplicit(R"((Option\s+Explicit[^\r\n]*[\r\n]+))", std::regex::icase);
     std::smatch match;
@@ -2434,7 +2299,7 @@ End Function
         // Insert at the very beginning
         r = helpers + r;
     }
-
+    
     return r;
 }
 
@@ -2444,38 +2309,101 @@ std::string ScriptPatcher::InjectVPXSetArrObjProp(const std::string& script) {
     // These helpers must be injected AFTER PatchArrayObjectPropertyAccess and PatchArrayObjectPropertyRead run,
     // otherwise the arr(idx).prop patterns inside these helpers would be transformed
     // into recursive calls, causing infinite recursion.
-
-    // Skip injection if VPX_GetArrObjProp is already defined
-    if (std::regex_search(script, std::regex(R"((^|\n)\s*Function\s+VPX_GetArrObjProp\b)", std::regex::icase))) {
-        PLOGI.printf("ScriptPatcher: Skipping VPX_SetArrObjProp injection - already defined");
-        return script;
-    }
     std::string helper = R"(
 ' VPX_GetArrObjProp - Injected after array property read transformation
-' Uses Execute for dynamic property access to avoid Wine VBScript compile errors
-Dim VPX_GetArrObjProp_Result
 Function VPX_GetArrObjProp(arr, idx, propName)
     On Error Resume Next
-    VPX_GetArrObjProp_Result = Empty
-    Dim VPX_GetArrObjProp_Obj
-    Set VPX_GetArrObjProp_Obj = arr(idx)
-    If Err.Number = 0 Then
-        Execute "VPX_GetArrObjProp_Result = VPX_GetArrObjProp_Obj." & propName
-    End If
-    VPX_GetArrObjProp = VPX_GetArrObjProp_Result
-    Err.Clear
+    VPX_GetArrObjProp = Empty
+    Select Case LCase(propName)
+        Case "x": VPX_GetArrObjProp = arr(idx).x
+        Case "y": VPX_GetArrObjProp = arr(idx).y
+        Case "z": VPX_GetArrObjProp = arr(idx).z
+        Case "velx": VPX_GetArrObjProp = arr(idx).velx
+        Case "vely": VPX_GetArrObjProp = arr(idx).vely
+        Case "velz": VPX_GetArrObjProp = arr(idx).velz
+        Case "id": VPX_GetArrObjProp = arr(idx).id
+        Case "visible": VPX_GetArrObjProp = arr(idx).visible
+        Case "state": VPX_GetArrObjProp = arr(idx).state
+        Case "height": VPX_GetArrObjProp = arr(idx).height
+        Case "mass": VPX_GetArrObjProp = arr(idx).mass
+        Case "radius": VPX_GetArrObjProp = arr(idx).radius
+        Case "name": VPX_GetArrObjProp = arr(idx).name
+        Case "image": VPX_GetArrObjProp = arr(idx).image
+        Case "bulbhaloheight": VPX_GetArrObjProp = arr(idx).BulbHaloHeight
+        Case "intensity": VPX_GetArrObjProp = arr(idx).intensity
+        Case "intensityscale": VPX_GetArrObjProp = arr(idx).intensityscale
+        Case "opacity": VPX_GetArrObjProp = arr(idx).opacity
+        Case "collidable": VPX_GetArrObjProp = arr(idx).collidable
+        Case "rotation": VPX_GetArrObjProp = arr(idx).rotation
+        Case "rotz": VPX_GetArrObjProp = arr(idx).rotz
+        Case "rotx": VPX_GetArrObjProp = arr(idx).rotx
+        Case "roty": VPX_GetArrObjProp = arr(idx).roty
+        Case "size": VPX_GetArrObjProp = arr(idx).size
+        Case "enabled": VPX_GetArrObjProp = arr(idx).enabled
+        Case "timerinterval": VPX_GetArrObjProp = arr(idx).timerinterval
+        Case "timerenabled": VPX_GetArrObjProp = arr(idx).timerenabled
+        Case "uservalue": VPX_GetArrObjProp = arr(idx).uservalue
+        Case "color": VPX_GetArrObjProp = arr(idx).color
+        Case "falloff": VPX_GetArrObjProp = arr(idx).falloff
+        Case "falloffpower": VPX_GetArrObjProp = arr(idx).falloffpower
+        Case "blend": VPX_GetArrObjProp = arr(idx).blend
+        Case "material": VPX_GetArrObjProp = arr(idx).material
+        Case "isdropped": VPX_GetArrObjProp = arr(idx).isdropped
+        Case "objrotz": VPX_GetArrObjProp = arr(idx).objrotz
+        Case "objrotx": VPX_GetArrObjProp = arr(idx).objrotx
+        Case "objroty": VPX_GetArrObjProp = arr(idx).objroty
+        Case "transx": VPX_GetArrObjProp = arr(idx).transx
+        Case "transy": VPX_GetArrObjProp = arr(idx).transy
+        Case "transz": VPX_GetArrObjProp = arr(idx).transz
+        Case "scalex": VPX_GetArrObjProp = arr(idx).scalex
+        Case "scaley": VPX_GetArrObjProp = arr(idx).scaley
+        Case "scalez": VPX_GetArrObjProp = arr(idx).scalez
+    End Select
+    On Error Goto 0
 End Function
 
 ' VPX_SetArrObjProp - Injected after array property access transformation
-' Uses Execute for dynamic property access to avoid Wine VBScript compile errors
 Sub VPX_SetArrObjProp(arr, idx, propName, val)
     On Error Resume Next
-    Dim VPX_SetArrObjProp_Obj
-    Set VPX_SetArrObjProp_Obj = arr(idx)
-    If Err.Number = 0 Then
-        Execute "VPX_SetArrObjProp_Obj." & propName & " = val"
-    End If
-    Err.Clear
+    Select Case LCase(propName)
+        Case "visible": arr(idx).visible = val
+        Case "x": arr(idx).x = val
+        Case "y": arr(idx).y = val
+        Case "z": arr(idx).z = val
+        Case "height": arr(idx).height = val
+        Case "opacity": arr(idx).opacity = val
+        Case "state": arr(idx).state = val
+        Case "bulbhaloheight": arr(idx).BulbHaloHeight = val
+        Case "intensity": arr(idx).intensity = val
+        Case "image": arr(idx).image = val
+        Case "collidable": arr(idx).collidable = val
+        Case "rotation": arr(idx).rotation = val
+        Case "rotz": arr(idx).rotz = val
+        Case "rotx": arr(idx).rotx = val
+        Case "roty": arr(idx).roty = val
+        Case "size": arr(idx).size = val
+        Case "enabled": arr(idx).enabled = val
+        Case "timerinterval": arr(idx).timerinterval = val
+        Case "timerenabled": arr(idx).timerenabled = val
+        Case "uservalue": arr(idx).uservalue = val
+        Case "color": arr(idx).color = val
+        Case "falloff": arr(idx).falloff = val
+        Case "falloffpower": arr(idx).falloffpower = val
+        Case "blend": arr(idx).blend = val
+        Case "material": arr(idx).material = val
+        Case "isdropped": arr(idx).isdropped = val
+        Case "objrotz": arr(idx).objrotz = val
+        Case "objrotx": arr(idx).objrotx = val
+        Case "objroty": arr(idx).objroty = val
+        Case "intensityscale": arr(idx).intensityscale = val
+        Case "transx": arr(idx).transx = val
+        Case "transy": arr(idx).transy = val
+        Case "transz": arr(idx).transz = val
+        Case "scalex": arr(idx).scalex = val
+        Case "scaley": arr(idx).scaley = val
+        Case "scalez": arr(idx).scalez = val
+    End Select
+    On Error Goto 0
 End Sub
 )";
 
@@ -2623,65 +2551,6 @@ std::string ScriptPatcher::PatchBallLoopGuard(const std::string& script) {
     return r;
 }
 
-std::string ScriptPatcher::PatchDirectBallPropertyAccess(const std::string& script) {
-    std::string r = script;
-
-    // Transform direct ball property access to safe VPX_Ball* functions
-    // Pattern: ball.Property (where ball is a variable, not in an array)
-    // Excludes assignment targets with (?!\s*=)
-
-    std::regex ball_x(R"(\bball\s*\.\s*X\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_x, "VPX_BallX(ball)");
-
-    std::regex ball_y(R"(\bball\s*\.\s*Y\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_y, "VPX_BallY(ball)");
-
-    std::regex ball_z(R"(\bball\s*\.\s*Z\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_z, "VPX_BallZ(ball)");
-
-    std::regex ball_velx(R"(\bball\s*\.\s*VelX\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_velx, "VPX_BallVelX(ball)");
-
-    std::regex ball_vely(R"(\bball\s*\.\s*VelY\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_vely, "VPX_BallVelY(ball)");
-
-    std::regex ball_velz(R"(\bball\s*\.\s*VelZ\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_velz, "VPX_BallVelZ(ball)");
-
-    std::regex ball_id(R"(\bball\s*\.\s*ID\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_id, "VPX_BallID(ball)");
-
-    std::regex ball_color(R"(\bball\s*\.\s*Color\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ball_color, "VPX_BallColor(ball)");
-
-    // Also patch activeball (common VPX global)
-    std::regex ab_x(R"(\bactiveball\s*\.\s*X\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_x, "VPX_BallX(activeball)");
-
-    std::regex ab_y(R"(\bactiveball\s*\.\s*Y\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_y, "VPX_BallY(activeball)");
-
-    std::regex ab_z(R"(\bactiveball\s*\.\s*Z\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_z, "VPX_BallZ(activeball)");
-
-    std::regex ab_velx(R"(\bactiveball\s*\.\s*VelX\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_velx, "VPX_BallVelX(activeball)");
-
-    std::regex ab_vely(R"(\bactiveball\s*\.\s*VelY\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_vely, "VPX_BallVelY(activeball)");
-
-    std::regex ab_velz(R"(\bactiveball\s*\.\s*VelZ\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_velz, "VPX_BallVelZ(activeball)");
-
-    std::regex ab_id(R"(\bactiveball\s*\.\s*ID\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_id, "VPX_BallID(activeball)");
-
-    std::regex ab_color(R"(\bactiveball\s*\.\s*Color\b(?!\s*=))", std::regex::icase);
-    r = std::regex_replace(r, ab_color, "VPX_BallColor(activeball)");
-
-    return r;
-}
-
 
 std::string ScriptPatcher::PatchReDimWithUBound(const std::string& script) {
     std::string r = script;
@@ -2730,18 +2599,18 @@ std::string ScriptPatcher::PatchArrayElementAssignment(const std::string& script
     //   rolling(b) = True
     //
     // Use inline error handling to avoid needing helper function at runtime:
-    //   rolling(b) = False -> On Error Resume Next : rolling(b) = False : ' Wine: ' Error handling reset (Wine compatible) not supported
+    //   rolling(b) = False -> On Error Resume Next : rolling(b) = False : On Error Goto 0
 
     // For known problematic arrays with True/False values - only at statement start
     // Use inline error handling instead of VPX_SafeArraySet
     std::regex p1(R"((^[ \t]*)(bBallInTrough|rolling)\s*\(\s*(\w+)\s*\)\s*=\s*(True|False))",
                   std::regex::icase | std::regex::multiline);
-    r = std::regex_replace(r, p1, "$1On Error Resume Next : $2($3) = $4 : ' Wine: ' Error handling reset (Wine compatible) not supported");
+    r = std::regex_replace(r, p1, "$1On Error Resume Next : $2($3) = $4 : On Error Goto 0");
 
     // After Then/Else - use colon-separated inline
     std::regex p2(R"((\bThen[ \t]+|\bElse[ \t]+)(bBallInTrough|rolling)\s*\(\s*(\w+)\s*\)\s*=\s*(True|False))",
                   std::regex::icase);
-    r = std::regex_replace(r, p2, "$1On Error Resume Next : $2($3) = $4 : ' Wine: ' Error handling reset (Wine compatible) not supported");
+    r = std::regex_replace(r, p2, "$1On Error Resume Next : $2($3) = $4 : On Error Goto 0");
 
     // NOTE: ballvel/ballvelx/ballvely are now handled by class emulation
     // (they become CoRTracker_ballvel etc. as global arrays)
@@ -2947,135 +2816,10 @@ std::string ScriptPatcher::PatchSlingshotCorrection(const std::string& script) {
 
 
 // ============================================================================
-// External Class Method Transformation
-// ============================================================================
-// Transforms method calls for known classes from core.vbs even when the class
-// definition is not in the current script.
-
-static std::string TransformExternalClassMethodCalls(const std::string& script) {
-    // Known VPM classes from core.vbs and their methods
-    struct ExternalClass {
-        const char* name;
-        std::vector<const char*> methods;
-    };
-
-    std::vector<ExternalClass> knownClasses = {
-        {"cvpmDropTarget", {"InitDrop", "CreateEvents", "InitSnd", "Hit", "SolHit", "SolUnhit", "SolDropDown", "DropSol"}},
-        {"cvpmBallStack", {"InitSw", "InitKick", "InitAltKick", "InitExitSnd", "InitEntrySnd", "InitSaucer", "CreateEvents", "AddBall", "SolIn", "SolOut", "SolOutAlt", "Reset", "EntrySnd", "ExitSnd"}},
-        {"cvpmTrough", {"CreateEvents", "InitSwitches", "InitExit", "InitEntrySnd", "InitExitSnd", "Reset", "AddBall", "SolIn", "SolOut"}},
-        {"cvpmSaucer", {"InitKicker", "InitAltKick", "InitExitSnd", "InitEntrySnd", "CreateEvents", "AddBall", "SolOut"}},
-        {"cvpmMagnet", {"InitMagnet", "CreateEvents", "AttractBall", "ReleaseBall", "SolCallback"}},
-        {"cvpmVLock", {"InitVLock", "InitSnd", "CreateEvents", "TrigHit", "TrigUnhit", "KickHit", "SolExit", "Reset"}},
-        {"cvpmTurntable", {"InitTurntable", "CreateEvents", "MaxSpeed", "MotorOn", "SpinCW", "SpinCCW", "SolMotorState"}},
-        {"cvpmMech", {"Sol1", "Sol2", "MechSol", "AddSw", "AddPulseSw", "Start", "Stop", "Callback"}},
-        {"cvpmCaptiveBall", {"InitCaptive", "CreateEvents", "Start", "TrigHit", "BallHit"}},
-        {"cvpmImpulseP", {"InitImpulseP", "CreateEvents", "Strength", "SolOn", "Random", "AutoFire"}},
-        {"cvpmTimer", {"PulseSw", "AddTimer", "Reset", "InitStruct", "AddResetObj"}},
-        {"cvpmNudge", {"TiltSwitch", "Sensitivity", "TiltObj", "SolGameOn", "CheckStuckBalls"}}
-    };
-
-    std::string result = script;
-
-    for (const auto& cls : knownClasses) {
-        std::string className = cls.name;
-
-        // Find variables assigned from this class
-        std::vector<std::string> varsOfType;
-
-        // Pattern 1: Set var = New ClassName
-        std::regex newPattern("Set\\s+(\\w+)\\s*=\\s*New\\s+" + className + "\\b", std::regex::icase);
-        std::smatch m;
-        std::string::const_iterator it = result.cbegin();
-        while (std::regex_search(it, result.cend(), m, newPattern)) {
-            varsOfType.push_back(m[1].str());
-            it = m.suffix().first;
-        }
-
-        // Pattern 2: Set var = ClassName_Create()
-        std::regex createPattern("Set\\s+(\\w+)\\s*=\\s*" + className + "_Create\\s*\\(", std::regex::icase);
-        it = result.cbegin();
-        while (std::regex_search(it, result.cend(), m, createPattern)) {
-            varsOfType.push_back(m[1].str());
-            it = m.suffix().first;
-        }
-
-        // Transform Set var = New ClassName -> Set var = ClassName_Create()
-        std::regex newToCreate("Set\\s+(\\w+)\\s*=\\s*New\\s+" + className + "\\b", std::regex::icase);
-        result = std::regex_replace(result, newToCreate, "Set $1 = " + className + "_Create()");
-
-        // For each variable of this type, transform method calls
-        for (const auto& varName : varsOfType) {
-            // Transform With varName blocks - method calls inside become ClassName_Method varName, args
-            // Pattern: With varName ... .Method args ... End With
-            std::regex withBlockRegex("With\\s+" + varName + "\\b([\\s\\S]*?)End\\s+With", std::regex::icase);
-            std::smatch withMatch;
-            std::string::const_iterator searchStart = result.cbegin();
-            std::string newResult;
-            size_t lastEnd = 0;
-
-            while (std::regex_search(searchStart, result.cend(), withMatch, withBlockRegex)) {
-                size_t matchPos = withMatch.position() + (searchStart - result.cbegin());
-                newResult += result.substr(lastEnd, matchPos - lastEnd);
-
-                std::string blockContent = withMatch[1].str();
-
-                // Transform each .Method call inside the With block
-                for (const auto& methodName : cls.methods) {
-                    // .Method(args) -> ClassName_Method varName, args
-                    std::string mp1 = "\\.(\\s*)" + std::string(methodName) + "\\s*\\(([^)]*)\\)";
-                    std::regex mr1(mp1, std::regex::icase);
-                    blockContent = std::regex_replace(blockContent, mr1, className + "_" + methodName + " " + varName + ", $2");
-
-                    // .Method args (no parens) -> ClassName_Method varName, args
-                    std::string mp2 = "\\.(\\s*)" + std::string(methodName) + "[ \\t]+([^':\\r\\n]+)";
-                    std::regex mr2(mp2, std::regex::icase);
-                    blockContent = std::regex_replace(blockContent, mr2, className + "_" + methodName + " " + varName + ", $2");
-
-                    // .Method (no args) -> ClassName_Method varName
-                    std::string mp3 = "\\.(\\s*)" + std::string(methodName) + "\\b(?!\\s*[=(\\w])";
-                    std::regex mr3(mp3, std::regex::icase);
-                    blockContent = std::regex_replace(blockContent, mr3, className + "_" + methodName + " " + varName);
-                }
-
-                // Output transformed block content without With/End With wrapper
-                newResult += blockContent;
-
-                lastEnd = matchPos + withMatch.length();
-                searchStart = result.cbegin() + lastEnd;
-            }
-            newResult += result.substr(lastEnd);
-            result = newResult;
-
-            for (const auto& methodName : cls.methods) {
-                // var.Method(args) -> ClassName_Method var, args
-                std::string p1 = "\\b" + varName + "\\." + std::string(methodName) + "\\s*\\(([^)]*)\\)";
-                std::regex r1(p1, std::regex::icase);
-                result = std::regex_replace(result, r1, className + "_" + methodName + " " + varName + ", $1");
-
-                // var.Method args (no parens) -> ClassName_Method var, args
-                std::string p2 = "\\b" + varName + "\\." + std::string(methodName) + "[ \\t]+([^':\\r\\n]+)";
-                std::regex r2(p2, std::regex::icase);
-                result = std::regex_replace(result, r2, className + "_" + methodName + " " + varName + ", $1");
-
-                // var.Method (no args) -> ClassName_Method var
-                std::string p3 = "\\b" + varName + "\\." + std::string(methodName) + "\\b(?!\\s*[=(\\w])";
-                std::regex r3(p3, std::regex::icase);
-                result = std::regex_replace(result, r3, className + "_" + methodName + " " + varName);
-            }
-        }
-    }
-
-    PLOGI.printf("ScriptPatcher: Applied external class method transforms");
-    return result;
-}
-
-
-
-// ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
 
-std::string ScriptPatcher::PatchScript(const std::string& script, bool skipHelperInjection) {
+std::string ScriptPatcher::PatchScript(const std::string& script) {
     std::string result = StripBOM(script);
     bool patched = result.length() != script.length();
     bool classEmulationApplied = false;
@@ -3106,16 +2850,6 @@ std::string ScriptPatcher::PatchScript(const std::string& script, bool skipHelpe
         }
     }
 
-    // Transform method calls for known external classes (e.g., cvpmDropTarget from core.vbs)
-    // This runs always because table scripts may use external classes even if they don't define any
-    {
-        std::string before = result;
-        result = TransformExternalClassMethodCalls(result);
-        if (result != before) {
-            patched = true;
-        }
-    }
-
     // DTArray/STArray
     if (UsesDTArray(result)) {
         PLOGI.printf("ScriptPatcher: Applying DTArray patches");
@@ -3138,29 +2872,6 @@ std::string ScriptPatcher::PatchScript(const std::string& script, bool skipHelpe
 
     { std::string b = result; result = PatchAddScoreParentheses(result); if (result != b) patched = true; }
     { std::string b = result; result = PatchSetAlignedPositionParentheses(result); if (result != b) patched = true; }
-
-    // Wine VBScript: Replace 'Me' keyword with ActiveTable (Me doesn't work outside classes in Wine)
-    {
-        std::regex mePattern(R"(vpmInit\s+Me)", std::regex::icase);
-        std::string before = result;
-        result = std::regex_replace(result, mePattern, "vpmInit ActiveTable");
-        if (result != before) {
-            PLOGI.printf("ScriptPatcher: Replaced vpmInit Me with vpmInit ActiveTable");
-            patched = true;
-        }
-    }
-
-    // Wine VBScript: Fix vpmSetArray with dictionary access - dict lookup returns value, not reference
-    // Transform: vpmSetArray this_("key"), value -> this_("key") = value
-    {
-        std::regex vpmSetArrayPattern(R"PATTERN(vpmSetArray\s+this_\s*\(\s*"([^"]+)"\s*\)\s*,\s*([a-zA-Z_][a-zA-Z0-9_]*))PATTERN", std::regex::icase);
-        std::string b = result;
-        result = std::regex_replace(result, vpmSetArrayPattern, "this_(\"$1\") = $2");
-        if (result != b) {
-            PLOGI.printf("ScriptPatcher: Fixed vpmSetArray with dictionary access");
-            patched = true;
-        }
-    }
     // Disabled for testing
     // { std::string b = result; result = PatchLineContinuationBeforeDot(result); if (result != b) patched = true; }
     // { std::string b = result; result = PatchSingleLineIfElse(result); if (result != b) patched = true; }
@@ -3177,8 +2888,7 @@ std::string ScriptPatcher::PatchScript(const std::string& script, bool skipHelpe
         result = PatchLinearEnvelopeGuard(result);
         result = PatchBallArrayAccess(result);
         result = PatchBallLoopGuard(result);
-        result = PatchDirectBallPropertyAccess(result);
-        if (!skipHelperInjection) { result = InjectWineArrayHelpers(result); }
+        result = InjectWineArrayHelpers(result);
         result = PatchReDimWithUBound(result);
         result = Patch2DArrayAccess(result);
         result = PatchArrayElementAssignment(result);
@@ -3194,23 +2904,18 @@ std::string ScriptPatcher::PatchScript(const std::string& script, bool skipHelpe
         // result = PatchArrayObjectPropertyRead(result);
         // IMPORTANT: Inject VPX_SetArrObjProp and VPX_GetArrObjProp AFTER the transformations
         // to avoid the helpers' arr(idx).prop patterns being transformed into recursive calls
-        if (!skipHelperInjection) { result = InjectVPXSetArrObjProp(result); }
+        result = InjectVPXSetArrObjProp(result);
         patched = true;
     }
 
     if (patched) {
         PLOGI.printf("ScriptPatcher: Complete (length=%zu)", result.length());
         // Debug: dump patched script to file for inspection
-        // Table script has helpers injected (skipHelperInjection=false)
-        // External scripts skip helper injection (skipHelperInjection=true)
-        const char* filename = skipHelperInjection
-            ? "/storage/emulated/0/Download/patched_external.vbs"
-            : "/storage/emulated/0/Download/patched_table.vbs";
-        FILE* debugFile = fopen(filename, "w");
+        FILE* debugFile = fopen("/storage/emulated/0/Download/patched_script.vbs", "w");
         if (debugFile) {
             fwrite(result.c_str(), 1, result.length(), debugFile);
             fclose(debugFile);
-            PLOGI.printf("ScriptPatcher: Dumped patched script to %s", filename);
+            PLOGI.printf("ScriptPatcher: Dumped patched script to /storage/emulated/0/Download/patched_script.vbs");
         }
     }
     return result;
