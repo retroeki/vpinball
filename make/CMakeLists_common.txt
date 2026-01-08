@@ -236,7 +236,9 @@ set(VPX_SOURCES
    src/ui/scriptpatcher.cpp
    src/ui/scriptpatcher.h
    src/ui/scriptpatcher_internal.h
-   src/ui/scriptpatcher_classes.cpp
+   src/ui/scriptpatcher_classes_parse.cpp
+   src/ui/scriptpatcher_classes_emit.cpp
+   src/ui/scriptpatcher_classes_transform.cpp
    src/ui/scriptpatcher_wine.cpp
    src/ui/hitrectsur.cpp
    src/ui/hitrectsur.h
