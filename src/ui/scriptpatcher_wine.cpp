@@ -278,7 +278,12 @@ std::string ScriptPatcher::InjectWineArrayHelpers(const std::string& script) {
 Function VPX_SafeUBound(arr)
     On Error Resume Next
     VPX_SafeUBound = -1
-    VPX_SafeUBound = UBound(arr)
+    If TypeName(arr) = "Dictionary" Then
+        VPX_SafeUBound = arr.Count - 1
+    Else
+        VPX_SafeUBound = UBound(arr)
+    End If
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeUBound error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
@@ -287,6 +292,7 @@ Function VPX_SafeGet(arr, idx)
     On Error Resume Next
     VPX_SafeGet = Empty
     If idx >= 0 Then VPX_SafeGet = arr(idx)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeGet(" & idx & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
@@ -410,6 +416,7 @@ Function VPX_SafeArrayGet(arr, idx)
     On Error Resume Next
     VPX_SafeArrayGet = Empty
     VPX_SafeArrayGet = arr(idx)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeArrayGet(" & idx & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
@@ -417,24 +424,28 @@ Function VPX_SafeArray2DGet(arr, idx1, idx2)
     On Error Resume Next
     VPX_SafeArray2DGet = Empty
     VPX_SafeArray2DGet = arr(idx1, idx2)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeArray2DGet(" & idx1 & "," & idx2 & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
 Sub VPX_SafeArraySet(arr, idx, val)
     On Error Resume Next
     arr(idx) = val
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeArraySet(" & idx & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Sub
 
 Sub VPX_SafeReDim(ByRef arr, newSize)
     On Error Resume Next
     ReDim Preserve arr(newSize)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SafeReDim(" & newSize & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Sub
 
 Function VPX_ArrObj(arr, idx)
     On Error Resume Next
     Set VPX_ArrObj = arr(idx)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_ArrObj(" & idx & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
@@ -444,6 +455,7 @@ Sub VPX_SetDictArrItem(dict, key, idx, val)
     Dim arr : arr = dict(key)
     arr(idx) = val
     dict(key) = arr
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SetDictArrItem error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Sub
 
@@ -453,6 +465,7 @@ Function VPX_GetDictArrItem(dict, key, idx)
     VPX_GetDictArrItem = Empty
     Dim arr : arr = dict(key)
     VPX_GetDictArrItem = arr(idx)
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_GetDictArrItem error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 )";
@@ -572,6 +585,7 @@ Function VPX_GetArrObjProp(arr, idx, propName)
         Case "scaley": VPX_GetArrObjProp = arr(idx).scaley
         Case "scalez": VPX_GetArrObjProp = arr(idx).scalez
     End Select
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_GetArrObjProp(" & idx & "," & propName & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Function
 
@@ -616,6 +630,7 @@ Sub VPX_SetArrObjProp(arr, idx, propName, val)
         Case "scaley": arr(idx).scaley = val
         Case "scalez": arr(idx).scalez = val
     End Select
+    If Err.Number <> 0 Then Script.Print "VPX WARNING: VPX_SetArrObjProp(" & idx & "," & propName & ") error " & Err.Number & " - " & Err.Description : Err.Clear
     On Error Goto 0
 End Sub
 )";

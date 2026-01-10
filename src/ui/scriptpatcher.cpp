@@ -148,103 +148,101 @@ static void AnalyzeScript(const std::string& script) {
 }
 
 
-// Dictionary-based DropTarget with helper functions (Wine compatible)
-// Wine VBScript can't handle chained indexing like arr(i)("key"), so we use helpers
+// Array-based DropTarget helper functions (Wine compatible)
+// Wine VBScript can't handle chained array access DTArray(i)(j) but CAN handle:
+//   temp = arr(idx) : result = temp(j)
+// DTArray elements are plain VBScript Arrays: Array(primary, secondary, prim, sw, animate, isDropped)
+//                                    indices:       0         1        2    3      4         5
 const char* ScriptPatcher::DROP_TARGET_CLASS = R"(
-Function DropTarget_Create(primary, secondary, prim, sw, animate, isDropped)
-  Dim this_
-  Set this_ = CreateObject("Scripting.Dictionary")
-  Set this_("primary") = primary
-  Set this_("secondary") = secondary
-  Set this_("prim") = prim
-  this_("sw") = sw
-  this_("animate") = animate
-  this_("isDropped") = isDropped
-  Set DropTarget_Create = this_
-End Function
-
-' Get property from DTArray element - avoids Wine chaining issue
+' Get value from DTArray element by property name
 Function DTGet(arr, idx, propName)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
+  temp = arr(idx)
   Select Case LCase(propName)
-    Case "primary": Set DTGet = obj("primary")
-    Case "secondary": Set DTGet = obj("secondary")
-    Case "prim": Set DTGet = obj("prim")
-    Case "sw": DTGet = obj("sw")
-    Case "animate": DTGet = obj("animate")
-    Case "isdropped": DTGet = obj("isDropped")
+    Case "primary": propIdx = 0
+    Case "secondary": propIdx = 1
+    Case "prim": propIdx = 2
+    Case "sw": propIdx = 3
+    Case "animate": propIdx = 4
+    Case "isdropped": propIdx = 5
+    Case Else: DTGet = Empty : Exit Function
   End Select
+  DTGet = temp(propIdx)
 End Function
 
-' Get object property from DTArray element (returns object reference)
+' Get object from DTArray element by property name
 Function DTGetObj(arr, idx, propName)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
+  temp = arr(idx)
   Select Case LCase(propName)
-    Case "primary": Set DTGetObj = obj("primary")
-    Case "secondary": Set DTGetObj = obj("secondary")
-    Case "prim": Set DTGetObj = obj("prim")
+    Case "primary": propIdx = 0
+    Case "secondary": propIdx = 1
+    Case "prim": propIdx = 2
+    Case Else: Set DTGetObj = Nothing : Exit Function
   End Select
+  Set DTGetObj = temp(propIdx)
 End Function
 
-' Set property on DTArray element - avoids Wine chaining issue
+' Set value on DTArray element by property name
 Sub DTSet(arr, idx, propName, val)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
   Select Case LCase(propName)
-    Case "sw": obj("sw") = val
-    Case "animate": obj("animate") = val
-    Case "isdropped": obj("isDropped") = val
+    Case "sw": propIdx = 3
+    Case "animate": propIdx = 4
+    Case "isdropped": propIdx = 5
+    Case Else: Exit Sub
   End Select
+  temp = arr(idx)
+  temp(propIdx) = val
+  arr(idx) = temp
 End Sub
 )";
 
-// Dictionary-based StandupTarget with helper functions (Wine compatible)
+// Array-based StandupTarget helper functions (Wine compatible)
+// Wine VBScript can't handle chained array access STArray(i)(j) but CAN handle:
+//   temp = arr(idx) : result = temp(j)
+// STArray elements are plain VBScript Arrays: Array(primary, prim, sw, animate, target)
+//                                    indices:       0      1    2      3       4
 const char* ScriptPatcher::STANDUP_TARGET_CLASS = R"(
-Function StandupTarget_Create(primary, prim, sw, animate, target)
-  Dim this_
-  Set this_ = CreateObject("Scripting.Dictionary")
-  Set this_("primary") = primary
-  Set this_("prim") = prim
-  this_("sw") = sw
-  this_("animate") = animate
-  this_("target") = target
-  Set StandupTarget_Create = this_
-End Function
-
-' Get property from STArray element - avoids Wine chaining issue
+' Get value from STArray element by property name
 Function STGet(arr, idx, propName)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
+  temp = arr(idx)
   Select Case LCase(propName)
-    Case "primary": Set STGet = obj("primary")
-    Case "prim": Set STGet = obj("prim")
-    Case "sw": STGet = obj("sw")
-    Case "animate": STGet = obj("animate")
-    Case "target": STGet = obj("target")
+    Case "primary": propIdx = 0
+    Case "prim": propIdx = 1
+    Case "sw": propIdx = 2
+    Case "animate": propIdx = 3
+    Case "target": propIdx = 4
+    Case Else: STGet = Empty : Exit Function
   End Select
+  STGet = temp(propIdx)
 End Function
 
-' Get object property from STArray element (returns object reference)
+' Get object from STArray element by property name
 Function STGetObj(arr, idx, propName)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
+  temp = arr(idx)
   Select Case LCase(propName)
-    Case "primary": Set STGetObj = obj("primary")
-    Case "prim": Set STGetObj = obj("prim")
+    Case "primary": propIdx = 0
+    Case "prim": propIdx = 1
+    Case Else: Set STGetObj = Nothing : Exit Function
   End Select
+  Set STGetObj = temp(propIdx)
 End Function
 
-' Set property on STArray element - avoids Wine chaining issue
+' Set value on STArray element by property name
 Sub STSet(arr, idx, propName, val)
-  Dim obj
-  Set obj = arr(idx)
+  Dim temp, propIdx
   Select Case LCase(propName)
-    Case "sw": obj("sw") = val
-    Case "animate": obj("animate") = val
-    Case "target": obj("target") = val
+    Case "sw": propIdx = 2
+    Case "animate": propIdx = 3
+    Case "target": propIdx = 4
+    Case Else: Exit Sub
   End Select
+  temp = arr(idx)
+  temp(propIdx) = val
+  arr(idx) = temp
 End Sub
 )";
 
@@ -389,36 +387,21 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         }
     }
 
-    // DTArray/STArray
+    // DTArray/STArray - Array-based approach (keep as plain arrays, use helper functions)
+    // Wine can't handle chained array access DTArray(i)(j), but CAN handle:
+    //   temp = arr(idx) : result = temp(j)
+    // So we inject helper functions and transform access patterns, but DON'T convert to Dictionary
     if (UsesDTArray(result)) {
-        PLOGI.printf("ScriptPatcher: Applying DTArray patches");
-        std::string beforeDef = result;
-        result = PatchDTArrayDefinitions(result);
-        // Only apply access patches if definitions were actually converted to Dictionary format
-        if (result != beforeDef) {
-            PLOGI.printf("ScriptPatcher: DTArray definitions converted to Dictionary format");
-            result = InjectDropTargetClass(result);
-            result = PatchDTArrayAccess(result);
-            patched = true;
-        } else {
-            PLOGI.printf("ScriptPatcher: DTArray uses simple nested arrays (no conversion needed)");
-        }
+        PLOGI.printf("ScriptPatcher: Applying DTArray patches (array-based)");
+        result = InjectDropTargetClass(result);
+        result = PatchDTArrayAccess(result);
+        patched = true;
     }
     if (UsesSTArray(result)) {
-        PLOGI.printf("ScriptPatcher: Applying STArray patches");
-        std::string beforeDef = result;
-        result = PatchSTArrayDefinitions(result);
-        // Only apply access patches if definitions were actually converted to Dictionary format
-        // Some tables use simple nested arrays (4 args) which Wine handles fine
-        // Our patches are for the 5-arg Dictionary pattern only
-        if (result != beforeDef) {
-            PLOGI.printf("ScriptPatcher: STArray definitions converted to Dictionary format");
-            result = InjectStandupTargetClass(result);
-            result = PatchSTArrayAccess(result);
-            patched = true;
-        } else {
-            PLOGI.printf("ScriptPatcher: STArray uses simple nested arrays (no conversion needed)");
-        }
+        PLOGI.printf("ScriptPatcher: Applying STArray patches (array-based)");
+        result = InjectStandupTargetClass(result);
+        result = PatchSTArrayAccess(result);
+        patched = true;
     }
 
     // Other patches

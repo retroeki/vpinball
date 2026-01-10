@@ -483,6 +483,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // These are skipped by ParseClassDefinitions but need to be removed and stubbed
     // First pass: just collect class names and build stub emulation (don't modify script yet)
     std::ostringstream stubEmulation;
+    std::vector<std::string> stubClassNames;  // Collect stub class names for TransformNewStatements
     std::regex singleLineClassRegex(R"(^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t]*$)", std::regex::icase | std::regex::multiline);
     std::smatch singleMatch;
     std::string searchStr = script;
@@ -492,6 +493,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
         // Add to classNames for TransformNewStatements
         classNames.insert(className);
+        stubClassNames.push_back(className);  // Save for later addition to classes
 
         // Create minimal stub emulation (just a factory function that returns empty Dictionary)
         stubEmulation << "' === " << className << " Stub Class Emulation ===\n";
@@ -531,6 +533,14 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // Now remove single-line stub classes from the result (after main classes are processed)
     // Using regex_replace for proper handling
     result = std::regex_replace(result, singleLineClassRegex, "' [Stub class removed - emulated below]");
+
+    // Add stub classes to classes vector for TransformNewStatements
+    // (Must be AFTER EmitClassEmulation to avoid corrupting script at position 0)
+    for (const auto& stubName : stubClassNames) {
+        VBClassDefinition stubClass;
+        stubClass.name = stubName;
+        classes.push_back(stubClass);
+    }
 
     // Inject stub emulation code if any single-line classes were found
     std::string stubCode = stubEmulation.str();
