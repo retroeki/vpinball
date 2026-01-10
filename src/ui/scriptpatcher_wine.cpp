@@ -950,7 +950,8 @@ std::string ScriptPatcher::PatchArrayObjectPropertyAccess(const std::string& scr
 
     // Pattern requires statement start position to avoid matching comparisons
     // Value capture stops at : or Then/Else keywords or newline (non-greedy)
-    std::regex p(R"((^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(\w+)\s*\(\s*([^)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)(?=[ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))",
+    // IMPORTANT: Use [^,)]+ to skip 2D array accesses like arr(i,j).prop - only transform 1D arrays
+    std::regex p(R"((^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(\w+)\s*\(\s*([^,)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)(?=[ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))",
                  std::regex::icase | std::regex::multiline);
     r = std::regex_replace(r, p, "$1VPX_SetArrObjProp $2, $3, \"$4\", $5");
 
@@ -996,7 +997,8 @@ std::string ScriptPatcher::PatchArrayObjectPropertyRead(const std::string& scrip
     };
 
     //// Pattern: word(index).property - but we'll check exclusions in callback
-    std::regex p(R"((\w+)\s*\(\s*([^)]+)\s*\)\s*\.(\w+)\b)", std::regex::icase);
+    // IMPORTANT: Use [^,)]+ to skip 2D array accesses like arr(i,j).prop - only transform 1D arrays
+    std::regex p(R"((\w+)\s*\(\s*([^,)]+)\s*\)\s*\.(\w+)\b)", std::regex::icase);
 
     std::string result;
     std::sregex_iterator it(r.begin(), r.end(), p);
