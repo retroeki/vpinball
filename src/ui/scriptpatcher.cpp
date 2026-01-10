@@ -60,6 +60,94 @@
 #include <regex>
 #include <sstream>
 
+// ============================================================================
+// PATCH CONFIGURATION FLAGS
+// ============================================================================
+// Set these to false to disable specific patches for debugging.
+// Master switch and individual patch controls for isolating issues.
+
+struct ScriptPatcherConfig {
+    bool enabled = true;                    // Master switch - disable ALL patching
+    bool logAnalysisReport = true;          // Log script analysis before patching
+    bool logPatchApplications = true;       // Log each patch as it's applied
+    bool removeUnusedClasses = true;        // Remove classes that are never instantiated
+    bool removeDuplicateVpmInit = true;     // Remove duplicate vpmInit Me calls
+    bool classEmulation = true;             // Transform classes to Dictionary objects
+    bool dtArrayPatches = true;             // DTArray/STArray compatibility
+    bool wineArrayPatches = true;           // Wine array compatibility (UBound, etc.)
+    bool singleLineIfPatches = true;        // Fix invalid single-line If patterns
+};
+
+static ScriptPatcherConfig g_patchConfig;
+
+// ============================================================================
+// SCRIPT ANALYSIS REPORT
+// ============================================================================
+// Analyzes script BEFORE patching to identify potential issues.
+// Outputs warnings for common problems that cause Wine/Android failures.
+
+static void AnalyzeScript(const std::string& script) {
+    if (!g_patchConfig.logAnalysisReport) return;
+
+    PLOGI.printf("ScriptPatcher: ========== SCRIPT ANALYSIS REPORT ==========");
+    PLOGI.printf("ScriptPatcher: Script length: %zu characters", script.length());
+
+    // Count vpmInit calls
+    std::regex vpmInitRegex(R"(\bvpmInit\s+[Mm]e\b)", std::regex::icase);
+    auto vpmInitBegin = std::sregex_iterator(script.begin(), script.end(), vpmInitRegex);
+    auto vpmInitEnd = std::sregex_iterator();
+    int vpmInitCount = std::distance(vpmInitBegin, vpmInitEnd);
+    if (vpmInitCount > 1) {
+        PLOGI.printf("ScriptPatcher: [!] WARNING - Found %d vpmInit calls (should be 1)", vpmInitCount);
+    } else if (vpmInitCount == 1) {
+        PLOGI.printf("ScriptPatcher: vpmInit calls: %d (OK)", vpmInitCount);
+    } else {
+        PLOGI.printf("ScriptPatcher: vpmInit calls: 0 (standalone table?)");
+    }
+
+    // Count Class definitions
+    std::regex classRegex(R"(^[ \t]*Class\s+(\w+))", std::regex::icase | std::regex::multiline);
+    std::vector<std::string> classNames;
+    auto classBegin = std::sregex_iterator(script.begin(), script.end(), classRegex);
+    auto classEnd = std::sregex_iterator();
+    for (auto it = classBegin; it != classEnd; ++it) {
+        classNames.push_back((*it)[1].str());
+    }
+    PLOGI.printf("ScriptPatcher: Class definitions found: %zu", classNames.size());
+
+    // Detect ROM type from LoadVPM call
+    std::regex loadVpmRegex("LoadVPM\s+\"[^\"]+\",\s*\"([^\"]+)\"", std::regex::icase);
+    std::smatch vpmMatch;
+    if (std::regex_search(script, vpmMatch, loadVpmRegex)) {
+        PLOGI.printf("ScriptPatcher: ROM System: %s", vpmMatch[1].str().c_str());
+    }
+
+    // Detect cGameName
+    std::regex gameNameRegex("Const\s+cGameName\s*=\s*\"([^\"]+)\"", std::regex::icase);
+    std::smatch gameMatch;
+    if (std::regex_search(script, gameMatch, gameNameRegex)) {
+        PLOGI.printf("ScriptPatcher: ROM Name: %s", gameMatch[1].str().c_str());
+    }
+
+    // Count potential problem patterns - single line If...End If
+    std::regex singleLineIfEndIf(R"(\bIf\b[^\n]+\bThen\b[^\n]+\bEnd\s+If\b)", std::regex::icase);
+    auto ifBegin = std::sregex_iterator(script.begin(), script.end(), singleLineIfEndIf);
+    auto ifEnd = std::sregex_iterator();
+    int badIfCount = std::distance(ifBegin, ifEnd);
+    if (badIfCount > 0) {
+        PLOGI.printf("ScriptPatcher: [!] WARNING - Found %d invalid single-line If...End If", badIfCount);
+    }
+
+    // Check for DTArray/STArray usage
+    bool usesDTArray = script.find("DTArray") != std::string::npos;
+    bool usesSTArray = script.find("STArray") != std::string::npos;
+    if (usesDTArray) PLOGI.printf("ScriptPatcher: Uses DTArray (drop targets)");
+    if (usesSTArray) PLOGI.printf("ScriptPatcher: Uses STArray (standup targets)");
+
+    PLOGI.printf("ScriptPatcher: ================================================");
+}
+
+
 // Dictionary-based DropTarget with helper functions (Wine compatible)
 // Wine VBScript can't handle chained indexing like arr(i)("key"), so we use helpers
 const char* ScriptPatcher::DROP_TARGET_CLASS = R"(
@@ -229,17 +317,20 @@ std::string ScriptPatcher::RestoreNativeClasses(const std::string& script,
 // ============================================================================
 
 std::string ScriptPatcher::PatchScript(const std::string& script) {
-    // DEBUG: Set to true to skip ALL patching for debugging
-    static bool skipAllPatching = false;
-    if (skipAllPatching) {
-        PLOGI.printf("ScriptPatcher: DEBUG - Skipping all patches");
+    // Master switch - disable ALL patching when needed for debugging
+    if (!g_patchConfig.enabled) {
+        PLOGI.printf("ScriptPatcher: DISABLED - Returning unpatched script");
         return StripBOM(script);
     }
 
     std::string result = StripBOM(script);
     bool patched = result.length() != script.length();
     bool classEmulationApplied = false;
-    PLOGI.printf("ScriptPatcher: Checking script (length=%zu)", result.length());
+
+    // Run analysis report BEFORE any patching
+    AnalyzeScript(result);
+
+    PLOGI.printf("ScriptPatcher: Beginning patch process...");
 
     // STEP 0: Remove unused class definitions (Wine workaround)
     // Wine VBScript has bugs with certain class patterns that can cause crashes
