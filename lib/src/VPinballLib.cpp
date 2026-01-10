@@ -161,7 +161,9 @@ void VPinballLib::AppIterate()
       delete g_pplayer;
       g_pplayer = nullptr;
 
+      PLOGI.printf("AppIterate: Closing table after player exit: %s", pActiveTable->m_filename.c_str());
       g_pvp->CloseTable(pActiveTable);
+      PLOGI.printf("AppIterate: Table closed successfully");
    }
 }
 
@@ -509,6 +511,17 @@ void VPinballLib::UpdateWebServer()
 
 VPINBALL_STATUS VPinballLib::LoadTable(const string& tablePath)
 {
+   PLOGI.printf("LoadTable called with path: %s", tablePath.c_str());
+
+   // Close any existing table before loading a new one
+   // This prevents the race condition where a previous table is still active
+   CComObject<PinTable>* existingTable = g_pvp->GetActiveTable();
+   if (existingTable)
+   {
+      PLOGI.printf("Closing existing table before loading new one: %s", existingTable->m_filename.c_str());
+      g_pvp->CloseTable(existingTable);
+   }
+
    // Reset cancellation flag before starting
    VPXProgress::Reset();
 
@@ -522,8 +535,25 @@ VPINBALL_STATUS VPinballLib::LoadTable(const string& tablePath)
       return VPINBALL_STATUS_FAILURE;
    }
 
-   bool success = g_pvp->GetActiveTable() != nullptr;
-   return success ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+   // Verify the correct table was loaded (not just any table being active)
+   CComObject<PinTable>* loadedTable = g_pvp->GetActiveTable();
+   if (!loadedTable)
+   {
+      PLOGE.printf("Table load failed - no active table");
+      return VPINBALL_STATUS_FAILURE;
+   }
+
+   // Check that the loaded table matches the requested path
+   if (loadedTable->m_filename != tablePath)
+   {
+      PLOGE.printf("Table load mismatch! Requested: %s, Got: %s", tablePath.c_str(), loadedTable->m_filename.c_str());
+      // Close the wrong table
+      g_pvp->CloseTable(loadedTable);
+      return VPINBALL_STATUS_FAILURE;
+   }
+
+   PLOGI.printf("Table loaded successfully: %s", loadedTable->m_filename.c_str());
+   return VPINBALL_STATUS_SUCCESS;
 }
 
 void VPinballLib::CancelLoading()
