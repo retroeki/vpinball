@@ -392,17 +392,33 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
     // DTArray/STArray
     if (UsesDTArray(result)) {
         PLOGI.printf("ScriptPatcher: Applying DTArray patches");
-        result = InjectDropTargetClass(result);
+        std::string beforeDef = result;
         result = PatchDTArrayDefinitions(result);
-        result = PatchDTArrayAccess(result);
-        patched = true;
+        // Only apply access patches if definitions were actually converted to Dictionary format
+        if (result != beforeDef) {
+            PLOGI.printf("ScriptPatcher: DTArray definitions converted to Dictionary format");
+            result = InjectDropTargetClass(result);
+            result = PatchDTArrayAccess(result);
+            patched = true;
+        } else {
+            PLOGI.printf("ScriptPatcher: DTArray uses simple nested arrays (no conversion needed)");
+        }
     }
     if (UsesSTArray(result)) {
         PLOGI.printf("ScriptPatcher: Applying STArray patches");
-        result = InjectStandupTargetClass(result);
+        std::string beforeDef = result;
         result = PatchSTArrayDefinitions(result);
-        result = PatchSTArrayAccess(result);
-        patched = true;
+        // Only apply access patches if definitions were actually converted to Dictionary format
+        // Some tables use simple nested arrays (4 args) which Wine handles fine
+        // Our patches are for the 5-arg Dictionary pattern only
+        if (result != beforeDef) {
+            PLOGI.printf("ScriptPatcher: STArray definitions converted to Dictionary format");
+            result = InjectStandupTargetClass(result);
+            result = PatchSTArrayAccess(result);
+            patched = true;
+        } else {
+            PLOGI.printf("ScriptPatcher: STArray uses simple nested arrays (no conversion needed)");
+        }
     }
 
     // Other patches
