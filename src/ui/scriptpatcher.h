@@ -215,6 +215,7 @@ private:
     static std::string PatchReDimWithUBound(const std::string& script);
     static std::string Patch2DArrayAccess(const std::string& script);
     static std::string PatchArrayElementAssignment(const std::string& script);
+    static std::string PatchNestedArrayAssignment(const std::string& script);
     static std::string PatchDictArrayAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyRead(const std::string& script);

@@ -821,6 +821,56 @@ std::string ScriptPatcher::PatchArrayElementAssignment(const std::string& script
 }
 
 
+// ============================================================================
+// WINE BUG WORKAROUND: Nested array assignment
+// Wine VBScript can READ nested arrays: value = arr(i)(j)
+// But it CANNOT WRITE to them: arr(i)(j) = value
+// Transform to helper call: VPX_SetNestedArrayElem arr, i, j, value
+// ============================================================================
+
+std::string ScriptPatcher::PatchNestedArrayAssignment(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+    
+    // Pattern: ArrayName(index1)(index2) = expression
+    // Must be at statement start (line start, after :, after Then)
+    // Capture: ArrayName, index1, index2, value
+    std::regex p(R"((^[ 	]*|:[ 	]*|Then[ 	]+)(\w+)\s*\(\s*([^)]+)\s*\)\s*\(\s*([^)]+)\s*\)\s*=\s*([^
+:]+))",
+                 std::regex::icase | std::regex::multiline);
+    
+    std::string::const_iterator searchStart(r.cbegin());
+    std::smatch m;
+    std::string result;
+    size_t lastPos = 0;
+    
+    while (std::regex_search(searchStart, r.cend(), m, p)) {
+        size_t matchPos = (searchStart - r.cbegin()) + m.position();
+        result += r.substr(lastPos, matchPos - lastPos);
+        
+        std::string prefix = m[1].str();
+        std::string arrName = m[2].str();
+        std::string idx1 = m[3].str();
+        std::string idx2 = m[4].str();
+        std::string value = m[5].str();
+        
+        // Transform to helper call
+        result += prefix + "VPX_SetNestedArrayElem " + arrName + ", " + idx1 + ", " + idx2 + ", " + value;
+        
+        lastPos = matchPos + m[0].length();
+        searchStart = r.cbegin() + lastPos;
+        count++;
+    }
+    result += r.substr(lastPos);
+    
+    if (count > 0) {
+        PLOGI.printf("ScriptPatcher: Transformed %d nested array assignments", count);
+    }
+    
+    return result;
+}
+
+
 std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
     std::string r = script;
 

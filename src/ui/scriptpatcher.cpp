@@ -449,6 +449,7 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         result = PatchReDimWithUBound(result);
         result = Patch2DArrayAccess(result);
         result = PatchArrayElementAssignment(result);
+        result = PatchNestedArrayAssignment(result);
         // Only apply Dict/Array transformation if class emulation was used
         // (these patterns only appear in emulated Dictionary-based classes)
         if (classEmulationApplied) {
