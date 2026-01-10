@@ -198,6 +198,7 @@ private:
     static std::string PatchLineContinuationBeforeDot(const std::string& script);
     static std::string PatchSingleLineIfElse(const std::string& script);
     static std::string PatchNestedSingleLineIf(const std::string& script);
+    static std::string PatchSingleLineIfEndIf(const std::string& script);
     static std::string PatchExecuteEval(const std::string& script);
     static std::string PatchStringConcatenation(const std::string& script);
 
@@ -218,6 +219,19 @@ private:
     static std::string PatchArrayObjectPropertyAccess(const std::string& script);
     static std::string PatchArrayObjectPropertyRead(const std::string& script);
     static std::string InjectVPXSetArrObjProp(const std::string& script);
+    static std::string RemoveUnusedClasses(const std::string& script);
+    static std::string RemoveDuplicateVpmInit(const std::string& script);
+
+    // Native class protection - classes that interact with external code via Me
+    // These must be kept 100% native with no transformations
+    struct NativeClassInfo {
+        std::string name;
+        std::string fullText;  // Complete "Class ... End Class" definition
+        std::string placeholder;
+    };
+    static std::vector<NativeClassInfo> ExtractNativeClasses(std::string& script);
+    static std::string RestoreNativeClasses(const std::string& script,
+                                             const std::vector<NativeClassInfo>& nativeClasses);
 
     // Class definition strings for DTArray/STArray
     static const char* DROP_TARGET_CLASS;

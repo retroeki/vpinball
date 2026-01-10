@@ -1,11 +1,54 @@
 /**
  * @file scriptpatcher.cpp
- * @brief Main entry point for VBScript patching
+ * @brief Main entry point for VBScript patching for Wine/Android compatibility
  *
  * This is the main entry point for the ScriptPatcher. It coordinates
  * the various patching phases:
  * 1. Class emulation (scriptpatcher_classes.cpp)
  * 2. Wine compatibility patches (scriptpatcher_wine.cpp)
+ *
+ * =============================================================================
+ * IMPORTANT LEARNINGS FROM DEBUGGING (January 2026)
+ * =============================================================================
+ *
+ * 1. WINE VBSCRIPT DOES SUPPORT CLASSES
+ *    - We initially assumed Wine VBScript didn't support the "Class" keyword
+ *    - This was INCORRECT - Wine VBScript handles most classes fine
+ *    - Class emulation should only be applied when absolutely necessary
+ *    - Over-aggressive class emulation can BREAK tables that work natively
+ *
+ * 2. DATA EAST (DE) ROMS WORK FINE
+ *    - DE ROMs (like Back to the Future) work correctly on Wine/Android
+ *    - The PinMAME integration functions properly
+ *
+ * 3. DUPLICATE vpmInit CALLS BREAK FLIPPERS
+ *    - Some table scripts mistakenly call "vpmInit Me" twice
+ *    - This corrupts the SolCallback array and flipper state
+ *    - Symptoms: Key input detected (event 7) but flippers don't move
+ *    - Solution: RemoveDuplicateVpmInit() comments out duplicate calls
+ *
+ * 4. DEBUG LOGGING IN WINE VBSCRIPT
+ *    - Added recursion depth tracking in standalone/inc/wine/dlls/vbscript/interp.c
+ *    - Logs function names when recursion depth > 50
+ *    - Aborts with E_FAIL if depth > 500 (prevents stack overflow crashes)
+ *    - Helps identify which VBScript function causes infinite recursion
+ *
+ * 5. UNUSED CLASSES CAN CAUSE WINE CRASHES
+ *    - Wine VBScript has bugs with certain class patterns
+ *    - Even if a class is never instantiated, it can crash Wine
+ *    - RemoveUnusedClasses() safely removes classes that are never "New"ed
+ *
+ * 6. SINGLE-LINE IF SYNTAX ISSUES
+ *    - Invalid pattern: "If cond Then stmt End If" (End If not valid on single-line)
+ *    - Valid pattern: "If cond Then stmt" (no End If on single-line)
+ *    - PatchSingleLineIfEndIf() fixes these invalid patterns
+ *
+ * 7. NATIVE CLASSES MUST BE PROTECTED
+ *    - Classes that pass "Me" to external code (like vpmTimer.addResetObj Me)
+ *    - These MUST remain native VBScript classes, not Dictionary emulation
+ *    - ExtractNativeClasses() identifies and protects these classes
+ *
+ * =============================================================================
  */
 
 #include "stdafx.h"
@@ -120,16 +163,117 @@ End Sub
 // Utility: Trim whitespace
 
 // ============================================================================
+// NATIVE CLASS PROTECTION
+// ============================================================================
+
+std::vector<ScriptPatcher::NativeClassInfo> ScriptPatcher::ExtractNativeClasses(std::string& script) {
+    std::vector<NativeClassInfo> nativeClasses;
+
+    std::regex classStartRegex(R"(^[ \t]*Class\s+(\w+))", std::regex::icase | std::regex::multiline);
+    std::regex classEndRegex(R"(^[ \t]*End\s+Class)", std::regex::icase | std::regex::multiline);
+    std::regex addResetObjPattern(R"(\bvpmTimer\s*\.\s*addResetObj\s+Me\b)", std::regex::icase);
+
+    std::sregex_iterator it(script.begin(), script.end(), classStartRegex);
+    std::sregex_iterator end;
+
+    std::vector<std::tuple<std::string, size_t, size_t>> classRanges;
+
+    while (it != end) {
+        std::string className = (*it)[1].str();
+        size_t classStart = (*it).position();
+        std::string afterClass = script.substr(classStart);
+        std::smatch endMatch;
+        if (std::regex_search(afterClass, endMatch, classEndRegex)) {
+            size_t classEnd = classStart + endMatch.position() + endMatch.length();
+            std::string classBody = script.substr(classStart, classEnd - classStart);
+            if (std::regex_search(classBody, addResetObjPattern)) {
+                classRanges.push_back({className, classStart, classEnd});
+                PLOGI.printf("ScriptPatcher: Found native class '%s' (uses vpmTimer.addResetObj Me)", className.c_str());
+            }
+        }
+        ++it;
+    }
+
+    std::sort(classRanges.begin(), classRanges.end(),
+              [](const auto& a, const auto& b) { return std::get<1>(a) > std::get<1>(b); });
+
+    for (const auto& [className, startPos, endPos] : classRanges) {
+        NativeClassInfo info;
+        info.name = className;
+        info.fullText = script.substr(startPos, endPos - startPos);
+        info.placeholder = "' __NATIVE_CLASS_PLACEHOLDER_" + className + "__";
+        script = script.substr(0, startPos) + info.placeholder + "\n" + script.substr(endPos);
+        nativeClasses.push_back(info);
+        PLOGI.printf("ScriptPatcher: Extracted native class '%s' (%zu chars)", className.c_str(), info.fullText.length());
+    }
+
+    return nativeClasses;
+}
+
+std::string ScriptPatcher::RestoreNativeClasses(const std::string& script,
+                                                 const std::vector<NativeClassInfo>& nativeClasses) {
+    std::string result = script;
+    for (const auto& info : nativeClasses) {
+        size_t pos = result.find(info.placeholder);
+        if (pos != std::string::npos) {
+            result = result.substr(0, pos) + info.fullText + result.substr(pos + info.placeholder.length());
+            PLOGI.printf("ScriptPatcher: Restored native class '%s'", info.name.c_str());
+        }
+    }
+    return result;
+}
+
+
+// ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
 
 std::string ScriptPatcher::PatchScript(const std::string& script) {
+    // DEBUG: Set to true to skip ALL patching for debugging
+    static bool skipAllPatching = false;
+    if (skipAllPatching) {
+        PLOGI.printf("ScriptPatcher: DEBUG - Skipping all patches");
+        return StripBOM(script);
+    }
+
     std::string result = StripBOM(script);
     bool patched = result.length() != script.length();
     bool classEmulationApplied = false;
     PLOGI.printf("ScriptPatcher: Checking script (length=%zu)", result.length());
 
-    // Class emulation (must run first)
+    // STEP 0: Remove unused class definitions (Wine workaround)
+    // Wine VBScript has bugs with certain class patterns that can cause crashes
+    // even when the class is never instantiated. Comment out unused classes.
+    {
+        std::string before = result;
+        result = RemoveUnusedClasses(result);
+        if (result != before) {
+            patched = true;
+            PLOGI.printf("ScriptPatcher: Removed unused class definitions (Wine workaround)");
+        }
+    }
+
+    // STEP 0.5: Remove duplicate vpmInit calls (Wine workaround)
+    // Some table scripts mistakenly call vpmInit Me twice which breaks flippers
+    {
+        std::string before = result;
+        result = RemoveDuplicateVpmInit(result);
+        if (result != before) {
+            patched = true;
+        }
+    }
+
+
+    // STEP 1: Extract native classes BEFORE any processing
+    // These classes pass Me to external code and must remain 100% native
+    std::vector<NativeClassInfo> nativeClasses = ExtractNativeClasses(result);
+    if (!nativeClasses.empty()) {
+        patched = true;
+        PLOGI.printf("ScriptPatcher: Extracted %zu native classes for protection", nativeClasses.size());
+    }
+
+
+    // STEP 2: Class emulation (for remaining classes)
     if (HasClassDefinitions(result)) {
         std::string before = result;
         result = EmulateClasses(result);
@@ -176,6 +320,8 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
 
     { std::string b = result; result = PatchAddScoreParentheses(result); if (result != b) patched = true; }
     { std::string b = result; result = PatchSetAlignedPositionParentheses(result); if (result != b) patched = true; }
+    // Fix invalid single-line If...End If patterns (Wine VBScript crashes on these)
+    { std::string b = result; result = PatchSingleLineIfEndIf(result); if (result != b) patched = true; }
     // Disabled for testing
     // { std::string b = result; result = PatchLineContinuationBeforeDot(result); if (result != b) patched = true; }
     // { std::string b = result; result = PatchSingleLineIfElse(result); if (result != b) patched = true; }
@@ -210,6 +356,12 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         // to avoid the helpers' arr(idx).prop patterns being transformed into recursive calls
         result = InjectVPXSetArrObjProp(result);
         patched = true;
+    }
+
+    // FINAL STEP: Restore native classes (untransformed) back into the script
+    if (!nativeClasses.empty()) {
+        result = RestoreNativeClasses(result, nativeClasses);
+        PLOGI.printf("ScriptPatcher: Restored %zu native classes", nativeClasses.size());
     }
 
     if (patched) {

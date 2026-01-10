@@ -454,7 +454,24 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         }
     }
 
-    PLOGI.printf("ScriptPatcher: Found %zu classes", classes.size());
+    // Filter out classes that use vpmTimer.addResetObj Me - these pass 'Me' to external
+    // code that expects a real VBScript object with callable methods, not a Dictionary
+    std::regex addResetObjPattern(R"(\bvpmTimer\s*\.\s*addResetObj\s+Me\b)", std::regex::icase);
+    std::vector<VBClassDefinition> classesToEmulate;
+    for (const auto& cls : classes) {
+        std::string allBodies = cls.initializeBody + "\n";
+        for (const auto& m : cls.methods) allBodies += m.body + "\n";
+
+        if (std::regex_search(allBodies, addResetObjPattern)) {
+            PLOGI.printf("ScriptPatcher: Skipping emulation for '%s' (uses vpmTimer.addResetObj Me)",
+                        cls.name.c_str());
+        } else {
+            classesToEmulate.push_back(cls);
+        }
+    }
+    classes = classesToEmulate;
+
+    PLOGI.printf("ScriptPatcher: Found %zu classes to emulate", classes.size());
 
     std::unordered_set<std::string> classNames;
     for (const auto& cls : classes) {

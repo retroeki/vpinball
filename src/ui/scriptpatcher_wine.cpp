@@ -993,6 +993,39 @@ std::string ScriptPatcher::PatchNestedSingleLineIf(const std::string& script) {
 }
 
 
+
+
+// Fix invalid single-line If...End If syntax
+// VBScript single-line If should NOT have End If:
+//   INVALID: If cond then stmt end if
+//   VALID:   If cond then stmt
+// Wine VBScript may crash or infinite loop on this invalid syntax
+std::string ScriptPatcher::PatchSingleLineIfEndIf(const std::string& script) {
+    std::string r = script;
+
+    // Match: If ... then <statement> end if  (on single line, NO colons)
+    // Example: "If GifCountr > 3 then GifCountr = 0 end If"
+    // Should become: "If GifCountr > 3 then GifCountr = 0"
+    // Use [ \t] instead of \s to avoid matching across lines
+    std::regex p(R"((if[ \t]+[^\r\n:]+?[ \t]+then)[ \t]+([^:\r\n]+?)[ \t]+end[ \t]+if)", std::regex::icase);
+    std::string before;
+    int iterations = 0;
+    const int maxIterations = 100;
+
+    // Keep applying until no more matches (handles nested cases)
+    while (r != before && iterations < maxIterations) {
+        before = r;
+        r = std::regex_replace(r, p, "$1 $2");
+        iterations++;
+    }
+
+    if (iterations > 1) {
+        PLOGI.printf("ScriptPatcher: Fixed %d single-line If...End If patterns", iterations - 1);
+    }
+
+    return r;
+}
+
 std::string ScriptPatcher::PatchExecuteEval(const std::string& script) { return script; }
 
 std::string ScriptPatcher::PatchStringConcatenation(const std::string& script) {
@@ -1020,3 +1053,91 @@ std::string ScriptPatcher::PatchSlingshotCorrection(const std::string& script) {
 // ============================================================================
 
 #endif // __STANDALONE__
+
+// ============================================================================
+// WINE BUG WORKAROUND: Remove unused class definitions
+// Wine VBScript has bugs with certain class patterns. If a class is defined
+// but never instantiated, we can safely comment it out to avoid triggering bugs.
+// ============================================================================
+
+std::string ScriptPatcher::RemoveUnusedClasses(const std::string& script) {
+    std::string result = script;
+    
+    // Find all class definitions
+    std::regex classStartRegex(R"(^[ \t]*Class\s+(\w+))", std::regex::icase | std::regex::multiline);
+    std::regex classEndRegex(R"(^[ \t]*End\s+Class)", std::regex::icase | std::regex::multiline);
+    
+    std::sregex_iterator it(result.begin(), result.end(), classStartRegex);
+    std::sregex_iterator end;
+    
+    std::vector<std::tuple<std::string, size_t, size_t>> unusedClasses;
+    
+    while (it != end) {
+        std::string className = (*it)[1].str();
+        size_t classStart = (*it).position();
+        std::string afterClass = result.substr(classStart);
+        std::smatch endMatch;
+        if (std::regex_search(afterClass, endMatch, classEndRegex)) {
+            size_t classEnd = classStart + endMatch.position() + endMatch.length();
+            
+            // Check if this class is ever instantiated (New ClassName)
+            std::regex newPattern(R"(\bNew\s+)" + className + R"(\b)", std::regex::icase);
+            if (!std::regex_search(result, newPattern)) {
+                unusedClasses.push_back({className, classStart, classEnd});
+                PLOGI.printf("ScriptPatcher: Found unused class '%s' - will be REMOVED", className.c_str());
+            }
+        }
+        ++it;
+    }
+    
+    // Sort by position descending to avoid offset issues when modifying
+    std::sort(unusedClasses.begin(), unusedClasses.end(),
+              [](const auto& a, const auto& b) { return std::get<1>(a) > std::get<1>(b); });
+    
+    // Completely REMOVE unused classes (Wine crashes even on commented classes)
+    for (const auto& [className, startPos, endPos] : unusedClasses) {
+        // Full removal - replace entire class with single comment
+        result = result.substr(0, startPos) + "' [WINE: Removed " + className + "]\n" + result.substr(endPos);
+        PLOGI.printf("ScriptPatcher: REMOVED class '%s'", className.c_str());
+    }
+
+    return result;
+}
+
+// ============================================================================
+// WINE BUG WORKAROUND: Remove duplicate vpmInit calls
+// Some table scripts mistakenly call vpmInit Me twice, which corrupts flipper
+// callback state. Keep only the first occurrence.
+// ============================================================================
+
+std::string ScriptPatcher::RemoveDuplicateVpmInit(const std::string& script) {
+    std::string result = script;
+    
+    // Find all vpmInit calls (case insensitive)
+    std::regex vpmInitRegex(R"(\bvpmInit\s+[Mm]e\b)", std::regex::icase);
+    
+    std::sregex_iterator it(result.begin(), result.end(), vpmInitRegex);
+    std::sregex_iterator end;
+    
+    std::vector<std::pair<size_t, size_t>> matches; // position, length
+    
+    while (it != end) {
+        matches.push_back({(*it).position(), (*it).length()});
+        ++it;
+    }
+    
+    if (matches.size() > 1) {
+        PLOGI.printf("ScriptPatcher: Found %zu vpmInit calls - removing duplicates", matches.size());
+        
+        // Remove all but the first occurrence (process in reverse order)
+        for (size_t i = matches.size() - 1; i > 0; --i) {
+            size_t pos = matches[i].first;
+            size_t len = matches[i].second;
+            // Comment out the duplicate instead of removing to preserve line numbers
+            result = result.substr(0, pos) + "' [WINE: Removed duplicate] " + result.substr(pos, len) + result.substr(pos + len);
+            PLOGI.printf("ScriptPatcher: Commented out duplicate vpmInit at position %zu", pos);
+        }
+    }
+    
+    return result;
+}
