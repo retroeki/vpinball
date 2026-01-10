@@ -489,6 +489,16 @@ End Function
         PLOGI.printf("ScriptPatcher: Script already defines Atn2, skipping injection");
     }
 
+    // Add nested array assignment helper (Wine cannot do arr(i)(j) = value directly)
+    helpers += R"(
+'VPX_SetNestedArrayElem - Wine workaround for nested array assignment
+Sub VPX_SetNestedArrayElem(ByRef arr, idx1, idx2, value)
+    Dim temp
+    temp = arr(idx1)
+    temp(idx2) = value
+    arr(idx1) = temp
+End Sub
+)";
     helpers += "' End Wine VBScript Array Compatibility Helpers\n\n";
 
     std::string r = script;
@@ -835,7 +845,8 @@ std::string ScriptPatcher::PatchNestedArrayAssignment(const std::string& script)
     // Pattern: ArrayName(index1)(index2) = expression
     // Must be at statement start (line start, after :, after Then)
     // Capture: ArrayName, index1, index2, value
-    std::regex p(R"((^[ 	]*|:[ 	]*|Then[ 	]+)(\w+)\s*\(\s*([^)]+)\s*\)\s*\(\s*([^)]+)\s*\)\s*=\s*([^
+    std::regex p(R"((^[ 	]*|:[ 	]*|Then[ 	]+)(\w+)\s*\(\s*([^)]+)\s*\)\s*\(\s*([^)]+)\s*\)\s*=\s*([^
+
 :]+))",
                  std::regex::icase | std::regex::multiline);
     
