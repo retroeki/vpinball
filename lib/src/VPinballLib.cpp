@@ -67,6 +67,23 @@ static void GetPUPVideoSourceSize(int& width, int& height)
    height = g_pupVideoSourceHeight;
 }
 
+// Global storage for app's internal files path (set from Android/Java side)
+static std::string g_internalFilesPath;
+static std::mutex g_internalFilesPathMutex;
+
+extern "C" void VPinballSetInternalPath(const char* path)
+{
+   std::lock_guard<std::mutex> lock(g_internalFilesPathMutex);
+   g_internalFilesPath = path ? path : "";
+   PLOGI.printf("VPinballLib: Internal path set to: %s", g_internalFilesPath.c_str());
+}
+
+extern "C" const char* VPinballGetInternalPath()
+{
+   std::lock_guard<std::mutex> lock(g_internalFilesPathMutex);
+   return g_internalFilesPath.empty() ? nullptr : g_internalFilesPath.c_str();
+}
+
 namespace VPinballLib {
 
 VPinballLib::VPinballLib()
@@ -256,6 +273,72 @@ void VPinballLib::Init(VPinballEventCallback callback)
    }, this, true);
 }
 
+void VPinballLib::InitHeadless(VPinballEventCallback callback)
+{
+   SetEventCallback(callback);
+
+   // Same initialization as Init() but runs directly without SDL_RunOnMainThread
+   // Used when called from a Service context where SDL event loop isn't running
+
+   g_pvp = new ::VPinball();
+   g_pvp->SetLogicalNumberOfProcessors(SDL_GetNumLogicalCPUCores());
+   g_pvp->m_settings.SetIniPath(g_pvp->GetPrefPath() + "VPinballX.ini");
+   g_pvp->m_settings.Load(true);
+   g_pvp->m_settings.SetVersion_VPinball(string(VP_VERSION_STRING_DIGITS), false);
+   g_pvp->m_settings.Save();
+
+   Logger::GetInstance()->Init();
+   Logger::GetInstance()->SetupLogger(true);
+
+   PLOGI << "VPX Headless - " << VP_VERSION_STRING_FULL_LITERAL;
+   PLOGI << "m_logicalNumberOfProcessors=" << g_pvp->GetLogicalNumberOfProcessors();
+   PLOGI << "m_myPath=" << g_pvp->m_myPath;
+   PLOGI << "m_myPrefPath=" << g_pvp->GetPrefPath();
+
+   if (!DirExists(PATH_USER)) {
+      std::error_code ec;
+      if (std::filesystem::create_directory(PATH_USER, ec)) {
+         PLOGI.printf("User path created: %s", PATH_USER.c_str());
+      }
+      else {
+         PLOGE.printf("Unable to create user path: %s", PATH_USER.c_str());
+      }
+   }
+
+   EditableRegistry::RegisterEditable<Ball>();
+   EditableRegistry::RegisterEditable<Bumper>();
+   EditableRegistry::RegisterEditable<Decal>();
+   EditableRegistry::RegisterEditable<DispReel>();
+   EditableRegistry::RegisterEditable<Flasher>();
+   EditableRegistry::RegisterEditable<Flipper>();
+   EditableRegistry::RegisterEditable<Gate>();
+   EditableRegistry::RegisterEditable<Kicker>();
+   EditableRegistry::RegisterEditable<Light>();
+   EditableRegistry::RegisterEditable<LightSeq>();
+   EditableRegistry::RegisterEditable<Plunger>();
+   EditableRegistry::RegisterEditable<Primitive>();
+   EditableRegistry::RegisterEditable<Ramp>();
+   EditableRegistry::RegisterEditable<Rubber>();
+   EditableRegistry::RegisterEditable<Spinner>();
+   EditableRegistry::RegisterEditable<Surface>();
+   EditableRegistry::RegisterEditable<Textbox>();
+   EditableRegistry::RegisterEditable<Timer>();
+   EditableRegistry::RegisterEditable<Trigger>();
+   EditableRegistry::RegisterEditable<HitTarget>();
+   EditableRegistry::RegisterEditable<PartGroup>();
+
+   VPXPluginAPIImpl::GetInstance();
+
+   RegisterStaticPlugins();
+
+   for (const auto& plugin : MsgPI::MsgPluginManager::GetInstance().GetPlugins()) {
+      if (LoadValueBool("Plugin."s + plugin->m_id, "Enable", false))
+         plugin->Load(&MsgPI::MsgPluginManager::GetInstance().GetMsgAPI());
+   }
+
+   UpdateWebServer();
+}
+
 void VPinballLib::SetEventCallback(VPinballEventCallback callback)
 {
    m_eventCallback = [callback](VPINBALL_EVENT event, void* data) -> void* {
@@ -287,7 +370,8 @@ void VPinballLib::SetEventCallback(VPinballEventCallback callback)
                jsonData = jsonString.c_str();
                break;
             }
-            case VPINBALL_EVENT_SCRIPT_ERROR: {
+            case VPINBALL_EVENT_SCRIPT_ERROR:
+            case VPINBALL_EVENT_FATAL_ERROR: {
                ScriptErrorData* scriptErrorData = (ScriptErrorData*)data;
                j["error"] = (int)scriptErrorData->error;
                j["line"] = scriptErrorData->line;

@@ -17,6 +17,11 @@
 #include "lib/src/VPinballLib.h"
 #endif
 
+// External function to get pre-set internal path (for Android headless/service mode)
+#ifdef __ANDROID__
+extern "C" const char* VPinballGetInternalPath();
+#endif
+
 #include <filesystem>
 #ifndef __STANDALONE__
 #include "FreeImage.h"
@@ -171,7 +176,13 @@ void VPinball::GetMyPath()
    m_myPath = pos != string::npos ? path.substr(0,pos + 1) : path;
 #else
 #ifdef __ANDROID__
-   m_myPath = string(SDL_GetAndroidInternalStoragePath()) + PATH_SEPARATOR_CHAR;
+   // Try to use pre-set internal path first (for headless/service mode where SDL Activity isn't available)
+   const char* internalPath = VPinballGetInternalPath();
+   if (internalPath && internalPath[0] != '\0') {
+      m_myPath = string(internalPath) + PATH_SEPARATOR_CHAR;
+   } else {
+      m_myPath = string(SDL_GetAndroidInternalStoragePath()) + PATH_SEPARATOR_CHAR;
+   }
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS && !defined(__LIBVPINBALL__)
    char *szPath = SDL_GetPrefPath("../..", "Documents");
    m_myPath = szPath;
@@ -198,9 +209,15 @@ string VPinball::GetDefaultPrefPath()
    // That would look something like: "C:\Users\bob\AppData\Roaming\VPinballX\"
    path = string(GetAppDataPath()) + PATH_SEPARATOR_CHAR + "VPinballX" + PATH_SEPARATOR_CHAR;
 #elif defined(__ANDROID__)
-   char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
-   path = szPrefPath;
-   SDL_free(szPrefPath);
+   // Try to use pre-set internal path first (for headless/service mode where SDL Activity isn't available)
+   const char* internalPath = VPinballGetInternalPath();
+   if (internalPath && internalPath[0] != '\0') {
+      path = string(internalPath) + PATH_SEPARATOR_CHAR;
+   } else {
+      char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
+      path = szPrefPath;
+      SDL_free(szPrefPath);
+   }
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
    char *szPrefPath = SDL_GetPrefPath("../..", "Documents");
    path = szPrefPath;
@@ -1045,6 +1062,15 @@ void VPinball::DoPlay(const int playMode)
    if (initError)
    {
       m_table_played_via_SelectTableOnStart = false;
+#ifdef __LIBVPINBALL__
+      // On mobile, send PLAYER_CLOSED event so the app knows initialization failed
+      // The SCRIPT_ERROR event (if any) was already sent, this tells the app to handle it
+      if (g_isMobile)
+      {
+         PLOGE << "Play initialization failed - sending PLAYER_CLOSED event";
+         VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_PLAYER_CLOSED, nullptr);
+      }
+#endif
    }
 }
 
