@@ -97,34 +97,60 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
     std::unordered_set<std::string> classNames;
     for (const auto& cls : classes) {
         classNames.insert(cls.name);
-        std::unordered_map<std::string, std::string> methods;
+        // Merge methods rather than overwriting - this handles stub classes correctly
+        auto& methods = classMethods[cls.name];
         for (const auto& m : cls.methods) {
-            methods[ToLower(m.name)] = m.name;  // lowercase key -> original value
+            std::string lowerName = ToLower(m.name);
+            if (methods.find(lowerName) == methods.end()) {
+                methods[lowerName] = m.name;  // Only add if not already present
+                PLOGI.printf("ScriptPatcher: Class '%s' has method '%s'", cls.name.c_str(), m.name.c_str());
+            }
         }
-        classMethods[cls.name] = methods;
     }
 
     // =========================================================================
     // PHASE 2: Find all variables that hold emulated class instances
     // =========================================================================
 
-    // Scan for: Set varName = ClassName_Create()
+    // Scan for: Set varName = ClassName_Create() or ClassName_init(ClassName_Create(), ...)
     // Build maps: lowercase var -> className, lowercase var -> original case var
     std::unordered_map<std::string, std::string> varTypes;       // lowerVar -> className
     std::unordered_map<std::string, std::string> varOriginalCase; // lowerVar -> originalVar
     for (const auto& cls : classes) {
         std::string escapedClassName = EscapeRegex(cls.name);
-        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
-        std::regex setPattern(pattern, std::regex::icase);
+
+        // Pattern 1: Set varName = ClassName_Create()
+        std::string pattern1 = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\s*\\(";
+        std::regex setPattern1(pattern1, std::regex::icase);
         std::smatch match;
         std::string::const_iterator searchStart(script.cbegin());
-        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
+        while (std::regex_search(searchStart, script.cend(), match, setPattern1)) {
             std::string varName = match[1].str();
             std::string lowerVar = ToLower(varName);
             varTypes[lowerVar] = cls.name;
             varOriginalCase[lowerVar] = varName;
             searchStart = match.suffix().first;
         }
+
+        // Pattern 2: Set varName = ClassName_defaultMethod(ClassName_Create(), ...)
+        // For classes with default constructors
+        std::string pattern2 = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_\\w+\\s*\\(\\s*" + escapedClassName + "_Create\\s*\\(";
+        std::regex setPattern2(pattern2, std::regex::icase);
+        searchStart = script.cbegin();
+        while (std::regex_search(searchStart, script.cend(), match, setPattern2)) {
+            std::string varName = match[1].str();
+            std::string lowerVar = ToLower(varName);
+            if (varTypes.find(lowerVar) == varTypes.end()) {
+                varTypes[lowerVar] = cls.name;
+                varOriginalCase[lowerVar] = varName;
+            }
+            searchStart = match.suffix().first;
+        }
+    }
+
+    PLOGI.printf("ScriptPatcher: TransformMethodCalls found %zu typed variables", varTypes.size());
+    for (const auto& [var, cls] : varTypes) {
+        PLOGI.printf("ScriptPatcher:   varTypes[%s] = %s", var.c_str(), cls.c_str());
     }
 
     // Early exit if no emulated class instances found
