@@ -346,9 +346,9 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             // Transform: accessor = value -> ClassName_Let_accessor this_, value
             // For accessors without index parameters (just the value param)
-            // Must be at start of statement (after newline, colon+space, or Then+space)
-            //// Pattern: (^|\n|:[ \t]*|\bThen[ \t]+)accessor = value
-            std::string letNoParamPattern = "(^|\\n|:[ \\t]*|\\bThen[ \\t]+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
+            // Must be at start of statement (after newline+optional indent, colon+space, or Then+space)
+            //// Pattern: (^|\n[ \t]*|:[ \t]*|\bThen[ \t]+)accessor = value
+            std::string letNoParamPattern = "(^|\\n[ \\t]*|:[ \\t]*|\\bThen[ \\t]+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
             std::regex letNoParamRegex(letNoParamPattern, std::regex::icase);
             result = std::regex_replace(result, letNoParamRegex,
                 "$1" + classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $2");
@@ -432,6 +432,41 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             temp2 += result.substr(lastPos2);
             if (!temp2.empty()) result = temp2;
         }
+    }
+
+    // Transform callback string patterns for event handlers
+    // Pattern: varname & ".MethodName args" -> "ClassName_MethodName " & varname & ", args"
+    // This handles vpmBuildEvent calls like: aName & ".AddBall ActiveBall"
+    for (const auto& method : classDef.methods) {
+        std::string escapedMethodName = EscapeRegex(method.name);
+        // Pattern: (varname) & ".(MethodName)( args)?"
+        // Match: someVar & ".MethodName" or someVar & ".MethodName arg1 arg2"
+        std::string callbackPattern = "(\\w+)\\s*&\\s*\"\\." + escapedMethodName + "(?:\\s+([^\"]+))?\"";
+        std::regex callbackRegex(callbackPattern, std::regex::icase);
+
+        std::string temp;
+        std::sregex_iterator it(result.begin(), result.end(), callbackRegex);
+        std::sregex_iterator end;
+        size_t lastPos = 0;
+
+        for (; it != end; ++it) {
+            std::smatch match = *it;
+            size_t matchPos = match.position();
+            temp += result.substr(lastPos, matchPos - lastPos);
+
+            std::string varName = match[1].str();
+            std::string args = match[2].str();
+
+            // Build replacement: "ClassName_MethodName " & varname & ", args"
+            std::string replacement = "\"" + classDef.name + "_" + method.name + " \" & " + varName;
+            if (!args.empty()) {
+                replacement += " & \", " + args + "\"";
+            }
+            temp += replacement;
+            lastPos = matchPos + match[0].length();
+        }
+        temp += result.substr(lastPos);
+        if (!temp.empty()) result = temp;
     }
 
     return result;
