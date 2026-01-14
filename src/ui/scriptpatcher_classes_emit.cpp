@@ -9,6 +9,30 @@
  * - TransformMethodBody: converts Me.X to this_("X"), etc.
  *
  * Uses Google RE2 for regex operations (much faster than std::regex)
+ *
+ * ============================================================================
+ * WARNING: FRAGILE REGEX PATTERNS - MODIFY WITH EXTREME CARE!
+ * ============================================================================
+ * This code was migrated from std::regex to RE2. RE2 does NOT support:
+ * - Negative lookahead (?!...)
+ * - Positive lookahead (?=...)
+ * - Backreferences (\1, \2, etc.)
+ *
+ * These patterns were rewritten to work without lookaheads, but this required
+ * capturing trailing boundaries and restoring them in replacements. Some edge
+ * cases may still exist.
+ *
+ * CRITICAL: The whitespace patterns are very sensitive:
+ * - Using \s+ can match NEWLINES, causing patterns to incorrectly span lines
+ *   (e.g., a no-arg method call followed by "If" on the next line gets merged)
+ * - Using [ \t]+ only matches horizontal whitespace (spaces/tabs)
+ * - Changing between these WILL break different tables!
+ *
+ * If you modify regex patterns here, test with MULTIPLE tables including:
+ * - Game of Thrones (complex class emulation, DMDSettings)
+ * - Lord of the Rings (different class patterns)
+ * - Any table with single-line If...Then...Else statements
+ * ============================================================================
  */
 
 #include "stdafx.h"
@@ -201,7 +225,9 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         // Pattern for method call with arguments: methodName args
         // Match at statement boundaries (start of line, after :, after Then/Else)
         // Note: RE2 doesn't support (?!=) lookahead, so we handle this differently
-        RE2 withArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "\\s+([^=:\\r\\n][^:\\r\\n]*)");
+        // IMPORTANT: Use [ \\t]+ not \\s+ - \\s includes newlines which would
+        // incorrectly consume the next line as arguments to a no-arg method call!
+        RE2 withArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "[ \\t]+([^=:\\r\\n][^:\\r\\n]*)");
 
         std::string temp;
         auto matches = RE2FindAll(result, withArgsRegex);
@@ -228,11 +254,19 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 alreadyTransformed = true;
             }
 
+            // Check if "args" actually start with a VBS keyword - means this is a no-args
+            // call followed by a new statement (e.g., "MethodName\nIf x Then" matched wrongly)
+            std::string args = (match.groups.size() > 1) ? match.groups[1] : "";
+            static const RE2 vbsKeywordStart(R"((?i)^(If|For|Do|While|Select|With|End|Exit|Sub|Function|Dim|Const|Set|Call|On|Rem|Loop|Next|Wend|ElseIf|Case|Class|Private|Public|Property|ReDim|Erase|Execute|ExecuteGlobal|Randomize|Option)\b)");
+            if (RE2::PartialMatch(args, vbsKeywordStart)) {
+                alreadyTransformed = true;  // Skip - this isn't really args
+            }
+
             temp += result.substr(lastPos, matchPos - lastPos);
             if (alreadyTransformed) {
                 temp += match.full_match;
             } else {
-                temp += match[1] + classDef.name + "_" + method.name + " this_, " + match[2];
+                temp += match[1] + classDef.name + "_" + method.name + " this_, " + args;
             }
             lastPos = matchPos + match.length;
         }
