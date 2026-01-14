@@ -4,7 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <regex>
+// Uses RE2 for regex operations (see scriptpatcher_internal.h)
 
 #ifdef __STANDALONE__
 

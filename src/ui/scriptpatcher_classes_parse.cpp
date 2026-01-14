@@ -16,7 +16,6 @@
 
 #include "scriptpatcher.h"
 #include "scriptpatcher_internal.h"
-#include <regex>
 #include <sstream>
 #include <algorithm>
 
@@ -25,8 +24,8 @@
 // ============================================================================
 
 bool ScriptPatcher::HasClassDefinitions(const std::string& script) {
-    static std::regex classPattern(R"(\bClass\s+\w+)", std::regex::icase);
-    return std::regex_search(script, classPattern);
+    static const RE2 classPattern(R"((?i)\bClass\s+\w+)");
+    return RE2Search(script, classPattern);
 }
 
 
@@ -34,13 +33,13 @@ std::vector<std::string> ScriptPatcher::ParseParameters(const std::string& param
     std::vector<std::string> params;
     std::string trimmed = Trim(paramStr);
     if (trimmed.empty()) return params;
-    
+
     std::istringstream stream(trimmed);
     std::string token;
+    static const RE2 byvalRef(R"((?i)^(ByVal|ByRef)\s+)");
     while (std::getline(stream, token, ',')) {
         token = Trim(token);
-        static std::regex byvalRef(R"(^(ByVal|ByRef)\s+)", std::regex::icase);
-        token = std::regex_replace(token, byvalRef, "");
+        token = RE2Replace(token, byvalRef, "");
         token = Trim(token);
         if (!token.empty()) params.push_back(token);
     }
@@ -53,7 +52,7 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
     std::istringstream stream(script);
     std::string line;
     size_t pos = 0;
-    
+
     bool inClass = false;
     VBClassDefinition currentClass;
     bool inMethod = false;
@@ -62,23 +61,22 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
     bool inAccessor = false;
     VBClassAccessor currentAccessor;
     int accessorNestLevel = 0;
-    
-    static std::regex classStartPattern(R"(^\s*Class\s+(\w+))", std::regex::icase);
-    static std::regex classEndPattern(R"(^\s*End\s+Class\s*$)", std::regex::icase);
-    static std::regex propertyDeclPattern(R"(^\s*(Public|Private)\s+(?!Sub|Function|Property|Default)(.+)$)", std::regex::icase);
-    static std::regex methodStartPattern(R"(^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
-    static std::regex methodEndSubPattern(R"(^\s*End\s+Sub\s*$)", std::regex::icase);
-    static std::regex methodEndFuncPattern(R"(^\s*End\s+Function\s*$)", std::regex::icase);
-    static std::regex accessorStartPattern(R"(^\s*(Public\s+|Private\s+)?Property\s+(Get|Let|Set)\s+(\w+)(?:\s*\(([^)]*)\))?)", std::regex::icase);
-    static std::regex accessorEndPattern(R"(^\s*End\s+Property\s*$)", std::regex::icase);
+
+    static const RE2 classStartPattern(R"((?i)^\s*Class\s+(\w+))");
+    static const RE2 classEndPattern(R"((?i)^\s*End\s+Class\s*$)");
+    static const RE2 propertyDeclPattern(R"((?i)^\s*(Public|Private)\s+(?!Sub|Function|Property|Default)(.+)$)");
+    static const RE2 methodStartPattern(R"((?i)^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)");
+    static const RE2 methodEndSubPattern(R"((?i)^\s*End\s+Sub\s*$)");
+    static const RE2 methodEndFuncPattern(R"((?i)^\s*End\s+Function\s*$)");
+    static const RE2 accessorStartPattern(R"((?i)^\s*(Public\s+|Private\s+)?Property\s+(Get|Let|Set)\s+(\w+)(?:\s*\(([^)]*)\))?)");
+    static const RE2 accessorEndPattern(R"((?i)^\s*End\s+Property\s*$)");
     // Nest patterns - match at line start (with whitespace) OR after statement separator (:)
     // For inline blocks like "Dim x : For x = 0 to N"
     // Use ^\s* to allow leading whitespace at line start
-    static std::regex nestStartPattern(R"((^\s*|:\s*)(If\s+.*\s+Then\s*$|For\s+|Do\s+|While\s+|Select\s+Case))", std::regex::icase);
-    static std::regex nestEndPattern(R"((^\s*|:\s*)(End\s+If|Next|Loop|Wend|End\s+Select))", std::regex::icase);
+    static const RE2 nestStartPattern(R"((?i)(^\s*|:\s*)(If\s+.*\s+Then\s*$|For\s+|Do\s+|While\s+|Select\s+Case))");
+    static const RE2 nestEndPattern(R"((?i)(^\s*|:\s*)(End\s+If|Next|Loop|Wend|End\s+Select))");
 
     while (std::getline(stream, line)) {
-        std::smatch match;
         size_t lineStart = pos;
         size_t originalLen = line.length();  // Before stripping \r
 
@@ -89,19 +87,21 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
         }
         pos += originalLen + 1;  // Use original length + 1 for the \n
         std::string trimmedLine = Trim(line);
-        
+
         if (trimmedLine.empty() || trimmedLine[0] == '\'') {
             if (inMethod) currentMethod.body += line + "\n";
             if (inAccessor) currentAccessor.body += line + "\n";
             continue;
         }
-        
-        if (!inClass && std::regex_search(line, match, classStartPattern)) {
+
+        std::string cap1, cap2, cap3, cap4, cap5;
+
+        if (!inClass && RE2::PartialMatch(line, classStartPattern, &cap1)) {
             // Check for single-line class definition (Class X : ... : End Class on same line)
-            static std::regex singleLineClassPattern(R"(\bEnd\s+Class\b)", std::regex::icase);
-            if (std::regex_search(line, singleLineClassPattern)) {
+            static const RE2 singleLineClassPattern(R"((?i)\bEnd\s+Class\b)");
+            if (RE2Search(line, singleLineClassPattern)) {
                 // Single-line stub class - skip it entirely (don't emulate)
-                PLOGI.printf("ScriptPatcher: Skipping single-line stub class '%s'", match[1].str().c_str());
+                PLOGI.printf("ScriptPatcher: Skipping single-line stub class '%s'", cap1.c_str());
                 continue;
             }
             inClass = true;
@@ -110,13 +110,13 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
             methodNestLevel = 0;
             accessorNestLevel = 0;
             currentClass = VBClassDefinition();
-            currentClass.name = match[1].str();
+            currentClass.name = cap1;
             currentClass.startPos = lineStart;
             PLOGI.printf("ScriptPatcher: Parsing class '%s'", currentClass.name.c_str());
             continue;
         }
 
-        if (inClass && std::regex_search(line, match, classEndPattern)) {
+        if (inClass && RE2Search(line, classEndPattern)) {
             currentClass.endPos = pos;
             // Count array properties for logging
             size_t arrayPropCount = 0;
@@ -134,12 +134,12 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
             accessorNestLevel = 0;
             continue;
         }
-        
+
         if (!inClass) continue;
-        
+
         if (inMethod) {
-            bool isEndSub = std::regex_search(line, methodEndSubPattern);
-            bool isEndFunc = std::regex_search(line, methodEndFuncPattern);
+            bool isEndSub = RE2Search(line, methodEndSubPattern);
+            bool isEndFunc = RE2Search(line, methodEndFuncPattern);
             if ((isEndSub && !currentMethod.isFunction) || (isEndFunc && currentMethod.isFunction)) {
                 if (methodNestLevel == 0) {
                     if (EqualsIgnoreCase(currentMethod.name, "Class_Initialize"))
@@ -152,49 +152,49 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
                     continue;
                 }
             }
-            if (std::regex_search(line, nestStartPattern)) methodNestLevel++;
-            if (std::regex_search(line, nestEndPattern) && methodNestLevel > 0) methodNestLevel--;
+            if (RE2Search(line, nestStartPattern)) methodNestLevel++;
+            if (RE2Search(line, nestEndPattern) && methodNestLevel > 0) methodNestLevel--;
             currentMethod.body += line + "\n";
             continue;
         }
 
         if (inAccessor) {
-            if (std::regex_search(line, accessorEndPattern)) {
+            if (RE2Search(line, accessorEndPattern)) {
                 if (accessorNestLevel == 0) {
                     currentClass.accessors.push_back(currentAccessor);
                     inAccessor = false;
                     continue;
                 }
             }
-            if (std::regex_search(line, nestStartPattern)) accessorNestLevel++;
-            if (std::regex_search(line, nestEndPattern) && accessorNestLevel > 0) accessorNestLevel--;
+            if (RE2Search(line, nestStartPattern)) accessorNestLevel++;
+            if (RE2Search(line, nestEndPattern) && accessorNestLevel > 0) accessorNestLevel--;
             currentAccessor.body += line + "\n";
             continue;
         }
-        
-        if (std::regex_search(line, match, methodStartPattern)) {
+
+        if (RE2::PartialMatch(line, methodStartPattern, &cap1, &cap2, &cap3, &cap4, &cap5)) {
             currentMethod = VBClassMethod();
-            std::string visibility = match[1].str();
+            std::string visibility = cap1;
             currentMethod.isPublic = visibility.empty() || visibility.find("Public") != std::string::npos;
-            currentMethod.isDefault = !match[2].str().empty();
-            currentMethod.isFunction = EqualsIgnoreCase(Trim(match[3].str()), "Function");
-            currentMethod.name = match[4].str();
-            currentMethod.params = ParseParameters(match[5].str());
+            currentMethod.isDefault = !cap2.empty();
+            currentMethod.isFunction = EqualsIgnoreCase(Trim(cap3), "Function");
+            currentMethod.name = cap4;
+            currentMethod.params = ParseParameters(cap5);
             currentMethod.body = "";
 
             // Check for single-line method: Sub Foo() : body : End Sub
             // Pattern to find : ... : End Sub or : ... : End Function on same line
             // Allow trailing comments ('...) after End Sub/Function
-            static std::regex singleLineEndSub(R"(:\s*(.*):\s*End\s+Sub\s*('.*)?$)", std::regex::icase);
-            static std::regex singleLineEndFunc(R"(:\s*(.*):\s*End\s+Function\s*('.*)?$)", std::regex::icase);
-            std::smatch singleLineMatch;
+            static const RE2 singleLineEndSub(R"((?i):\s*(.*):\s*End\s+Sub\s*('.*)?$)");
+            static const RE2 singleLineEndFunc(R"((?i):\s*(.*):\s*End\s+Function\s*('.*)?$)");
+            std::string singleLineBody, singleLineComment;
             bool isSingleLine = false;
 
-            if (!currentMethod.isFunction && std::regex_search(line, singleLineMatch, singleLineEndSub)) {
-                currentMethod.body = Trim(singleLineMatch[1].str());
+            if (!currentMethod.isFunction && RE2::PartialMatch(line, singleLineEndSub, &singleLineBody, &singleLineComment)) {
+                currentMethod.body = Trim(singleLineBody);
                 isSingleLine = true;
-            } else if (currentMethod.isFunction && std::regex_search(line, singleLineMatch, singleLineEndFunc)) {
-                currentMethod.body = Trim(singleLineMatch[1].str());
+            } else if (currentMethod.isFunction && RE2::PartialMatch(line, singleLineEndFunc, &singleLineBody, &singleLineComment)) {
+                currentMethod.body = Trim(singleLineBody);
                 isSingleLine = true;
             }
 
@@ -218,21 +218,21 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
             continue;
         }
 
-        if (std::regex_search(line, match, accessorStartPattern)) {
+        if (RE2::PartialMatch(line, accessorStartPattern, &cap1, &cap2, &cap3, &cap4)) {
             currentAccessor = VBClassAccessor();
-            currentAccessor.type = match[2].str();
-            currentAccessor.name = match[3].str();
-            currentAccessor.params = ParseParameters(match[4].str());
+            currentAccessor.type = cap2;
+            currentAccessor.name = cap3;
+            currentAccessor.params = ParseParameters(cap4);
             currentAccessor.body = "";
 
             // Check for single-line accessor: Property Get Foo() : Foo = x : End Property
             // Allow trailing comments ('...) after End Property
-            static std::regex singleLineEndProp(R"(:\s*(.*):\s*End\s+Property\s*('.*)?$)", std::regex::icase);
-            std::smatch singleLineMatch;
+            static const RE2 singleLineEndProp(R"((?i):\s*(.*):\s*End\s+Property\s*('.*)?$)");
+            std::string singleLineBody, singleLineComment;
             bool isSingleLine = false;
 
-            if (std::regex_search(line, singleLineMatch, singleLineEndProp)) {
-                currentAccessor.body = Trim(singleLineMatch[1].str());
+            if (RE2::PartialMatch(line, singleLineEndProp, &singleLineBody, &singleLineComment)) {
+                currentAccessor.body = Trim(singleLineBody);
                 isSingleLine = true;
             }
 
@@ -250,10 +250,10 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
             }
             continue;
         }
-        
-        if (std::regex_search(line, match, propertyDeclPattern)) {
-            bool isPublic = EqualsIgnoreCase(Trim(match[1].str()), "Public");
-            std::string varList = match[2].str();
+
+        if (RE2::PartialMatch(line, propertyDeclPattern, &cap1, &cap2)) {
+            bool isPublic = EqualsIgnoreCase(Trim(cap1), "Public");
+            std::string varList = cap2;
             // Strip VBScript comments (everything after ')
             size_t commentPos = varList.find('\'');
             if (commentPos != std::string::npos) {

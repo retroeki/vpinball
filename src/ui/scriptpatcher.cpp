@@ -57,8 +57,10 @@
 
 #include "scriptpatcher.h"
 #include "scriptpatcher_internal.h"
-#include <regex>
 #include <sstream>
+
+// VPinballGetInternalPath is defined in VPinballLib.cpp
+extern "C" const char* VPinballGetInternalPath();
 
 // ============================================================================
 // PATCH CONFIGURATION FLAGS
@@ -93,10 +95,9 @@ static void AnalyzeScript(const std::string& script) {
     PLOGI.printf("ScriptPatcher: Script length: %zu characters", script.length());
 
     // Count vpmInit calls
-    std::regex vpmInitRegex(R"(\bvpmInit\s+[Mm]e\b)", std::regex::icase);
-    auto vpmInitBegin = std::sregex_iterator(script.begin(), script.end(), vpmInitRegex);
-    auto vpmInitEnd = std::sregex_iterator();
-    int vpmInitCount = std::distance(vpmInitBegin, vpmInitEnd);
+    static const RE2 vpmInitRegex(R"((?i)\bvpmInit\s+[Mm]e\b)");
+    auto vpmInitMatches = RE2FindAll(script, vpmInitRegex);
+    int vpmInitCount = vpmInitMatches.size();
     if (vpmInitCount > 1) {
         PLOGI.printf("ScriptPatcher: [!] WARNING - Found %d vpmInit calls (should be 1)", vpmInitCount);
     } else if (vpmInitCount == 1) {
@@ -106,34 +107,32 @@ static void AnalyzeScript(const std::string& script) {
     }
 
     // Count Class definitions
-    std::regex classRegex(R"(^[ \t]*Class\s+(\w+))", std::regex::icase | std::regex::multiline);
+    static const RE2 classRegex(R"((?im)^[ \t]*Class\s+(\w+))");
     std::vector<std::string> classNames;
-    auto classBegin = std::sregex_iterator(script.begin(), script.end(), classRegex);
-    auto classEnd = std::sregex_iterator();
-    for (auto it = classBegin; it != classEnd; ++it) {
-        classNames.push_back((*it)[1].str());
+    auto classMatches = RE2FindAll(script, classRegex);
+    for (const auto& m : classMatches) {
+        if (m.groups.size() > 0) classNames.push_back(m.groups[0]);
     }
     PLOGI.printf("ScriptPatcher: Class definitions found: %zu", classNames.size());
 
     // Detect ROM type from LoadVPM call
-    std::regex loadVpmRegex("LoadVPM\s+\"[^\"]+\",\s*\"([^\"]+)\"", std::regex::icase);
-    std::smatch vpmMatch;
-    if (std::regex_search(script, vpmMatch, loadVpmRegex)) {
-        PLOGI.printf("ScriptPatcher: ROM System: %s", vpmMatch[1].str().c_str());
+    static const RE2 loadVpmRegex(R"RE((?i)LoadVPM\s+"[^"]+",\s*"([^"]+)")RE");
+    std::string romSystem;
+    if (RE2::PartialMatch(script, loadVpmRegex, &romSystem)) {
+        PLOGI.printf("ScriptPatcher: ROM System: %s", romSystem.c_str());
     }
 
     // Detect cGameName
-    std::regex gameNameRegex("Const\s+cGameName\s*=\s*\"([^\"]+)\"", std::regex::icase);
-    std::smatch gameMatch;
-    if (std::regex_search(script, gameMatch, gameNameRegex)) {
-        PLOGI.printf("ScriptPatcher: ROM Name: %s", gameMatch[1].str().c_str());
+    static const RE2 gameNameRegex(R"RE((?i)Const\s+cGameName\s*=\s*"([^"]+)")RE");
+    std::string gameName;
+    if (RE2::PartialMatch(script, gameNameRegex, &gameName)) {
+        PLOGI.printf("ScriptPatcher: ROM Name: %s", gameName.c_str());
     }
 
     // Count potential problem patterns - single line If...End If
-    std::regex singleLineIfEndIf(R"(\bIf\b[^\n]+\bThen\b[^\n]+\bEnd\s+If\b)", std::regex::icase);
-    auto ifBegin = std::sregex_iterator(script.begin(), script.end(), singleLineIfEndIf);
-    auto ifEnd = std::sregex_iterator();
-    int badIfCount = std::distance(ifBegin, ifEnd);
+    static const RE2 singleLineIfEndIf(R"((?i)\bIf\b[^\n]+\bThen\b[^\n]+\bEnd\s+If\b)");
+    auto ifMatches = RE2FindAll(script, singleLineIfEndIf);
+    int badIfCount = ifMatches.size();
     if (badIfCount > 0) {
         PLOGI.printf("ScriptPatcher: [!] WARNING - Found %d invalid single-line If...End If", badIfCount);
     }
@@ -255,29 +254,26 @@ End Sub
 std::vector<ScriptPatcher::NativeClassInfo> ScriptPatcher::ExtractNativeClasses(std::string& script) {
     std::vector<NativeClassInfo> nativeClasses;
 
-    std::regex classStartRegex(R"(^[ \t]*Class\s+(\w+))", std::regex::icase | std::regex::multiline);
-    std::regex classEndRegex(R"(^[ \t]*End\s+Class)", std::regex::icase | std::regex::multiline);
-    std::regex addResetObjPattern(R"(\bvpmTimer\s*\.\s*addResetObj\s+Me\b)", std::regex::icase);
-
-    std::sregex_iterator it(script.begin(), script.end(), classStartRegex);
-    std::sregex_iterator end;
+    static const RE2 classStartRegex(R"((?im)^[ \t]*Class\s+(\w+))");
+    static const RE2 classEndRegex(R"((?im)^[ \t]*End\s+Class)");
+    static const RE2 addResetObjPattern(R"((?i)\bvpmTimer\s*\.\s*addResetObj\s+Me\b)");
 
     std::vector<std::tuple<std::string, size_t, size_t>> classRanges;
 
-    while (it != end) {
-        std::string className = (*it)[1].str();
-        size_t classStart = (*it).position();
+    for (RE2MatchIterator it(script, classStartRegex); !it.done(); it.next()) {
+        const RE2Match& m = it.current();
+        std::string className = m.groups.size() > 0 ? m.groups[0] : "";
+        size_t classStart = m.position;
         std::string afterClass = script.substr(classStart);
-        std::smatch endMatch;
-        if (std::regex_search(afterClass, endMatch, classEndRegex)) {
-            size_t classEnd = classStart + endMatch.position() + endMatch.length();
+        RE2Match endMatch;
+        if (RE2FindFirst(afterClass, classEndRegex, endMatch)) {
+            size_t classEnd = classStart + endMatch.position + endMatch.length;
             std::string classBody = script.substr(classStart, classEnd - classStart);
-            if (std::regex_search(classBody, addResetObjPattern)) {
+            if (RE2Search(classBody, addResetObjPattern)) {
                 classRanges.push_back({className, classStart, classEnd});
                 PLOGI.printf("ScriptPatcher: Found native class '%s' (uses vpmTimer.addResetObj Me)", className.c_str());
             }
         }
-        ++it;
     }
 
     std::sort(classRanges.begin(), classRanges.end(),
@@ -372,8 +368,8 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
             classEmulationApplied = true;
 
             // Replace TypeName with VPX_SafeTypeName to avoid crashes on Dictionary objects
-            std::regex typeNameRegex(R"(\bTypeName\s*\()", std::regex::icase);
-            result = std::regex_replace(result, typeNameRegex, "VPX_SafeTypeName(");
+            static const RE2 typeNameRegex(R"((?i)\bTypeName\s*\()");
+            result = RE2Replace(result, typeNameRegex, "VPX_SafeTypeName(");
             PLOGI.printf("ScriptPatcher: Replaced TypeName with VPX_SafeTypeName");
 
             // Fix nested single-line If statements (Wine VBScript doesn't support them)
@@ -382,8 +378,8 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
             // Fix Dictionary boolean conditions: if varName("key") then -> if varName("key") <> 0 then
             // Wine VBScript doesn't support using Dictionary item directly as boolean
             // Match any variable name followed by dictionary access syntax
-            std::regex dictBoolPattern(R"(\bif\s+(\w+\s*\(\s*"[^"]+"\s*\))\s+then\b)", std::regex::icase);
-            result = std::regex_replace(result, dictBoolPattern, "if $1 <> 0 then");
+            static const RE2 dictBoolPattern(R"RE((?i)\bif\s+(\w+\s*\(\s*"[^"]+"\s*\))\s+then\b)RE");
+            result = RE2Replace(result, dictBoolPattern, "if \\1 <> 0 then");
         }
     }
 
@@ -457,12 +453,25 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
 
     if (patched) {
         PLOGI.printf("ScriptPatcher: Complete (length=%zu)", result.length());
-        // Debug: dump patched script to file for inspection
-        FILE* debugFile = fopen("/storage/emulated/0/Download/patched_script.vbs", "w");
-        if (debugFile) {
-            fwrite(result.c_str(), 1, result.length(), debugFile);
-            fclose(debugFile);
-            PLOGI.printf("ScriptPatcher: Dumped patched script to /storage/emulated/0/Download/patched_script.vbs");
+        // Dump patched script to app's internal directory for error reporting
+        // This file is replaced each time a new table loads
+        // Use VPinballGetInternalPath() which is set by the Android app to get the correct
+        // com.retroeki.app internal folder (SDL_GetBasePath returns org.vpinball.app path)
+        const char* internalPath = VPinballGetInternalPath();
+        PLOGI.printf("ScriptPatcher: VPinballGetInternalPath returned: %s", internalPath ? internalPath : "NULL");
+        if (internalPath) {
+            std::string scriptPath = std::string(internalPath) + "/patched_script.vbs";
+            PLOGI.printf("ScriptPatcher: Attempting to write to: %s", scriptPath.c_str());
+            FILE* debugFile = fopen(scriptPath.c_str(), "w");
+            if (debugFile) {
+                fwrite(result.c_str(), 1, result.length(), debugFile);
+                fclose(debugFile);
+                PLOGI.printf("ScriptPatcher: Script saved to %s", scriptPath.c_str());
+            } else {
+                PLOGE.printf("ScriptPatcher: Failed to open file for writing: %s (errno=%d)", scriptPath.c_str(), errno);
+            }
+        } else {
+            PLOGI.printf("ScriptPatcher: Internal path not set - skipping script dump");
         }
     }
     return result;

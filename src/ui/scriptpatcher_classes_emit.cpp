@@ -7,6 +7,8 @@
  * - ClassName_MethodName() transformed methods
  * - ClassName_Get/Let_AccessorName() property accessors
  * - TransformMethodBody: converts Me.X to this_("X"), etc.
+ *
+ * Uses Google RE2 for regex operations (much faster than std::regex)
  */
 
 #include "stdafx.h"
@@ -15,7 +17,6 @@
 
 #include "scriptpatcher.h"
 #include "scriptpatcher_internal.h"
-#include <regex>
 #include <sstream>
 
 // ============================================================================
@@ -42,11 +43,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
     };
 
     // Me.Property -> this_("Property")
-    static std::regex meDotPattern(R"(\bMe\.(\w+))", std::regex::icase);
-    result = std::regex_replace(result, meDotPattern, "this_(\"$1\")");
+    static const RE2 meDotPattern(R"((?i)\bMe\.(\w+))");
+    result = RE2Replace(result, meDotPattern, "this_(\"\\1\")");
     // Standalone Me -> this_
-    static std::regex mePattern(R"(\bMe\b(?!\.))", std::regex::icase);
-    result = std::regex_replace(result, mePattern, "this_");
+    static const RE2 mePattern(R"((?i)\bMe\b(?!\.))");
+    result = RE2Replace(result, mePattern, "this_");
 
     for (const auto& prop : classDef.properties) {
         std::string escapedName = EscapeRegex(prop.name);
@@ -72,27 +73,22 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             // For class-specific properties (like ModIn), transform any object prefix
             if (isVpxProperty) {
                 // Only transform Me.PropName or this_.PropName (not arbitrary objects)
-                std::string mePropPattern = "\\b(Me|this_)\\." + escapedName + "\\b";
-                std::regex mePropRegex(mePropPattern, std::regex::icase);
-                result = std::regex_replace(result, mePropRegex, globalName);
+                RE2 mePropRegex("(?i)\\b(Me|this_)\\." + escapedName + "\\b");
+                result = RE2Replace(result, mePropRegex, globalName);
             } else {
                 // Transform any object.PropName (class-specific array, aObj must be same class)
-                std::string objPropPattern = "\\b\\w+\\." + escapedName + "\\b";
-                std::regex objPropRegex(objPropPattern, std::regex::icase);
-                result = std::regex_replace(result, objPropRegex, globalName);
+                RE2 objPropRegex("(?i)\\b\\w+\\." + escapedName + "\\b");
+                result = RE2Replace(result, objPropRegex, globalName);
             }
 
             // Then replace standalone PropName -> ClassName_PropName
-            std::string propPattern = "\\b" + escapedName + "\\b";
-            std::regex allPattern(propPattern, std::regex::icase);
+            RE2 allPattern("(?i)\\b" + escapedName + "\\b");
             {
                 std::string temp;
-                std::sregex_iterator it(result.begin(), result.end(), allPattern);
-                std::sregex_iterator end;
+                auto matches = RE2FindAll(result, allPattern);
                 size_t lastPos = 0;
-                for (; it != end; ++it) {
-                    std::smatch match = *it;
-                    size_t matchPos = match.position();
+                for (const auto& match : matches) {
+                    size_t matchPos = match.position;
                     bool skip = false;
                     // Skip if preceded by dot (for VPX properties, this was left as aObj.PropName)
                     if (isVpxProperty && matchPos > 0 && result[matchPos - 1] == '.') {
@@ -107,11 +103,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                     }
                     temp += result.substr(lastPos, matchPos - lastPos);
                     if (skip) {
-                        temp += match[0].str();
+                        temp += match.full_match;
                     } else {
                         temp += globalName;
                     }
-                    lastPos = matchPos + match[0].length();
+                    lastPos = matchPos + match.length;
                 }
                 temp += result.substr(lastPos);
                 if (!temp.empty()) result = temp;
@@ -120,25 +116,22 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             // Non-array properties: use Dictionary-based approach
             // First transform assignments: prop = value -> this_("prop") = value
             // Use iterative approach to skip matches preceded by a dot (e.g., aTrigger.Name = x)
-            std::string assignPattern = "\\b" + escapedName + "(\\s*=\\s*)";
-            std::regex assignRegex(assignPattern, std::regex::icase);
+            RE2 assignRegex("(?i)\\b" + escapedName + "(\\s*=\\s*)");
             {
                 std::string assignTemp;
-                std::sregex_iterator ait(result.begin(), result.end(), assignRegex);
-                std::sregex_iterator aend;
+                auto matches = RE2FindAll(result, assignRegex);
                 size_t aLastPos = 0;
-                for (; ait != aend; ++ait) {
-                    std::smatch amatch = *ait;
-                    size_t aMatchPos = amatch.position();
+                for (const auto& amatch : matches) {
+                    size_t aMatchPos = amatch.position;
                     // Check if preceded by dot
                     bool aSkip = (aMatchPos > 0 && result[aMatchPos - 1] == '.');
                     assignTemp += result.substr(aLastPos, aMatchPos - aLastPos);
                     if (aSkip) {
-                        assignTemp += amatch[0].str();  // Keep original
+                        assignTemp += amatch.full_match;  // Keep original
                     } else {
-                        assignTemp += "this_(\"" + prop.name + "\")" + amatch[1].str();
+                        assignTemp += "this_(\"" + prop.name + "\")" + (amatch.groups.size() > 0 ? amatch.groups[0] : "");
                     }
-                    aLastPos = aMatchPos + amatch[0].length();
+                    aLastPos = aMatchPos + amatch.length;
                 }
                 assignTemp += result.substr(aLastPos);
                 if (!assignTemp.empty()) result = assignTemp;
@@ -146,17 +139,14 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             // Then transform reads: prop -> this_("prop")
             // Skip matches already inside this_("...") or inside string literals
-            std::string readPattern = "\\b" + escapedName + "\\b";
-            std::regex readRegex(readPattern, std::regex::icase);
+            RE2 readRegex("(?i)\\b" + escapedName + "\\b");
 
             std::string temp;
-            std::sregex_iterator it(result.begin(), result.end(), readRegex);
-            std::sregex_iterator end;
+            auto matches = RE2FindAll(result, readRegex);
             size_t lastPos = 0;
 
-            for (; it != end; ++it) {
-                std::smatch match = *it;
-                size_t matchPos = match.position();
+            for (const auto& match : matches) {
+                size_t matchPos = match.position;
 
                 // Check if this is inside this_("...") - already transformed
                 bool skip = false;
@@ -190,11 +180,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
                 temp += result.substr(lastPos, matchPos - lastPos);
                 if (skip) {
-                    temp += match[0].str();  // Keep original
+                    temp += match.full_match;  // Keep original
                 } else {
                     temp += "this_(\"" + prop.name + "\")";
                 }
-                lastPos = matchPos + match[0].length();
+                lastPos = matchPos + match.length;
             }
             temp += result.substr(lastPos);
             if (!temp.empty()) result = temp;
@@ -209,18 +199,15 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
         // Pattern for method call with arguments: methodName args
         // Match at statement boundaries (start of line, after :, after Then/Else)
-        // Exclude function return assignments (methodName = value) using negative lookahead
-        std::string withArgsPattern = "(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "\\s+(?!=)([^:\\r\\n]+)";
-        std::regex withArgsRegex(withArgsPattern, std::regex::icase | std::regex::multiline);
+        // Note: RE2 doesn't support (?!=) lookahead, so we handle this differently
+        RE2 withArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "\\s+([^=:\\r\\n][^:\\r\\n]*)");
 
         std::string temp;
-        std::sregex_iterator it(result.begin(), result.end(), withArgsRegex);
-        std::sregex_iterator end;
+        auto matches = RE2FindAll(result, withArgsRegex);
         size_t lastPos = 0;
 
-        while (it != end) {
-            std::smatch match = *it;
-            size_t matchPos = match.position();
+        for (const auto& match : matches) {
+            size_t matchPos = match.position;
 
             // Check if already transformed (preceded by class name)
             bool alreadyTransformed = false;
@@ -242,27 +229,24 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             temp += result.substr(lastPos, matchPos - lastPos);
             if (alreadyTransformed) {
-                temp += match[0].str();
+                temp += match.full_match;
             } else {
-                temp += match[1].str() + classDef.name + "_" + method.name + " this_, " + match[2].str();
+                temp += match[1] + classDef.name + "_" + method.name + " this_, " + match[2];
             }
-            lastPos = matchPos + match[0].length();
-            ++it;
+            lastPos = matchPos + match.length;
         }
         temp += result.substr(lastPos);
         if (!temp.empty()) result = temp;
 
         // Pattern for method call without arguments: methodName (standalone, followed by newline or :)
-        std::string noArgsPattern = "(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "(?=[ \\t]*(?::|\\r|\\n|$))";
-        std::regex noArgsRegex(noArgsPattern, std::regex::icase | std::regex::multiline);
+        RE2 noArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "(?=[ \\t]*(?::|\\r|\\n|$))");
 
         temp.clear();
-        std::sregex_iterator it2(result.begin(), result.end(), noArgsRegex);
+        matches = RE2FindAll(result, noArgsRegex);
         lastPos = 0;
 
-        while (it2 != end) {
-            std::smatch match = *it2;
-            size_t matchPos = match.position();
+        for (const auto& match : matches) {
+            size_t matchPos = match.position;
 
             // Check if already transformed or inside string
             bool skip = false;
@@ -276,28 +260,25 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             temp += result.substr(lastPos, matchPos - lastPos);
             if (skip) {
-                temp += match[0].str();
+                temp += match.full_match;
             } else {
-                temp += match[1].str() + classDef.name + "_" + method.name + " this_";
+                temp += match[1] + classDef.name + "_" + method.name + " this_";
             }
-            lastPos = matchPos + match[0].length();
-            ++it2;
+            lastPos = matchPos + match.length;
         }
         temp += result.substr(lastPos);
         if (!temp.empty()) result = temp;
 
         // Pattern for function-style call with no arguments: methodName() in expressions
         // E.g., If FlipperOn() Then -> If FlipperPolarity_FlipperOn(this_) Then
-        std::string funcCallPattern = "\\b" + escapedName + "\\s*\\(\\s*\\)";
-        std::regex funcCallRegex(funcCallPattern, std::regex::icase);
+        RE2 funcCallRegex("(?i)\\b" + escapedName + "\\s*\\(\\s*\\)");
 
         temp.clear();
-        std::sregex_iterator it3(result.begin(), result.end(), funcCallRegex);
+        matches = RE2FindAll(result, funcCallRegex);
         lastPos = 0;
 
-        while (it3 != end) {
-            std::smatch match = *it3;
-            size_t matchPos = match.position();
+        for (const auto& match : matches) {
+            size_t matchPos = match.position;
 
             // Check if already transformed (preceded by class name_)
             bool skip = false;
@@ -319,12 +300,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
             temp += result.substr(lastPos, matchPos - lastPos);
             if (skip) {
-                temp += match[0].str();
+                temp += match.full_match;
             } else {
                 temp += classDef.name + "_" + method.name + "(this_)";
             }
-            lastPos = matchPos + match[0].length();
-            ++it3;
+            lastPos = matchPos + match.length;
         }
         temp += result.substr(lastPos);
         if (!temp.empty()) result = temp;
@@ -339,39 +319,32 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         if (EqualsIgnoreCase(accessor.type, "Let") || EqualsIgnoreCase(accessor.type, "Set")) {
             // Transform: accessor(params) = value -> ClassName_Let_accessor this_, params, value
             //// Pattern: accessor(params) = value
-            std::string letPattern = "\\b" + escapedName + "\\s*\\(([^)]+)\\)\\s*=\\s*(.+)";
-            std::regex letRegex(letPattern, std::regex::icase);
-            result = std::regex_replace(result, letRegex,
-                classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $1, $2");
+            RE2 letRegex("(?i)\\b" + escapedName + "\\s*\\(([^)]+)\\)\\s*=\\s*(.+)");
+            result = RE2Replace(result, letRegex,
+                classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, \\1, \\2");
 
             // Transform: accessor = value -> ClassName_Let_accessor this_, value
             // For accessors without index parameters (just the value param)
             // Must be at start of statement (after newline+optional indent, colon+space, or Then+space)
             //// Pattern: (^|\n[ \t]*|:[ \t]*|\bThen[ \t]+)accessor = value
-            std::string letNoParamPattern = "(^|\\n[ \\t]*|:[ \\t]*|\\bThen[ \\t]+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)";
-            std::regex letNoParamRegex(letNoParamPattern, std::regex::icase);
-            result = std::regex_replace(result, letNoParamRegex,
-                "$1" + classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, $2");
+            RE2 letNoParamRegex("(?i)(^|\\n[ \\t]*|:[ \\t]*|\\bThen[ \\t]+)" + escapedName + "\\s*=\\s*([^:\\r\\n]+)");
+            result = RE2Replace(result, letNoParamRegex,
+                "\\1" + classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, \\2");
         }
 
         if (EqualsIgnoreCase(accessor.type, "Get")) {
             // Transform: accessor(params) -> ClassName_Get_accessor(this_, params)
             // Be careful not to match our own transformed Let calls
-            std::string getPattern = "\\b" + escapedName + "\\s*\\(([^)]+)\\)";
-            std::regex getRegex(getPattern, std::regex::icase);
-            // Only replace if not already transformed (not preceded by class name)
-            std::string replacement = classDef.name + "_Get_" + accessor.name + "(this_, $1)";
+            RE2 getRegex("(?i)\\b" + escapedName + "\\s*\\(([^)]+)\\)");
 
             // Use a callback-style replacement to avoid matching already-transformed calls
             std::string temp;
-            std::sregex_iterator it(result.begin(), result.end(), getRegex);
-            std::sregex_iterator end;
+            auto matches = RE2FindAll(result, getRegex);
             size_t lastPos = 0;
 
-            for (; it != end; ++it) {
-                std::smatch match = *it;
+            for (const auto& match : matches) {
                 // Check if this is preceded by our class name (already transformed)
-                size_t matchPos = match.position();
+                size_t matchPos = match.position;
                 bool alreadyTransformed = false;
                 if (matchPos > classDef.name.length() + 1) {
                     std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
@@ -382,11 +355,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
                 temp += result.substr(lastPos, matchPos - lastPos);
                 if (alreadyTransformed) {
-                    temp += match[0].str();
+                    temp += match.full_match;
                 } else {
-                    temp += classDef.name + "_Get_" + accessor.name + "(this_, " + match[1].str() + ")";
+                    temp += classDef.name + "_Get_" + accessor.name + "(this_, " + match[1] + ")";
                 }
-                lastPos = matchPos + match[0].length();
+                lastPos = matchPos + match.length;
             }
             temp += result.substr(lastPos);
             if (!temp.empty()) result = temp;
@@ -395,22 +368,31 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             // For parameterless Property Get - must not be followed by ( or =
             // Must not be part of an already-transformed call (preceded by ClassName_)
             // IMPORTANT: Skip if this matches a method parameter name!
-            std::string getNoParamPattern = "\\b" + escapedName + "\\b(?!\\s*[=(])";
-            std::regex getNoParamRegex(getNoParamPattern, std::regex::icase);
+            // Note: RE2 doesn't support (?!) lookahead, so we check manually
+            RE2 getNoParamRegex("(?i)\\b" + escapedName + "\\b");
 
             std::string temp2;
-            std::sregex_iterator it2(result.begin(), result.end(), getNoParamRegex);
-            std::sregex_iterator end2;
+            matches = RE2FindAll(result, getNoParamRegex);
             size_t lastPos2 = 0;
 
-            for (; it2 != end2; ++it2) {
-                std::smatch match = *it2;
-                size_t matchPos = match.position();
+            for (const auto& match : matches) {
+                size_t matchPos = match.position;
                 bool skip = false;
 
                 // Skip if this matches a method parameter name
                 if (isMethodParam(accessor.name)) {
                     skip = true;
+                }
+
+                // Check if followed by ( or =
+                if (!skip && matchPos + match.length < result.length()) {
+                    size_t afterPos = matchPos + match.length;
+                    while (afterPos < result.length() && (result[afterPos] == ' ' || result[afterPos] == '\t')) {
+                        afterPos++;
+                    }
+                    if (afterPos < result.length() && (result[afterPos] == '(' || result[afterPos] == '=')) {
+                        skip = true;
+                    }
                 }
 
                 // Check if preceded by class name_ (already transformed)
@@ -423,11 +405,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
 
                 temp2 += result.substr(lastPos2, matchPos - lastPos2);
                 if (skip) {
-                    temp2 += match[0].str();
+                    temp2 += match.full_match;
                 } else {
                     temp2 += classDef.name + "_Get_" + accessor.name + "(this_)";
                 }
-                lastPos2 = matchPos + match[0].length();
+                lastPos2 = matchPos + match.length;
             }
             temp2 += result.substr(lastPos2);
             if (!temp2.empty()) result = temp2;
@@ -441,21 +423,18 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         std::string escapedMethodName = EscapeRegex(method.name);
         // Pattern: (varname) & ".(MethodName)( args)?"
         // Match: someVar & ".MethodName" or someVar & ".MethodName arg1 arg2"
-        std::string callbackPattern = "(\\w+)\\s*&\\s*\"\\." + escapedMethodName + "(?:\\s+([^\"]+))?\"";
-        std::regex callbackRegex(callbackPattern, std::regex::icase);
+        RE2 callbackRegex("(?i)(\\w+)\\s*&\\s*\"\\." + escapedMethodName + "(?:\\s+([^\"]+))?\"");
 
         std::string temp;
-        std::sregex_iterator it(result.begin(), result.end(), callbackRegex);
-        std::sregex_iterator end;
+        auto matches = RE2FindAll(result, callbackRegex);
         size_t lastPos = 0;
 
-        for (; it != end; ++it) {
-            std::smatch match = *it;
-            size_t matchPos = match.position();
+        for (const auto& match : matches) {
+            size_t matchPos = match.position;
             temp += result.substr(lastPos, matchPos - lastPos);
 
-            std::string varName = match[1].str();
-            std::string args = match[2].str();
+            std::string varName = match[1];
+            std::string args = match.groups.size() > 1 ? match.groups[1] : "";
 
             // Build replacement: "ClassName_MethodName " & varname & ", args"
             std::string replacement = "\"" + classDef.name + "_" + method.name + " \" & " + varName;
@@ -463,7 +442,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 replacement += " & \", " + args + "\"";
             }
             temp += replacement;
-            lastPos = matchPos + match[0].length();
+            lastPos = matchPos + match.length;
         }
         temp += result.substr(lastPos);
         if (!temp.empty()) result = temp;
@@ -490,7 +469,7 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
             out << "    this_(\"" << prop.name << "\") = Empty\n";
         }
     }
-    
+
     if (!classDef.initializeBody.empty()) {
         out << "    ' Class_Initialize\n";
         std::string initBody = TransformMethodBody(classDef.initializeBody, classDef);
@@ -501,7 +480,7 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
     }
     out << "    Set " << classDef.name << "_Create = this_\n";
     out << "End Function\n\n";
-    
+
     // Methods
     for (const auto& method : classDef.methods) {
         std::string paramList = "this_";
@@ -515,10 +494,10 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
         // For Functions, transform return value assignment: methodName = value -> FuncName = value
         if (method.isFunction) {
             std::string escapedMethodName = EscapeRegex(method.name);
-            std::regex returnPattern("(^|:|\\s)" + escapedMethodName + "\\s*=", std::regex::icase);
-            std::regex setReturnPattern("(^|:|\\s)(Set\\s+)" + escapedMethodName + "\\s*=", std::regex::icase);
-            transformedBody = std::regex_replace(transformedBody, setReturnPattern, "$1$2" + funcName + " =");
-            transformedBody = std::regex_replace(transformedBody, returnPattern, "$1" + funcName + " =");
+            RE2 returnPattern("(?i)(^|:|\\s)" + escapedMethodName + "\\s*=");
+            RE2 setReturnPattern("(?i)(^|:|\\s)(Set\\s+)" + escapedMethodName + "\\s*=");
+            transformedBody = RE2Replace(transformedBody, setReturnPattern, "\\1\\2" + funcName + " =");
+            transformedBody = RE2Replace(transformedBody, returnPattern, "\\1" + funcName + " =");
         }
 
         std::istringstream bodyStream(transformedBody);
@@ -526,13 +505,13 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
         while (std::getline(bodyStream, bodyLine)) out << "    " << bodyLine << "\n";
         out << (method.isFunction ? "End Function\n\n" : "End Sub\n\n");
     }
-    
+
     // Accessors (skip empty ones only)
     for (const auto& accessor : classDef.accessors) {
         if (Trim(accessor.body).empty()) continue;
         std::string paramList = "this_";
         for (const auto& p : accessor.params) paramList += ", " + p;
-        
+
         if (EqualsIgnoreCase(accessor.type, "Get")) {
             std::string funcName = classDef.name + "_Get_" + accessor.name;
             out << "Function " << funcName << "(" << paramList << ")\n";
@@ -542,11 +521,11 @@ std::string ScriptPatcher::EmitClassEmulation(const VBClassDefinition& classDef)
             // In VBScript Property Get, you assign to the property name to return
             // Handle both "accessorName =" and "Set accessorName ="
             std::string escapedAccessorName = EscapeRegex(accessor.name);
-            std::regex returnPattern("(^|:|\\s)" + escapedAccessorName + "\\s*=", std::regex::icase);
-            std::regex setReturnPattern("(^|:|\\s)(Set\\s+)" + escapedAccessorName + "\\s*=", std::regex::icase);
+            RE2 returnPattern("(?i)(^|:|\\s)" + escapedAccessorName + "\\s*=");
+            RE2 setReturnPattern("(?i)(^|:|\\s)(Set\\s+)" + escapedAccessorName + "\\s*=");
             std::string bodyWithReturn = accessor.body;
-            bodyWithReturn = std::regex_replace(bodyWithReturn, setReturnPattern, "$1$2" + funcName + " =");
-            bodyWithReturn = std::regex_replace(bodyWithReturn, returnPattern, "$1" + funcName + " =");
+            bodyWithReturn = RE2Replace(bodyWithReturn, setReturnPattern, "\\1\\2" + funcName + " =");
+            bodyWithReturn = RE2Replace(bodyWithReturn, returnPattern, "\\1" + funcName + " =");
             // Now transform the rest of the body
             std::string tb = TransformMethodBody(bodyWithReturn, classDef, accessor.params);
             std::istringstream s(tb); std::string l;

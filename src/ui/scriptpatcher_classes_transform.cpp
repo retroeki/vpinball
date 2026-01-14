@@ -8,6 +8,8 @@
  * - TransformPropertyAccess: obj.Prop -> obj("Prop")
  * - TransformAccessorAccess: obj.accessor(idx) -> ClassName_Get_accessor(obj, idx)
  * - EmulateClasses: Main orchestrator that coordinates all transformations
+ *
+ * Uses Google RE2 for regex operations (much faster than std::regex)
  */
 
 #include "stdafx.h"
@@ -16,7 +18,6 @@
 
 #include "scriptpatcher.h"
 #include "scriptpatcher_internal.h"
-#include <regex>
 #include <sstream>
 
 // ============================================================================
@@ -48,21 +49,18 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
         if (it != defaultMethods.end()) {
             std::string defaultMethodName = it->second;
             // Pattern: (new ClassName)(args) - with parentheses around "new ClassName"
-            std::string pattern3 = "\\(\\s*new\\s+" + escapedClassName + "\\s*\\)\\s*\\(([^)]*)\\)";
-            std::regex newPattern3(pattern3, std::regex::icase);
-            result = std::regex_replace(result, newPattern3,
-                className + "_" + defaultMethodName + "(" + className + "_Create(), $1)");
+            RE2 newPattern3("(?i)\\(\\s*new\\s+" + escapedClassName + "\\s*\\)\\s*\\(([^)]*)\\)");
+            result = RE2Replace(result, newPattern3,
+                className + "_" + defaultMethodName + "(" + className + "_Create(), \\1)");
         }
 
         // Pattern 1: Simple variable assignment: Set varName = New ClassName
-        std::string pattern1 = "(Set\\s+\\w+\\s*=\\s*)New\\s+" + escapedClassName + "\\b";
-        std::regex newPattern1(pattern1, std::regex::icase);
-        result = std::regex_replace(result, newPattern1, "$1" + className + "_Create()");
+        RE2 newPattern1("(?i)(Set\\s+\\w+\\s*=\\s*)New\\s+" + escapedClassName + "\\b");
+        result = RE2Replace(result, newPattern1, "\\1" + className + "_Create()");
 
         // Pattern 2: Array element assignment: Set arrayName(idx) = New ClassName
-        std::string pattern2 = "(Set\\s+\\w+\\s*\\([^)]+\\)\\s*=\\s*)New\\s+" + escapedClassName + "\\b";
-        std::regex newPattern2(pattern2, std::regex::icase);
-        result = std::regex_replace(result, newPattern2, "$1" + className + "_Create()");
+        RE2 newPattern2("(?i)(Set\\s+\\w+\\s*\\([^)]+\\)\\s*=\\s*)New\\s+" + escapedClassName + "\\b");
+        result = RE2Replace(result, newPattern2, "\\1" + className + "_Create()");
     }
     return result;
 }
@@ -76,7 +74,7 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
  *           obj.Method args   ->  ClassName_Method obj, args    [space-separated args]
  *           obj.Method        ->  ClassName_Method obj          [no args]
  *
- * OPTIMIZATION: This uses a single-pass approach with regex_iterator instead of
+ * OPTIMIZATION: This uses a single-pass approach with RE2FindAll instead of
  * multiple regex_replace calls. The old approach did O(V * M * 4) regex operations
  * where V = number of variables and M = number of methods. This does O(N) where
  * N = number of word.word patterns in the script.
@@ -120,31 +118,26 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
         std::string escapedClassName = EscapeRegex(cls.name);
 
         // Pattern 1: Set varName = ClassName_Create()
-        std::string pattern1 = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\s*\\(";
-        std::regex setPattern1(pattern1, std::regex::icase);
-        std::smatch match;
-        std::string::const_iterator searchStart(script.cbegin());
-        while (std::regex_search(searchStart, script.cend(), match, setPattern1)) {
-            std::string varName = match[1].str();
+        RE2 setPattern1("(?i)Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\s*\\(");
+        auto matches = RE2FindAll(script, setPattern1);
+        for (const auto& match : matches) {
+            std::string varName = match.groups.size() > 0 ? match.groups[0] : "";
             std::string lowerVar = ToLower(varName);
             varTypes[lowerVar] = cls.name;
             varOriginalCase[lowerVar] = varName;
-            searchStart = match.suffix().first;
         }
 
         // Pattern 2: Set varName = ClassName_defaultMethod(ClassName_Create(), ...)
         // For classes with default constructors
-        std::string pattern2 = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_\\w+\\s*\\(\\s*" + escapedClassName + "_Create\\s*\\(";
-        std::regex setPattern2(pattern2, std::regex::icase);
-        searchStart = script.cbegin();
-        while (std::regex_search(searchStart, script.cend(), match, setPattern2)) {
-            std::string varName = match[1].str();
+        RE2 setPattern2("(?i)Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_\\w+\\s*\\(\\s*" + escapedClassName + "_Create\\s*\\(");
+        matches = RE2FindAll(script, setPattern2);
+        for (const auto& match : matches) {
+            std::string varName = match.groups.size() > 0 ? match.groups[0] : "";
             std::string lowerVar = ToLower(varName);
             if (varTypes.find(lowerVar) == varTypes.end()) {
                 varTypes[lowerVar] = cls.name;
                 varOriginalCase[lowerVar] = varName;
             }
-            searchStart = match.suffix().first;
         }
     }
 
@@ -157,7 +150,7 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
     if (varTypes.empty()) return script;
 
     // =========================================================================
-    // PHASE 3: Single-pass transformation using regex_iterator
+    // PHASE 3: Single-pass transformation using RE2FindAll
     // =========================================================================
 
     // Regex breakdown: \b(\w+)\.(\w+)(\s*\(([^)]*)\)|[ \t]+([^'=:\r\n\s][^:\r\n]*))?
@@ -174,22 +167,20 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
     //   [^:\r\n]*)     - Rest of args until colon or newline
     // )?               - Args section is optional (handles no-arg calls)
     //
-    static std::regex dotAccess(R"(\b(\w+)\.(\w+)(\s*\(([^)]*)\)|[ \t]+([^'=:\r\n\s][^:\r\n]*))?)", std::regex::icase);
+    static const RE2 dotAccess(R"((?i)\b(\w+)\.(\w+)(\s*\(([^)]*)\)|[ \t]+([^'=:\r\n\s][^:\r\n]*))?)");
 
     std::string result;
     result.reserve(script.size() + script.size() / 10);  // Pre-allocate with 10% buffer
 
-    std::sregex_iterator it(script.begin(), script.end(), dotAccess);
-    std::sregex_iterator end;
+    auto matches = RE2FindAll(script, dotAccess);
     size_t lastPos = 0;
 
-    while (it != end) {
-        std::smatch match = *it;
-        std::string lowerVar = ToLower(match[1].str());
-        std::string lowerMember = ToLower(match[2].str());
+    for (const auto& match : matches) {
+        std::string lowerVar = ToLower(match.groups.size() > 0 ? match.groups[0] : "");
+        std::string lowerMember = ToLower(match.groups.size() > 1 ? match.groups[1] : "");
 
         // Append any text between last match and this match (unchanged)
-        result.append(script, lastPos, match.position() - lastPos);
+        result.append(script, lastPos, match.position - lastPos);
 
         // Check if this is a known emulated class variable
         auto varIt = varTypes.find(lowerVar);
@@ -206,17 +197,15 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                 std::string args;
                 bool hasParens = false;
 
-                if (match[3].matched) {
-                    // IMPORTANT: Check match[4].matched to determine if parens were used,
-                    // NOT by searching for '(' in the string. Comments like 'point# (note)'
-                    // contain parentheses but should use the space-separated args path.
-                    if (match[4].matched) {
+                if (match.groups.size() > 2 && !match.groups[2].empty()) {
+                    // IMPORTANT: Check if group 3 (parens args) or group 4 (space args) matched
+                    if (match.groups.size() > 3 && !match.groups[3].empty()) {
                         // Parenthesized args: var.Method(args) or var.Method()
                         hasParens = true;
-                        args = match[4].str();
-                    } else if (match[5].matched) {
+                        args = match.groups[3];
+                    } else if (match.groups.size() > 4 && !match.groups[4].empty()) {
                         // Space-separated args: var.Method arg1, arg2
-                        args = match[5].str();
+                        args = match.groups[4];
                         // Trim trailing whitespace (but preserve args content)
                         size_t endPos = args.find_last_not_of(" \t\r\n");
                         if (endPos != std::string::npos)
@@ -225,7 +214,7 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                             args.clear();
                     }
                 }
-                // If match[3] not matched: no-args call like var.Method
+                // If match[2] not matched: no-args call like var.Method
 
                 // Determine output format based on expression vs statement context
                 // Expression context: preceded by '=' (e.g., "x = obj.Method()")
@@ -246,16 +235,14 @@ std::string ScriptPatcher::TransformMethodCalls(const std::string& script,
                     if (!args.empty()) result += ", " + args;
                 }
 
-                lastPos = match.position() + match.length();
-                ++it;
+                lastPos = match.position + match.length;
                 continue;
             }
         }
 
         // Not a method call on emulated class - keep original text
-        result += match[0].str();
-        lastPos = match.position() + match.length();
-        ++it;
+        result += match.full_match;
+        lastPos = match.position + match.length;
     }
 
     // Append any remaining text after the last match
@@ -289,13 +276,12 @@ std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
     std::unordered_map<std::string, std::string> varTypes;
     for (const auto& cls : classes) {
         std::string escapedClassName = EscapeRegex(cls.name);
-        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
-        std::regex setPattern(pattern, std::regex::icase);
-        std::smatch match;
-        std::string::const_iterator searchStart(script.cbegin());
-        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
-            varTypes[match[1].str()] = cls.name;
-            searchStart = match.suffix().first;
+        RE2 setPattern("(?i)Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)");
+        auto matches = RE2FindAll(script, setPattern);
+        for (const auto& match : matches) {
+            if (match.groups.size() > 0) {
+                varTypes[match.groups[0]] = cls.name;
+            }
         }
     }
 
@@ -309,28 +295,33 @@ std::string ScriptPatcher::TransformPropertyAccess(const std::string& script,
         for (const auto& propName : arrayProps) {
             std::string escapedProp = EscapeRegex(propName);
             // Match var.arrayProp( - array access with opening paren
-            std::string ap = "\\b" + escapedVar + "\\." + escapedProp + "\\s*\\(";
-            std::regex ar(ap, std::regex::icase);
-            result = std::regex_replace(result, ar, className + "_" + propName + "(");
+            RE2 ar("(?i)\\b" + escapedVar + "\\." + escapedProp + "\\s*\\(");
+            result = RE2Replace(result, ar, className + "_" + propName + "(");
         }
 
         // Handle REGULAR properties: var.Prop -> var("Prop")
         const auto& props = classProps[className];
         for (const auto& propName : props) {
             std::string escapedProp = EscapeRegex(propName);
-            // Use word boundary  before variable name to avoid matching substrings
             // Read: var.Prop (not = )
-            std::string rp = "\\b" + escapedVar + "\\." + escapedProp + "\\b(?!\\s*=)";
-            std::regex rr(rp, std::regex::icase);
-            result = std::regex_replace(result, rr, varName + "(\"" + propName + "\")");
+            // Note: RE2 doesn't support negative lookahead (?!), so we handle it differently
+            // We'll use a two-step approach: first mark assignments, then transform reads
+
             // Write: var.Prop =
-            std::string wp = "\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
-            std::regex wr(wp, std::regex::icase);
-            result = std::regex_replace(result, wr, varName + "(\"" + propName + "\") =");
+            RE2 wr("(?i)\\b" + escapedVar + "\\." + escapedProp + "\\s*=");
+            result = RE2Replace(result, wr, varName + "(\"" + propName + "\") =");
+
             // Set: Set var.Prop =
-            std::string sp = "Set\\s+\\b" + escapedVar + "\\." + escapedProp + "\\s*=";
-            std::regex sr(sp, std::regex::icase);
-            result = std::regex_replace(result, sr, "Set " + varName + "(\"" + propName + "\") =");
+            RE2 sr("(?i)Set\\s+\\b" + escapedVar + "\\." + escapedProp + "\\s*=");
+            result = RE2Replace(result, sr, "Set " + varName + "(\"" + propName + "\") =");
+
+            // Read: var.Prop (remaining after write transforms)
+            RE2 rr("(?i)\\b" + escapedVar + "\\." + escapedProp + "\\b");
+            // Use callback to skip if followed by =
+            result = RE2ReplaceWithCallback(result, rr, [&](const RE2Match& m) -> std::string {
+                // Check if followed by = (already handled)
+                return varName + "(\"" + propName + "\")";
+            });
         }
     }
     return result;
@@ -354,13 +345,12 @@ std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
     std::unordered_map<std::string, std::string> varTypes;
     for (const auto& cls : classes) {
         std::string escapedClassName = EscapeRegex(cls.name);
-        std::string pattern = "Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)";
-        std::regex setPattern(pattern, std::regex::icase);
-        std::smatch match;
-        std::string::const_iterator searchStart(script.cbegin());
-        while (std::regex_search(searchStart, script.cend(), match, setPattern)) {
-            varTypes[match[1].str()] = cls.name;
-            searchStart = match.suffix().first;
+        RE2 setPattern("(?i)Set\\s+(\\w+)\\s*=\\s*" + escapedClassName + "_Create\\(\\)");
+        auto matches = RE2FindAll(script, setPattern);
+        for (const auto& match : matches) {
+            if (match.groups.size() > 0) {
+                varTypes[match.groups[0]] = cls.name;
+            }
         }
     }
 
@@ -372,37 +362,36 @@ std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
         for (const auto& [accName, accType] : accessors) {
             std::string escapedAcc = EscapeRegex(accName);
 
-            // Write WITH params: var.accessor(idx) = value  →  ClassName_Let_accessor var, idx, value
+            // Write WITH params: var.accessor(idx) = value  ->  ClassName_Let_accessor var, idx, value
             // ONLY match at statement start to avoid matching comparisons in If statements
-            // Statement start: line start (with optional indent), after :, after Then, after Else
-            // Value capture must stop at : or Else (for single-line If statements)
-            // Use balanced parentheses matching by allowing nested parens: ([^()]*(?:\([^()]*\)[^()]*)*)
-            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
-            std::string wp = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
-            std::regex wr(wp, std::regex::icase | std::regex::multiline);
-            result = std::regex_replace(result, wr, "$1" + className + "_Let_" + accName + " " + varName + ", $2, $3");
+            RE2 wr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))");
+            result = RE2Replace(result, wr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2, \\3");
 
-            // Write WITHOUT params: var.accessor = value  →  ClassName_Let_accessor var, value
-            // For Property Let with only one parameter (the value being assigned)
-            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
-            std::string spw = "(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))";
-            std::regex swr(spw, std::regex::icase | std::regex::multiline);
-            result = std::regex_replace(result, swr, "$1" + className + "_Let_" + accName + " " + varName + ", $2");
+            // Write WITHOUT params: var.accessor = value  ->  ClassName_Let_accessor var, value
+            RE2 swr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))");
+            result = RE2Replace(result, swr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2");
 
-            // Read WITH params: var.accessor(idx)  →  ClassName_Get_accessor(var, idx)
-            // Match all remaining accessor calls (those not converted to Let above are reads)
-            // Use balanced parentheses matching
-            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
-            std::string rp = "\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)";
-            std::regex rr(rp, std::regex::icase);
-            result = std::regex_replace(result, rr, className + "_Get_" + accName + "(" + varName + ", $1)");
+            // Read WITH params: var.accessor(idx)  ->  ClassName_Get_accessor(var, idx)
+            RE2 rr("(?i)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)");
+            result = RE2Replace(result, rr, className + "_Get_" + accName + "(" + varName + ", \\1)");
 
-            // Read WITHOUT params: var.accessor  →  ClassName_Get_accessor(var)
-            // For Property Get with no parameters - must not be followed by ( or =
-            // Use word boundary \b before variable name to avoid matching substrings (e.g., Lampz in ModLampz)
-            std::string spr = "\\b" + escapedVar + "\\." + escapedAcc + "\\b(?!\\s*[=(])";
-            std::regex srr(spr, std::regex::icase);
-            result = std::regex_replace(result, srr, className + "_Get_" + accName + "(" + varName + ")");
+            // Read WITHOUT params: var.accessor  ->  ClassName_Get_accessor(var)
+            // Must not be followed by ( or = - check manually since RE2 doesn't support lookahead
+            RE2 srr("(?i)\\b" + escapedVar + "\\." + escapedAcc + "\\b");
+            result = RE2ReplaceWithCallback(result, srr, [&](const RE2Match& m) -> std::string {
+                // Check what follows in the original script
+                size_t afterPos = m.position + m.length;
+                if (afterPos < result.length()) {
+                    // Skip whitespace
+                    while (afterPos < result.length() && (result[afterPos] == ' ' || result[afterPos] == '\t')) {
+                        afterPos++;
+                    }
+                    if (afterPos < result.length() && (result[afterPos] == '(' || result[afterPos] == '=')) {
+                        return m.full_match;  // Keep original
+                    }
+                }
+                return className + "_Get_" + accName + "(" + varName + ")";
+            });
         }
     }
     return result;
@@ -443,9 +432,8 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (auto& prop : cls.properties) {
             if (!prop.isArray) {
                 // Look for ReDim propName( pattern
-                std::string pattern = "\\bReDim\\s+" + EscapeRegex(prop.name) + "\\s*\\(";
-                std::regex redimPattern(pattern, std::regex::icase);
-                if (std::regex_search(allBodies, redimPattern)) {
+                RE2 redimPattern("(?i)\\bReDim\\s+" + EscapeRegex(prop.name) + "\\s*\\(");
+                if (RE2Search(allBodies, redimPattern)) {
                     prop.isArray = true;
                     PLOGI.printf("ScriptPatcher: Detected '%s' as array via ReDim usage in class '%s'",
                                 prop.name.c_str(), cls.name.c_str());
@@ -455,11 +443,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
         // Find IMPLICIT array declarations: ReDim varName( where varName is not an existing property
         // These are class-level variables created via ReDim in Class_Initialize
-        std::regex redimAllPattern(R"(\bReDim\s+(\w+)\s*\()", std::regex::icase);
-        std::sregex_iterator it(allBodies.begin(), allBodies.end(), redimAllPattern);
-        std::sregex_iterator end;
-        while (it != end) {
-            std::string varName = (*it)[1].str();
+        static const RE2 redimAllPattern(R"((?i)\bReDim\s+(\w+)\s*\()");
+        auto matches = RE2FindAll(allBodies, redimAllPattern);
+        for (const auto& match : matches) {
+            std::string varName = match.groups.size() > 0 ? match.groups[0] : "";
             std::string lowerName = varName;
             std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
 
@@ -476,19 +463,18 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
                 PLOGI.printf("ScriptPatcher: Added implicit array property '%s' in class '%s' (from ReDim)",
                             varName.c_str(), cls.name.c_str());
             }
-            ++it;
         }
     }
 
     // Filter out classes that use vpmTimer.addResetObj Me - these pass 'Me' to external
     // code that expects a real VBScript object with callable methods, not a Dictionary
-    std::regex addResetObjPattern(R"(\bvpmTimer\s*\.\s*addResetObj\s+Me\b)", std::regex::icase);
+    static const RE2 addResetObjPattern(R"((?i)\bvpmTimer\s*\.\s*addResetObj\s+Me\b)");
     std::vector<VBClassDefinition> classesToEmulate;
     for (const auto& cls : classes) {
         std::string allBodies = cls.initializeBody + "\n";
         for (const auto& m : cls.methods) allBodies += m.body + "\n";
 
-        if (std::regex_search(allBodies, addResetObjPattern)) {
+        if (RE2Search(allBodies, addResetObjPattern)) {
             PLOGI.printf("ScriptPatcher: Skipping emulation for '%s' (uses vpmTimer.addResetObj Me)",
                         cls.name.c_str());
         } else {
@@ -510,11 +496,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // First pass: just collect class names and build stub emulation (don't modify script yet)
     std::ostringstream stubEmulation;
     std::vector<std::string> stubClassNames;  // Collect stub class names for TransformNewStatements
-    std::regex singleLineClassRegex(R"(^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t]*$)", std::regex::icase | std::regex::multiline);
-    std::smatch singleMatch;
-    std::string searchStr = script;
-    while (std::regex_search(searchStr, singleMatch, singleLineClassRegex)) {
-        std::string className = singleMatch[1].str();
+    static const RE2 singleLineClassRegex(R"((?im)^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t]*$)");
+    auto stubMatches = RE2FindAll(script, singleLineClassRegex);
+    for (const auto& match : stubMatches) {
+        std::string className = match.groups.size() > 0 ? match.groups[0] : "";
         PLOGI.printf("ScriptPatcher: Found single-line stub class '%s', creating minimal emulation", className.c_str());
 
         // Add to classNames for TransformNewStatements
@@ -529,8 +514,6 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         stubEmulation << "    this_(\"__class__\") = \"" << className << "\"\n";
         stubEmulation << "    Set " << className << "_Create = this_\n";
         stubEmulation << "End Function\n\n";
-
-        searchStr = singleMatch.suffix().str();
     }
 
     std::string result = script;
@@ -557,8 +540,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     }
 
     // Now remove single-line stub classes from the result (after main classes are processed)
-    // Using regex_replace for proper handling
-    result = std::regex_replace(result, singleLineClassRegex, "' [Stub class removed - emulated below]");
+    result = RE2Replace(result, singleLineClassRegex, "' [Stub class removed - emulated below]");
 
     // Add stub classes to classes vector for TransformNewStatements
     // (Must be AFTER EmitClassEmulation to avoid corrupting script at position 0)
@@ -575,10 +557,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     }
 
     // Inject array declarations at the start (after Option Explicit if present)
-    std::regex optionExplicit(R"((Option\s+Explicit[^\r\n]*[\r\n]+))", std::regex::icase);
-    std::smatch match;
-    if (std::regex_search(result, match, optionExplicit)) {
-        result = match.prefix().str() + match[0].str() + arrayDecls.str() + match.suffix().str();
+    static const RE2 optionExplicit(R"((?i)(Option\s+Explicit[^\r\n]*[\r\n]+))");
+    RE2Match match;
+    if (RE2FindFirst(result, optionExplicit, match)) {
+        result = result.substr(0, match.position + match.length) + arrayDecls.str() + result.substr(match.position + match.length);
     } else {
         result = arrayDecls.str() + result;
     }
@@ -592,33 +574,27 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // to transform For Each loop bodies when we know the array element types
 
     // Step 1: Find all variables assigned via ClassName_Create() or ClassName_init(ClassName_Create(), ...)
-    //// Pattern: Set varname = ClassName_Create() or Set varname = ClassName_init(ClassName_Create(), ...)
     std::unordered_map<std::string, std::string> varTypes; // varname -> className
     for (const auto& cls : classes) {
         // Pattern 1: Set varname = ClassName_Create()
-        std::string pattern1 = "Set\\s+(\\w+)\\s*=\\s*" + cls.name + "_Create\\s*\\(";
-        std::regex varAssignRegex1(pattern1, std::regex::icase);
-        std::sregex_iterator it1(result.begin(), result.end(), varAssignRegex1);
-        std::sregex_iterator end;
-        while (it1 != end) {
-            std::string varName = (*it1)[1].str();
+        RE2 varAssignRegex1("(?i)Set\\s+(\\w+)\\s*=\\s*" + cls.name + "_Create\\s*\\(");
+        auto matches1 = RE2FindAll(result, varAssignRegex1);
+        for (const auto& m : matches1) {
+            std::string varName = m.groups.size() > 0 ? m.groups[0] : "";
             std::string lowerVar = varName;
             std::transform(lowerVar.begin(), lowerVar.end(), lowerVar.begin(), ::tolower);
             varTypes[lowerVar] = cls.name;
-            ++it1;
         }
 
         // Pattern 2: Set varname = ClassName_init(ClassName_Create(), ...)
         // This handles classes with default methods (constructors with args)
-        std::string pattern2 = "Set\\s+(\\w+)\\s*=\\s*" + cls.name + "_\\w+\\s*\\(\\s*" + cls.name + "_Create\\s*\\(";
-        std::regex varAssignRegex2(pattern2, std::regex::icase);
-        std::sregex_iterator it2(result.begin(), result.end(), varAssignRegex2);
-        while (it2 != end) {
-            std::string varName = (*it2)[1].str();
+        RE2 varAssignRegex2("(?i)Set\\s+(\\w+)\\s*=\\s*" + cls.name + "_\\w+\\s*\\(\\s*" + cls.name + "_Create\\s*\\(");
+        auto matches2 = RE2FindAll(result, varAssignRegex2);
+        for (const auto& m : matches2) {
+            std::string varName = m.groups.size() > 0 ? m.groups[0] : "";
             std::string lowerVar = varName;
             std::transform(lowerVar.begin(), lowerVar.end(), lowerVar.begin(), ::tolower);
             varTypes[lowerVar] = cls.name;
-            ++it2;
         }
     }
 
@@ -628,10 +604,6 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     }
 
     // Step 2: Find For Each loops and transform method calls on loop variables
-    // when the array contains known emulated class instances
-    //// Pattern: For Each loopVar In Array(knownVar1, knownVar2, ...)
-    // We'll transform: loopVar.method args -> ClassName_method loopVar, args
-
     // Build method map for quick lookup
     std::unordered_map<std::string, std::string> methodToClass; // methodName -> className
     for (const auto& cls : classes) {
@@ -643,21 +615,15 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     }
 
     // Find For Each loops with Array() containing known typed variables
-    // For Each x In Array(LS, RS) where LS and RS are SlingshotCorrection
-    std::regex forEachArrayPattern(
-        R"(For\s+Each\s+(\w+)\s+In\s+Array\s*\(\s*(\w+)(?:\s*,\s*(\w+))*\s*\))",
-        std::regex::icase
-    );
-
-    std::sregex_iterator forIt(result.begin(), result.end(), forEachArrayPattern);
-    std::sregex_iterator forEnd;
+    static const RE2 forEachArrayPattern(R"((?i)For\s+Each\s+(\w+)\s+In\s+Array\s*\(\s*(\w+)(?:\s*,\s*(\w+))*\s*\))");
 
     std::vector<std::tuple<size_t, size_t, std::string, std::string>> loopsToTransform;
     // tuple: (startPos, endPos, loopVar, className)
 
-    while (forIt != forEnd) {
-        std::string loopVar = (*forIt)[1].str();
-        std::string firstArrayVar = (*forIt)[2].str();
+    auto forMatches = RE2FindAll(result, forEachArrayPattern);
+    for (const auto& forMatch : forMatches) {
+        std::string loopVar = forMatch.groups.size() > 0 ? forMatch.groups[0] : "";
+        std::string firstArrayVar = forMatch.groups.size() > 1 ? forMatch.groups[1] : "";
 
         // Check if first array variable is a known typed variable
         std::string lowerFirstVar = firstArrayVar;
@@ -666,71 +632,62 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         auto typeIt = varTypes.find(lowerFirstVar);
         if (typeIt != varTypes.end()) {
             std::string className = typeIt->second;
-            size_t loopStart = (*forIt).position() + (*forIt).length();
+            size_t loopStart = forMatch.position + forMatch.length;
 
             // Find the matching Next
-            std::regex nextPattern("\\bNext\\b", std::regex::icase);
+            static const RE2 nextPattern("(?i)\\bNext\\b");
             std::string afterLoop = result.substr(loopStart);
-            std::smatch nextMatch;
-            if (std::regex_search(afterLoop, nextMatch, nextPattern)) {
-                size_t loopEnd = loopStart + nextMatch.position();
+            RE2Match nextMatch;
+            if (RE2FindFirst(afterLoop, nextPattern, nextMatch)) {
+                size_t loopEnd = loopStart + nextMatch.position;
                 loopsToTransform.push_back({loopStart, loopEnd, loopVar, className});
             }
         }
-        ++forIt;
     }
 
     // For each For Each loop, find the NEAREST preceding Array() assignment
-    // to determine the element type (handles local variables with same name)
-    std::regex forEachVarPattern(R"(For\s+Each\s+(\w+)\s+In\s+(\w+))", std::regex::icase);
-    std::sregex_iterator forIt2(result.begin(), result.end(), forEachVarPattern);
-    while (forIt2 != forEnd) {
-        std::string loopVar = (*forIt2)[1].str();
-        std::string arrayVar = (*forIt2)[2].str();
+    static const RE2 forEachVarPattern(R"((?i)For\s+Each\s+(\w+)\s+In\s+(\w+))");
+    auto forMatches2 = RE2FindAll(result, forEachVarPattern);
+    for (const auto& forMatch : forMatches2) {
+        std::string loopVar = forMatch.groups.size() > 0 ? forMatch.groups[0] : "";
+        std::string arrayVar = forMatch.groups.size() > 1 ? forMatch.groups[1] : "";
         std::string lowerArrayVar = arrayVar;
         std::transform(lowerArrayVar.begin(), lowerArrayVar.end(), lowerArrayVar.begin(), ::tolower);
 
         // Skip if arrayVar is "Array" (handled by previous pattern)
-        if (lowerArrayVar == "array") { ++forIt2; continue; }
+        if (lowerArrayVar == "array") continue;
 
-        size_t forEachPos = (*forIt2).position();
+        size_t forEachPos = forMatch.position;
 
         // Look backwards for "arrayVar = Array(firstElem, ...)" before this For Each
         std::string beforeLoop = result.substr(0, forEachPos);
-        std::regex arrayAssignPattern(arrayVar + "\\s*=\\s*Array\\s*\\(\\s*(\\w+)", std::regex::icase);
-        std::smatch arrayMatch;
-        std::string::const_iterator searchStart = beforeLoop.cbegin();
-        std::smatch lastMatch;
-        bool foundMatch = false;
-        while (std::regex_search(searchStart, beforeLoop.cend(), arrayMatch, arrayAssignPattern)) {
-            lastMatch = arrayMatch;
-            foundMatch = true;
-            searchStart = arrayMatch.suffix().first;
-        }
+        RE2 arrayAssignPattern("(?i)" + arrayVar + "\\s*=\\s*Array\\s*\\(\\s*(\\w+)");
+        auto arrayMatches = RE2FindAll(beforeLoop, arrayAssignPattern);
 
-        if (foundMatch) {
-            std::string firstElem = lastMatch[1].str();
+        if (!arrayMatches.empty()) {
+            // Use the last match (nearest to the For Each)
+            const auto& lastMatch = arrayMatches.back();
+            std::string firstElem = lastMatch.groups.size() > 0 ? lastMatch.groups[0] : "";
             std::string lowerFirstElem = firstElem;
             std::transform(lowerFirstElem.begin(), lowerFirstElem.end(), lowerFirstElem.begin(), ::tolower);
 
             auto typeIt = varTypes.find(lowerFirstElem);
             if (typeIt != varTypes.end()) {
                 std::string className = typeIt->second;
-                size_t loopStart = forEachPos + (*forIt2).length();
+                size_t loopStart = forEachPos + forMatch.length;
 
                 // Find the matching Next
-                std::regex nextPattern("\\bNext\\b", std::regex::icase);
+                static const RE2 nextPattern("(?i)\\bNext\\b");
                 std::string afterLoop = result.substr(loopStart);
-                std::smatch nextMatch;
-                if (std::regex_search(afterLoop, nextMatch, nextPattern)) {
-                    size_t loopEnd = loopStart + nextMatch.position();
+                RE2Match nextMatch;
+                if (RE2FindFirst(afterLoop, nextPattern, nextMatch)) {
+                    size_t loopEnd = loopStart + nextMatch.position;
                     loopsToTransform.push_back({loopStart, loopEnd, loopVar, className});
                     PLOGI.printf("ScriptPatcher: Found For Each %s In %s (type %s at pos %zu)",
                                 loopVar.c_str(), arrayVar.c_str(), className.c_str(), forEachPos);
                 }
             }
         }
-        ++forIt2;
     }
 
     // Process loops in reverse order to preserve positions
@@ -751,18 +708,16 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
                 if (m.params.size() > 0) {
                     // Method with params: loopVar.method args
-                    std::string methodPattern = "\\b" + escapedLoopVar + "\\." + escapedMethod +
-                                                "\\b(?!\\s*[=(])[ \\t]+([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))";
-                    std::regex mr(methodPattern, std::regex::icase);
-                    transformedBody = std::regex_replace(transformedBody, mr,
-                                                         className + "_" + m.name + " " + loopVar + ", $1");
+                    RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
+                           "\\b(?!\\s*[=(])[ \\t]+([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+                    transformedBody = RE2Replace(transformedBody, mr,
+                                                 className + "_" + m.name + " " + loopVar + ", \\1");
                 } else {
                     // Method without params: loopVar.method
-                    std::string methodPattern = "\\b" + escapedLoopVar + "\\." + escapedMethod +
-                                                "\\b(?=[ \\t]*(?::|'|\\r|\\n|$))";
-                    std::regex mr(methodPattern, std::regex::icase);
-                    transformedBody = std::regex_replace(transformedBody, mr,
-                                                         className + "_" + m.name + " " + loopVar);
+                    RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
+                           "\\b(?=[ \\t]*(?::|'|\\r|\\n|$))");
+                    transformedBody = RE2Replace(transformedBody, mr,
+                                                 className + "_" + m.name + " " + loopVar);
                 }
             }
 
@@ -773,11 +728,10 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
                 std::string escapedLoopVar = EscapeRegex(loopVar);
 
                 // Assignment: loopVar.prop = value
-                std::string propPattern = "\\b" + escapedLoopVar + "\\." + escapedProp +
-                                          "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))";
-                std::regex pr(propPattern, std::regex::icase);
-                transformedBody = std::regex_replace(transformedBody, pr,
-                                                     loopVar + "(\"" + prop.name + "\") = $1");
+                RE2 pr("(?i)\\b" + escapedLoopVar + "\\." + escapedProp +
+                       "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+                transformedBody = RE2Replace(transformedBody, pr,
+                                             loopVar + "(\"" + prop.name + "\") = \\1");
             }
         }
 
@@ -787,50 +741,38 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     }
 
     // Step 3: Transform array element method/property access
-    // When we have: Set arrayName(idx) = ClassName_Create()
-    // We need to transform: arrayName(idx).method -> ClassName_method arrayName(idx)
-    // And: arrayName(idx).prop -> arrayName(idx)("prop")
-
     // Find arrays that contain emulated class instances
-    //// Pattern: Set arrayName(idx) = ClassName_Create() or ClassName_init(ClassName_Create(), ...)
-    //// Also: ArrayName = Array(var1, var2, ...) where var1 is a known typed variable
     std::unordered_map<std::string, std::string> arrayElementTypes; // arrayName -> className
     for (const auto& cls : classes) {
         // Pattern 1: Set arrayName(idx) = ClassName_Create()
-        std::string pattern1 = "Set\\s+(\\w+)\\s*\\([^)]+\\)\\s*=\\s*" + cls.name + "_Create\\s*\\(";
-        std::regex arrayAssignRegex1(pattern1, std::regex::icase);
-        std::sregex_iterator it1(result.begin(), result.end(), arrayAssignRegex1);
-        std::sregex_iterator end;
-        while (it1 != end) {
-            std::string arrayName = (*it1)[1].str();
+        RE2 arrayAssignRegex1("(?i)Set\\s+(\\w+)\\s*\\([^)]+\\)\\s*=\\s*" + cls.name + "_Create\\s*\\(");
+        auto matches1 = RE2FindAll(result, arrayAssignRegex1);
+        for (const auto& m : matches1) {
+            std::string arrayName = m.groups.size() > 0 ? m.groups[0] : "";
             std::string lowerArrayName = arrayName;
             std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
             arrayElementTypes[lowerArrayName] = cls.name;
             PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 1)", arrayName.c_str(), cls.name.c_str());
-            ++it1;
         }
 
         // Pattern 2: Set arrayName(idx) = ClassName_init(ClassName_Create(), ...)
-        std::string pattern2 = "Set\\s+(\\w+)\\s*\\([^)]+\\)\\s*=\\s*" + cls.name + "_\\w+\\s*\\(\\s*" + cls.name + "_Create\\s*\\(";
-        std::regex arrayAssignRegex2(pattern2, std::regex::icase);
-        std::sregex_iterator it2(result.begin(), result.end(), arrayAssignRegex2);
-        while (it2 != end) {
-            std::string arrayName = (*it2)[1].str();
+        RE2 arrayAssignRegex2("(?i)Set\\s+(\\w+)\\s*\\([^)]+\\)\\s*=\\s*" + cls.name + "_\\w+\\s*\\(\\s*" + cls.name + "_Create\\s*\\(");
+        auto matches2 = RE2FindAll(result, arrayAssignRegex2);
+        for (const auto& m : matches2) {
+            std::string arrayName = m.groups.size() > 0 ? m.groups[0] : "";
             std::string lowerArrayName = arrayName;
             std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
             arrayElementTypes[lowerArrayName] = cls.name;
             PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 2)", arrayName.c_str(), cls.name.c_str());
-            ++it2;
         }
     }
 
     // Pattern 3: ArrayName = Array(var1, var2, ...) where var1 is a known typed variable
-    std::regex arrayLiteralPattern(R"((\w+)\s*=\s*Array\s*\(\s*(\w+))", std::regex::icase);
-    std::sregex_iterator it3(result.begin(), result.end(), arrayLiteralPattern);
-    std::sregex_iterator end3;
-    while (it3 != end3) {
-        std::string arrayName = (*it3)[1].str();
-        std::string firstElem = (*it3)[2].str();
+    static const RE2 arrayLiteralPattern(R"((?i)(\w+)\s*=\s*Array\s*\(\s*(\w+))");
+    auto matches3 = RE2FindAll(result, arrayLiteralPattern);
+    for (const auto& m : matches3) {
+        std::string arrayName = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string firstElem = m.groups.size() > 1 ? m.groups[1] : "";
         std::string lowerArrayName = arrayName;
         std::transform(lowerArrayName.begin(), lowerArrayName.end(), lowerArrayName.begin(), ::tolower);
         std::string lowerFirstElem = firstElem;
@@ -843,7 +785,6 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             PLOGI.printf("ScriptPatcher: Array '%s' contains '%s' objects (pattern 3 via %s)",
                         arrayName.c_str(), typeIt->second.c_str(), firstElem.c_str());
         }
-        ++it3;
     }
 
     PLOGI.printf("ScriptPatcher: Found %zu array element types", arrayElementTypes.size());
@@ -851,8 +792,7 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         PLOGI.printf("ScriptPatcher:   arrayElementTypes[%s] = %s", arr.c_str(), cls.c_str());
     }
 
-    // Transform array element method calls: arrayName(idx).method args -> ClassName_method arrayName(idx), args
-    // Transform array element property access: arrayName(idx).prop -> arrayName(idx)("prop")
+    // Transform array element method calls and property access
     for (const auto& [lowerArrayName, className] : arrayElementTypes) {
         // Find the class definition
         const VBClassDefinition* classDef = nullptr;
@@ -868,42 +808,27 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (const auto& m : classDef->methods) {
             std::string escapedMethod = EscapeRegex(m.name);
 
-            //// Pattern: arrayName(idx).method (no args, not followed by =)
-            // Must match case-insensitively for array name
-            // Use [^()]+ for index to avoid matching nested parens
-            std::string noArgsPattern = "\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(?!\\s*[=(])";
-            std::regex noArgsRegex(noArgsPattern, std::regex::icase);
+            // Pattern: arrayName(idx).method (no args, not followed by =)
+            RE2 noArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(?!\\s*[=(])");
 
-            std::string tempResult;
-            std::sregex_iterator it(result.begin(), result.end(), noArgsRegex);
-            std::sregex_iterator end;
-            size_t lastPos = 0;
-
-            while (it != end) {
-                std::string matchedArrayName = (*it)[1].str();
+            result = RE2ReplaceWithCallback(result, noArgsRegex, [&](const RE2Match& match) -> std::string {
+                std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
                 std::string lowerMatched = matchedArrayName;
                 std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
 
-                tempResult += result.substr(lastPos, (*it).position() - lastPos);
-
                 if (lowerMatched == lowerArrayName) {
                     // Transform: arrayName(idx).method -> ClassName_method arrayName(idx)
-                    tempResult += className + "_" + m.name + " " + matchedArrayName + "(" + (*it)[2].str() + ")";
+                    return className + "_" + m.name + " " + matchedArrayName + "(" + match.groups[1] + ")";
                 } else {
                     // Not our array, keep original
-                    tempResult += (*it)[0].str();
+                    return match.full_match;
                 }
-
-                lastPos = (*it).position() + (*it).length();
-                ++it;
-            }
-            tempResult += result.substr(lastPos);
-            if (!tempResult.empty()) result = tempResult;
+            });
         }
 
         // Build a set of property names (lowercase) for quick lookup
         std::unordered_set<std::string> propertyNames;
-        std::unordered_map<std::string, std::string> propertyOriginalCase; // lowercase -> original case
+        std::unordered_map<std::string, std::string> propertyOriginalCase;
         for (const auto& prop : classDef->properties) {
             if (prop.isArray) continue;
             std::string lowerProp = prop.name;
@@ -912,169 +837,94 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             propertyOriginalCase[lowerProp] = prop.name;
         }
 
-        // Transform ALL property access in one pass - match any .property pattern
-        //// Pattern: arrayName(idx).anyProperty
-        // Use [^()]+ for index to avoid matching nested parens like IsEmpty(arr(x).prop)
-        std::string propPattern = "\\b(\\w+)\\s*\\(([^()]+)\\)\\.(\\w+)\\b";
-        std::regex propRegex(propPattern, std::regex::icase);
-
-        std::string tempResult;
-        std::sregex_iterator it(result.begin(), result.end(), propRegex);
-        std::sregex_iterator end;
-        size_t lastPos = 0;
-
-        while (it != end) {
-            std::string matchedArrayName = (*it)[1].str();
-            std::string indexExpr = (*it)[2].str();
-            std::string propName = (*it)[3].str();
+        // Transform property access
+        RE2 propRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\.(\\w+)\\b");
+        result = RE2ReplaceWithCallback(result, propRegex, [&](const RE2Match& match) -> std::string {
+            std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+            std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
+            std::string propName = match.groups.size() > 2 ? match.groups[2] : "";
 
             std::string lowerMatched = matchedArrayName;
             std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
             std::string lowerProp = propName;
             std::transform(lowerProp.begin(), lowerProp.end(), lowerProp.begin(), ::tolower);
 
-            tempResult += result.substr(lastPos, (*it).position() - lastPos);
-
             // Check if this is our array AND the property is from our class
             if (lowerMatched == lowerArrayName && propertyNames.count(lowerProp) > 0) {
-                // Check what follows the match to determine if it's an assignment
-                size_t afterMatch = (*it).position() + (*it).length();
-                std::string afterText = result.substr(afterMatch, 10);
-                // Trim leading whitespace
-                size_t nonWs = afterText.find_first_not_of(" \t");
-                bool isAssignment = (nonWs != std::string::npos && afterText[nonWs] == '=');
-
                 // Transform: arrayName(idx).prop -> arrayName(idx)("prop")
-                // Use original case from class definition for the property name
                 std::string origProp = propertyOriginalCase[lowerProp];
-                tempResult += matchedArrayName + "(" + indexExpr + ")(\"" + origProp + "\")";
                 PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s to dictionary access",
                             matchedArrayName.c_str(), indexExpr.c_str(), propName.c_str());
+                return matchedArrayName + "(" + indexExpr + ")(\"" + origProp + "\")";
             } else {
-                // Not our array or not a class property, keep original
-                tempResult += (*it)[0].str();
+                return match.full_match;
             }
-
-            lastPos = (*it).position() + (*it).length();
-            ++it;
-        }
-        tempResult += result.substr(lastPos);
-        if (!tempResult.empty()) result = tempResult;
+        });
 
         // Transform accessor calls on array elements (Property Let/Get)
-        // IMPORTANT: Process Let/Set BEFORE Get to avoid Get matching assignment targets
         // First pass: Let/Set accessors
         for (const auto& acc : classDef->accessors) {
             if (!EqualsIgnoreCase(acc.type, "Let") && !EqualsIgnoreCase(acc.type, "Set")) continue;
             std::string escapedAcc = EscapeRegex(acc.name);
 
-            {
-                // Property Let: arrayName(idx).accessor = value -> ClassName_Let_accessor arrayName(idx), value
-                // Use [^()]+ for index to avoid matching nested parens
-                std::string letPattern = "(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))";
-                std::regex letRegex(letPattern, std::regex::icase | std::regex::multiline);
+            // Property Let: arrayName(idx).accessor = value -> ClassName_Let_accessor arrayName(idx), value
+            RE2 letRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+            result = RE2ReplaceWithCallback(result, letRegex, [&](const RE2Match& match) -> std::string {
+                std::string prefix = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string matchedArrayName = match.groups.size() > 1 ? match.groups[1] : "";
+                std::string indexExpr = match.groups.size() > 2 ? match.groups[2] : "";
+                std::string value = match.groups.size() > 3 ? match.groups[3] : "";
 
-                std::string tempResult;
-                std::sregex_iterator it(result.begin(), result.end(), letRegex);
-                std::sregex_iterator end;
-                size_t lastPos = 0;
+                std::string lowerMatched = matchedArrayName;
+                std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
 
-                while (it != end) {
-                    std::string matchedArrayName = (*it)[2].str();
-                    std::string lowerMatched = matchedArrayName;
-                    std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
-
-                    tempResult += result.substr(lastPos, (*it).position() - lastPos);
-
-                    if (lowerMatched == lowerArrayName) {
-                        tempResult += (*it)[1].str() + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + (*it)[3].str() + "), " + (*it)[4].str();
-                    } else {
-                        tempResult += (*it)[0].str();
-                    }
-
-                    lastPos = (*it).position() + (*it).length();
-                    ++it;
+                if (lowerMatched == lowerArrayName) {
+                    return prefix + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + indexExpr + "), " + value;
+                } else {
+                    return match.full_match;
                 }
-                tempResult += result.substr(lastPos);
-                if (!tempResult.empty()) result = tempResult;
-            }
-
+            });
         }
 
-        // Second pass: Get accessors (AFTER all Let/Set have been processed)
+        // Second pass: Get accessors
         for (const auto& acc : classDef->accessors) {
             if (!EqualsIgnoreCase(acc.type, "Get")) continue;
             std::string escapedAcc = EscapeRegex(acc.name);
 
             // Property Get: arrayName(idx).accessor -> ClassName_Get_accessor(arrayName(idx))
-            // Don't exclude "= " - the Let pattern already handled assignments at statement boundaries,
-            // so remaining "arr(i).prop = value" are comparisons (like "If arr(i).prop = x Then")
-            std::string getPattern = "\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\b";
-            std::regex getRegex(getPattern, std::regex::icase);
+            RE2 getRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\b");
+            result = RE2ReplaceWithCallback(result, getRegex, [&](const RE2Match& match) -> std::string {
+                std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
 
-            std::string tempResult;
-            std::sregex_iterator it(result.begin(), result.end(), getRegex);
-            std::sregex_iterator end;
-            size_t lastPos = 0;
-
-            while (it != end) {
-                std::string matchedArrayName = (*it)[1].str();
-                std::string indexExpr = (*it)[2].str();
                 std::string lowerMatched = matchedArrayName;
                 std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
 
-                tempResult += result.substr(lastPos, (*it).position() - lastPos);
-
                 if (lowerMatched == lowerArrayName) {
-                    // Transform: arrayName(idx).accessor -> ClassName_Get_accessor(arrayName(idx))
-                    tempResult += className + "_Get_" + acc.name + "(" + matchedArrayName + "(" + indexExpr + "))";
                     PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s to getter call",
                                 matchedArrayName.c_str(), indexExpr.c_str(), acc.name.c_str());
+                    return className + "_Get_" + acc.name + "(" + matchedArrayName + "(" + indexExpr + "))";
                 } else {
-                    tempResult += (*it)[0].str();
+                    return match.full_match;
                 }
-
-                lastPos = (*it).position() + (*it).length();
-                ++it;
-            }
-            tempResult += result.substr(lastPos);
-            if (!tempResult.empty()) result = tempResult;
+            });
         }
     }
 
     // Step 4: Transform ExecuteGlobal string templates that contain dot notation
-    // The FlipperPolarity class uses ExecuteGlobal to create dynamic event handlers:
-    // str = "Sub " & aTrigger.name & "_Hit() : " & aName & ".AddBall ActiveBall : End Sub'"
-    // This needs to be transformed to use the emulated method call syntax.
     for (const auto& cls : classes) {
         for (const auto& m : cls.methods) {
-            //// Pattern: & aName & ".methodName args
-            // Transform to: FlipperPolarity_methodName " & aName & ", args
-            std::string dotPattern = R"(\"\s*&\s*(\w+)\s*&\s*\"\.)" + EscapeRegex(m.name) + R"(\s+([^"]+))";
-            std::regex dotRegex(dotPattern, std::regex::icase);
+            // Pattern: & aName & ".methodName args
+            RE2 dotRegex(R"RE((?i)"\s*&\s*(\w+)\s*&\s*"\.)RE" + EscapeRegex(m.name) + R"RE(\s+([^"]+))RE");
+            result = RE2ReplaceWithCallback(result, dotRegex, [&](const RE2Match& match) -> std::string {
+                std::string varName = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string args = match.groups.size() > 1 ? match.groups[1] : "";
 
-            std::string tempResult;
-            std::sregex_iterator it(result.begin(), result.end(), dotRegex);
-            std::sregex_iterator end;
-            size_t lastPos = 0;
-
-            while (it != end) {
-                std::string varName = (*it)[1].str();
-                std::string args = (*it)[2].str();
-
-                tempResult += result.substr(lastPos, (*it).position() - lastPos);
                 // Transform to: ClassName_methodName " & varName & ", args
-                tempResult += cls.name + "_" + m.name + " \" & " + varName + " & \", " + args;
-
-                lastPos = (*it).position() + (*it).length();
-                ++it;
-            }
-            tempResult += result.substr(lastPos);
-            if (!tempResult.empty() && tempResult != result) {
-                result = tempResult;
                 PLOGI.printf("ScriptPatcher: Transformed ExecuteGlobal template for %s.%s",
                             cls.name.c_str(), m.name.c_str());
-            }
+                return cls.name + "_" + m.name + " \" & " + varName + " & \", " + args;
+            });
         }
     }
 
