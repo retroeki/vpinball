@@ -923,8 +923,9 @@ std::string ScriptPatcher::PatchArrayObjectPropertyAccess(const std::string& scr
 
     // Pattern requires statement start position to avoid matching comparisons
     // IMPORTANT: Use [^,)]+ to skip 2D array accesses like arr(i,j).prop - only transform 1D arrays
-    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(\w+)\s*\(\s*([^,)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)(?=[ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))");
-    r = RE2Replace(r, p, "\\1VPX_SetArrObjProp \\2, \\3, \"\\4\", \\5");
+    // RE2 doesn't support lookahead, capture trailing boundary and restore
+    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(\w+)\s*\(\s*([^,)]+)\s*\)\s*\.(\w+)\s*=\s*([^:\r\n]+?)([ \t]*(?::|'|\bThen\b|\bElse\b|\r|\n|$)))");
+    r = RE2Replace(r, p, "\\1VPX_SetArrObjProp \\2, \\3, \"\\4\", \\5\\6");
 
     return r;
 }

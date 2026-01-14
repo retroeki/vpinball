@@ -240,7 +240,8 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         if (!temp.empty()) result = temp;
 
         // Pattern for method call without arguments: methodName (standalone, followed by newline or :)
-        RE2 noArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "(?=[ \\t]*(?::|\\r|\\n|$))");
+        // RE2 doesn't support lookahead, so capture trailing boundary and restore it
+        RE2 noArgsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)" + escapedName + "([ \\t]*(?::|\\r|\\n|$))");
 
         temp.clear();
         matches = RE2FindAll(result, noArgsRegex);
@@ -263,7 +264,9 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             if (skip) {
                 temp += match.full_match;
             } else {
-                temp += match[1] + classDef.name + "_" + method.name + " this_";
+                // Group 1 is prefix, group 2 is trailing boundary - restore it
+                std::string trailing = (match.groups.size() > 1) ? match.groups[1] : "";
+                temp += match[1] + classDef.name + "_" + method.name + " this_" + trailing;
             }
             lastPos = matchPos + match.length;
         }

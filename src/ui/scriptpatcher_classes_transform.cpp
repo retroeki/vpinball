@@ -364,12 +364,13 @@ std::string ScriptPatcher::TransformAccessorAccess(const std::string& script,
 
             // Write WITH params: var.accessor(idx) = value  ->  ClassName_Let_accessor var, idx, value
             // ONLY match at statement start to avoid matching comparisons in If statements
-            RE2 wr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))");
-            result = RE2Replace(result, wr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2, \\3");
+            // RE2 doesn't support lookahead, capture trailing and restore
+            RE2 wr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]*?)(\\s*(?:Else\\b|:|\\r|\\n|$))");
+            result = RE2Replace(result, wr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2, \\3\\4");
 
             // Write WITHOUT params: var.accessor = value  ->  ClassName_Let_accessor var, value
-            RE2 swr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(?=\\s*(?:Else\\b|:|\\r|\\n|$))");
-            result = RE2Replace(result, swr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2");
+            RE2 swr("(?im)(^[ \\t]*|:[ \\t]*|\\bThen\\s+|\\bElse\\s+)\\b" + escapedVar + "\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]*?)(\\s*(?:Else\\b|:|\\r|\\n|$))");
+            result = RE2Replace(result, swr, "\\1" + className + "_Let_" + accName + " " + varName + ", \\2\\3");
 
             // Read WITH params: var.accessor(idx)  ->  ClassName_Get_accessor(var, idx)
             RE2 rr("(?i)\\b" + escapedVar + "\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)");
@@ -708,28 +709,30 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
                 if (m.params.size() > 0) {
                     // Method with params: loopVar.method args
-                    // RE2 doesn't support (?!), so we match more broadly and check in callback
+                    // RE2 doesn't support lookahead, capture trailing and check in callback
                     RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
-                           "\\b[ \\t]+([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+                           "\\b[ \\t]+([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
                     std::string clsName = className;
                     std::string mName = m.name;
                     std::string lv = loopVar;
                     transformedBody = RE2ReplaceWithCallback(transformedBody, mr, [=](const RE2Match& match) -> std::string {
                         // Check what follows - if it starts with = or (, skip
                         std::string afterMethod = match.groups.size() > 0 ? match.groups[0] : "";
+                        std::string trailing = match.groups.size() > 1 ? match.groups[1] : "";
                         std::string trimmed = afterMethod;
                         size_t start = trimmed.find_first_not_of(" \t");
                         if (start != std::string::npos && (trimmed[start] == '=' || trimmed[start] == '(')) {
                             return match.full_match;  // Keep original
                         }
-                        return clsName + "_" + mName + " " + lv + ", " + afterMethod;
+                        return clsName + "_" + mName + " " + lv + ", " + afterMethod + trailing;
                     });
                 } else {
                     // Method without params: loopVar.method
+                    // RE2 doesn't support lookahead, capture trailing boundary and restore
                     RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
-                           "\\b(?=[ \\t]*(?::|'|\\r|\\n|$))");
+                           "\\b([ \\t]*(?::|'|\\r|\\n|$))");
                     transformedBody = RE2Replace(transformedBody, mr,
-                                                 className + "_" + m.name + " " + loopVar);
+                                                 className + "_" + m.name + " " + loopVar + "\\1");
                 }
             }
 
@@ -740,10 +743,11 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
                 std::string escapedLoopVar = EscapeRegex(loopVar);
 
                 // Assignment: loopVar.prop = value
+                // RE2 doesn't support lookahead, capture trailing and restore
                 RE2 pr("(?i)\\b" + escapedLoopVar + "\\." + escapedProp +
-                       "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+                       "\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
                 transformedBody = RE2Replace(transformedBody, pr,
-                                             loopVar + "(\"" + prop.name + "\") = \\1");
+                                             loopVar + "(\"" + prop.name + "\") = \\1\\2");
             }
         }
 
@@ -886,18 +890,20 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             std::string escapedAcc = EscapeRegex(acc.name);
 
             // Property Let: arrayName(idx).accessor = value -> ClassName_Let_accessor arrayName(idx), value
-            RE2 letRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+            // RE2 doesn't support lookahead, capture trailing boundary
+            RE2 letRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
             result = RE2ReplaceWithCallback(result, letRegex, [&](const RE2Match& match) -> std::string {
                 std::string prefix = match.groups.size() > 0 ? match.groups[0] : "";
                 std::string matchedArrayName = match.groups.size() > 1 ? match.groups[1] : "";
                 std::string indexExpr = match.groups.size() > 2 ? match.groups[2] : "";
                 std::string value = match.groups.size() > 3 ? match.groups[3] : "";
+                std::string trailing = match.groups.size() > 4 ? match.groups[4] : "";
 
                 std::string lowerMatched = matchedArrayName;
                 std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
 
                 if (lowerMatched == lowerArrayName) {
-                    return prefix + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + indexExpr + "), " + value;
+                    return prefix + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + indexExpr + "), " + value + trailing;
                 } else {
                     return match.full_match;
                 }
