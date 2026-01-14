@@ -687,12 +687,19 @@ std::string ScriptPatcher::PatchSafeUBoundArrayAccess(const std::string& script)
     // Replace arr(VPX_SafeUBound(arr)) with VPX_SafeGet(arr, VPX_SafeUBound(arr))
     // BUT only when NOT followed by = (i.e., when reading, not writing)
     // This prevents out-of-bounds when VPX_SafeUBound returns -1 for empty arrays
-    // NOTE: RE2 doesn't support negative lookahead (?!), handle with callback
-    static const RE2 p(R"((?i)(\w+)\s*\(\s*VPX_SafeUBound\s*\(\s*\1\s*\)\s*\))");
+    // NOTE: RE2 doesn't support backreferences (\1), so match both names and compare in callback
+    static const RE2 p(R"((?i)(\w+)\s*\(\s*VPX_SafeUBound\s*\(\s*(\w+)\s*\)\s*\))");
     r = RE2ReplaceWithCallback(r, p, [](const RE2Match& m) -> std::string {
-        // Check if followed by = (assignment)
-        // For now, just do the replacement - the original code had issues with this anyway
-        return "VPX_SafeGet(" + m[1] + ", VPX_SafeUBound(" + m[1] + "))";
+        std::string arr1 = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string arr2 = m.groups.size() > 1 ? m.groups[1] : "";
+        // Check if both array names match (case-insensitive)
+        std::string lower1 = arr1, lower2 = arr2;
+        std::transform(lower1.begin(), lower1.end(), lower1.begin(), ::tolower);
+        std::transform(lower2.begin(), lower2.end(), lower2.begin(), ::tolower);
+        if (lower1 == lower2) {
+            return "VPX_SafeGet(" + arr1 + ", VPX_SafeUBound(" + arr2 + "))";
+        }
+        return m.full_match;  // Names don't match, keep original
     });
     return r;
 }
