@@ -895,8 +895,19 @@ std::string ScriptPatcher::PatchDictArrayAccess(const std::string& script) {
 
     // Transform READ access: dict("key")(idx) -> VPX_GetDictArrItem(dict, "key", idx)
     // Need to be careful not to match patterns already transformed to VPX_SetDictArrItem
-    static const RE2 readPattern(R"RE((?i)(\b(?!VPX_SetDictArrItem\b))(\w+)\s*\(\s*"([^"]+)"\s*\)\s*\(\s*([^)]+)\s*\))RE");
-    r = RE2Replace(r, readPattern, "\\1VPX_GetDictArrItem(\\2, \"\\3\", \\4)");
+    // RE2 doesn't support (?!), so we use callback to filter
+    static const RE2 readPattern(R"RE((?i)\b(\w+)\s*\(\s*"([^"]+)"\s*\)\s*\(\s*([^)]+)\s*\))RE");
+    r = RE2ReplaceWithCallback(r, readPattern, [](const RE2Match& m) -> std::string {
+        std::string varName = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string varLower = varName;
+        std::transform(varLower.begin(), varLower.end(), varLower.begin(), ::tolower);
+        if (varLower == "vpx_setdictarritem") {
+            return m.full_match;  // Don't transform VPX_SetDictArrItem calls
+        }
+        std::string key = m.groups.size() > 1 ? m.groups[1] : "";
+        std::string idx = m.groups.size() > 2 ? m.groups[2] : "";
+        return "VPX_GetDictArrItem(" + varName + ", \"" + key + "\", " + idx + ")";
+    });
 
     PLOGI.printf("ScriptPatcher: Applied Dictionary/array access patch");
     return r;

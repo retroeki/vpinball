@@ -708,10 +708,22 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
                 if (m.params.size() > 0) {
                     // Method with params: loopVar.method args
+                    // RE2 doesn't support (?!), so we match more broadly and check in callback
                     RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
-                           "\\b(?!\\s*[=(])[ \\t]+([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
-                    transformedBody = RE2Replace(transformedBody, mr,
-                                                 className + "_" + m.name + " " + loopVar + ", \\1");
+                           "\\b[ \\t]+([^:\\r\\n]+?)(?=[ \\t]*(?::|\\r|\\n|$))");
+                    std::string clsName = className;
+                    std::string mName = m.name;
+                    std::string lv = loopVar;
+                    transformedBody = RE2ReplaceWithCallback(transformedBody, mr, [=](const RE2Match& match) -> std::string {
+                        // Check what follows - if it starts with = or (, skip
+                        std::string afterMethod = match.groups.size() > 0 ? match.groups[0] : "";
+                        std::string trimmed = afterMethod;
+                        size_t start = trimmed.find_first_not_of(" \t");
+                        if (start != std::string::npos && (trimmed[start] == '=' || trimmed[start] == '(')) {
+                            return match.full_match;  // Keep original
+                        }
+                        return clsName + "_" + mName + " " + lv + ", " + afterMethod;
+                    });
                 } else {
                     // Method without params: loopVar.method
                     RE2 mr("(?i)\\b" + escapedLoopVar + "\\." + escapedMethod +
@@ -808,10 +820,16 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (const auto& m : classDef->methods) {
             std::string escapedMethod = EscapeRegex(m.name);
 
-            // Pattern: arrayName(idx).method (no args, not followed by =)
-            RE2 noArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(?!\\s*[=(])");
+            // Pattern: arrayName(idx).method (no args, not followed by = or ()
+            // RE2 doesn't support (?!), so we capture what follows and check in callback
+            RE2 noArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(\\s*[=(])?");
 
             result = RE2ReplaceWithCallback(result, noArgsRegex, [&](const RE2Match& match) -> std::string {
+                // If group 3 matched (= or ( follows), keep original
+                if (match.groups.size() > 2 && !match.groups[2].empty()) {
+                    return match.full_match;  // Keep original - followed by = or (
+                }
+
                 std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
                 std::string lowerMatched = matchedArrayName;
                 std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);

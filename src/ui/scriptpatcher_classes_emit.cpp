@@ -46,7 +46,8 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
     static const RE2 meDotPattern(R"((?i)\bMe\.(\w+))");
     result = RE2Replace(result, meDotPattern, "this_(\"\\1\")");
     // Standalone Me -> this_
-    static const RE2 mePattern(R"((?i)\bMe\b(?!\.))");
+    // Note: Me.Property already handled above, so remaining Me won't be followed by dot
+    static const RE2 mePattern(R"((?i)\bMe\b)");
     result = RE2Replace(result, mePattern, "this_");
 
     for (const auto& prop : classDef.properties) {

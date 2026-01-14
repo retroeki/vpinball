@@ -64,7 +64,8 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
 
     static const RE2 classStartPattern(R"((?i)^\s*Class\s+(\w+))");
     static const RE2 classEndPattern(R"((?i)^\s*End\s+Class\s*$)");
-    static const RE2 propertyDeclPattern(R"((?i)^\s*(Public|Private)\s+(?!Sub|Function|Property|Default)(.+)$)");
+    // RE2 doesn't support negative lookahead, so we match broadly and filter in code
+    static const RE2 propertyDeclPattern(R"((?i)^\s*(Public|Private)\s+(.+)$)");
     static const RE2 methodStartPattern(R"((?i)^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)");
     static const RE2 methodEndSubPattern(R"((?i)^\s*End\s+Sub\s*$)");
     static const RE2 methodEndFuncPattern(R"((?i)^\s*End\s+Function\s*$)");
@@ -252,6 +253,16 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
         }
 
         if (RE2::PartialMatch(line, propertyDeclPattern, &cap1, &cap2)) {
+            // Filter out Sub, Function, Property, Default declarations (RE2 doesn't support (?!))
+            std::string rest = Trim(cap2);
+            std::string restLower = rest;
+            std::transform(restLower.begin(), restLower.end(), restLower.begin(), ::tolower);
+            if (restLower.rfind("sub ", 0) == 0 || restLower.rfind("sub\t", 0) == 0 ||
+                restLower.rfind("function ", 0) == 0 || restLower.rfind("function\t", 0) == 0 ||
+                restLower.rfind("property ", 0) == 0 || restLower.rfind("property\t", 0) == 0 ||
+                restLower.rfind("default ", 0) == 0 || restLower.rfind("default\t", 0) == 0) {
+                continue;  // Skip - this is a method/property accessor declaration, not a variable
+            }
             bool isPublic = EqualsIgnoreCase(Trim(cap1), "Public");
             std::string varList = cap2;
             // Strip VBScript comments (everything after ')
