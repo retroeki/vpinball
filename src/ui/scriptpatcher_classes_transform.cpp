@@ -566,7 +566,9 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
     // First pass: just collect class names and build stub emulation (don't modify script yet)
     std::ostringstream stubEmulation;
     std::vector<std::string> stubClassNames;  // Collect stub class names for TransformNewStatements
-    static const RE2 singleLineClassRegex(R"((?im)^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t]*$)");
+    // IMPORTANT: Use [ \t\r]* instead of [ \t]* to handle CRLF line endings
+    // Windows files have \r\n, and $ matches before \n, leaving \r unmatched by [ \t]*
+    static const RE2 singleLineClassRegex(R"((?im)^[ \t]*Class\s+(\w+)\s*:.+?End\s+Class[ \t\r]*$)");
     auto stubMatches = RE2FindAll(script, singleLineClassRegex);
     for (const auto& match : stubMatches) {
         std::string className = match.groups.size() > 0 ? match.groups[0] : "";

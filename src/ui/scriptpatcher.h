@@ -202,6 +202,9 @@ private:
     static std::string PatchExecuteEval(const std::string& script);
     static std::string PatchStringConcatenation(const std::string& script);
 
+    // Game-specific syntax fixes
+    static std::string PatchDMDSettingsSetupMissingComma(const std::string& script);
+
     // Wine VBScript Array Compatibility
     static bool UsesProblematicArrays(const std::string& script);
     static std::string InjectWineArrayHelpers(const std::string& script);
@@ -222,6 +225,7 @@ private:
     static std::string InjectVPXSetArrObjProp(const std::string& script);
     static std::string RemoveUnusedClasses(const std::string& script);
     static std::string RemoveDuplicateVpmInit(const std::string& script);
+    static std::string FixSingleLineIfEndIf(const std::string& script);
 
     // Native class protection - classes that interact with external code via Me
     // These must be kept 100% native with no transformations

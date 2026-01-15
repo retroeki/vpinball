@@ -74,6 +74,30 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         accessorNamesLower.insert(lower);
     }
 
+    // Helper lambda to check if a position is inside a VBScript comment
+    // VBScript comments start with ' and extend to end of line
+    auto isInsideComment = [](const std::string& str, size_t pos) -> bool {
+        // Find the start of the current line
+        size_t lineStart = 0;
+        for (size_t i = pos; i > 0; --i) {
+            if (str[i - 1] == '\n' || str[i - 1] == '\r') {
+                lineStart = i;
+                break;
+            }
+        }
+        // Check if there's a ' between line start and pos that's not inside a string
+        int quoteCount = 0;
+        for (size_t i = lineStart; i < pos; ++i) {
+            if (str[i] == '"') {
+                quoteCount++;
+            } else if (str[i] == '\'' && quoteCount % 2 == 0) {
+                // Found a comment character outside of a string
+                return true;
+            }
+        }
+        return false;
+    };
+
     // Me.Accessor handling - MUST be done BEFORE generic Me.Property transform!
     // Transform Me.accessor = value -> ClassName_Let_accessor this_, value
     // Transform Me.accessor -> ClassName_Get_accessor(this_)
@@ -287,6 +311,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                     }
                 }
 
+                // Check if inside a VBScript comment (after ' on the same line)
+                if (!skip && isInsideComment(result, matchPos)) {
+                    skip = true;
+                }
+
                 temp += result.substr(lastPos, matchPos - lastPos);
                 if (skip) {
                     temp += match.full_match;  // Keep original
@@ -338,6 +367,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 alreadyTransformed = true;
             }
 
+            // Check if inside a VBScript comment
+            if (!alreadyTransformed && isInsideComment(result, matchPos)) {
+                alreadyTransformed = true;
+            }
+
             // Check if "args" actually start with a VBS keyword - means this is a no-args
             // call followed by a new statement (e.g., "MethodName\nIf x Then" matched wrongly)
             std::string args = (match.groups.size() > 1) ? match.groups[1] : "";
@@ -375,6 +409,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 if (result[i] == '"') quoteCount++;
             }
             if (quoteCount % 2 == 1) {
+                skip = true;
+            }
+
+            // Check if inside a VBScript comment
+            if (!skip && isInsideComment(result, matchPos)) {
                 skip = true;
             }
 
@@ -417,6 +456,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 if (result[i] == '"') quoteCount++;
             }
             if (quoteCount % 2 == 1) {
+                skip = true;
+            }
+
+            // Check if inside a VBScript comment
+            if (!skip && isInsideComment(result, matchPos)) {
                 skip = true;
             }
 

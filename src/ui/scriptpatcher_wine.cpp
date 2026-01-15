@@ -687,19 +687,32 @@ std::string ScriptPatcher::PatchSafeUBoundArrayAccess(const std::string& script)
     // Replace arr(VPX_SafeUBound(arr)) with VPX_SafeGet(arr, VPX_SafeUBound(arr))
     // BUT only when NOT followed by = (i.e., when reading, not writing)
     // This prevents out-of-bounds when VPX_SafeUBound returns -1 for empty arrays
-    // NOTE: RE2 doesn't support backreferences (\1), so match both names and compare in callback
+    // NOTE: RE2 doesn't support backreferences (\1) or negative lookahead (?!),
+    // so we match both names and check for trailing = in the callback
     static const RE2 p(R"((?i)(\w+)\s*\(\s*VPX_SafeUBound\s*\(\s*(\w+)\s*\)\s*\))");
-    r = RE2ReplaceWithCallback(r, p, [](const RE2Match& m) -> std::string {
+    r = RE2ReplaceWithCallback(r, p, [&r](const RE2Match& m) -> std::string {
         std::string arr1 = m.groups.size() > 0 ? m.groups[0] : "";
         std::string arr2 = m.groups.size() > 1 ? m.groups[1] : "";
         // Check if both array names match (case-insensitive)
         std::string lower1 = arr1, lower2 = arr2;
         std::transform(lower1.begin(), lower1.end(), lower1.begin(), ::tolower);
         std::transform(lower2.begin(), lower2.end(), lower2.begin(), ::tolower);
-        if (lower1 == lower2) {
-            return "VPX_SafeGet(" + arr1 + ", VPX_SafeUBound(" + arr2 + "))";
+        if (lower1 != lower2) {
+            return m.full_match;  // Names don't match, keep original
         }
-        return m.full_match;  // Names don't match, keep original
+        // Check if followed by = (assignment) - if so, don't transform
+        // This replicates the original (?!\s*=) negative lookahead
+        size_t afterMatch = m.position + m.length;
+        while (afterMatch < r.length() && (r[afterMatch] == ' ' || r[afterMatch] == '\t')) {
+            afterMatch++;
+        }
+        if (afterMatch < r.length() && r[afterMatch] == '=') {
+            // Check it's not == (comparison)
+            if (afterMatch + 1 >= r.length() || r[afterMatch + 1] != '=') {
+                return m.full_match;  // This is an assignment, keep original
+            }
+        }
+        return "VPX_SafeGet(" + arr1 + ", VPX_SafeUBound(" + arr2 + "))";
     });
     return r;
 }
@@ -1073,6 +1086,53 @@ std::string ScriptPatcher::PatchStringConcatenation(const std::string& script) {
 }
 
 
+// ============================================================================
+// GAME-SPECIFIC SYNTAX FIXES
+// ============================================================================
+
+// Fix missing comma in DMDSettings_Setup calls (Game of Thrones table)
+// INVALID:  DMDSettings_Setup DMDMenu(0) "STRING", ...
+// VALID:    DMDSettings_Setup DMDMenu(0), "STRING", ...
+// The issue is a missing comma after the DMDMenu(x) argument
+std::string ScriptPatcher::PatchDMDSettingsSetupMissingComma(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Check if the pattern exists in the script first
+    bool hasPattern = script.find("DMDSettings_Setup") != std::string::npos;
+    PLOGI.printf("ScriptPatcher: PatchDMDSettingsSetupMissingComma called, hasPattern=%d", hasPattern);
+
+    // Pattern: DMDSettings_Setup followed by DMDMenu(index) then immediately a string literal
+    // without a comma in between. Add the missing comma.
+    // Use simple string replacement instead of regex for reliability
+
+    // Find and replace pattern: DMDSettings_Setup DMDMenu(N) " -> DMDSettings_Setup DMDMenu(N), "
+    size_t pos = 0;
+    while ((pos = r.find("DMDSettings_Setup DMDMenu(", pos)) != std::string::npos) {
+        // Find the closing paren after the index
+        size_t parenStart = pos + strlen("DMDSettings_Setup DMDMenu(");
+        size_t parenEnd = r.find(')', parenStart);
+        if (parenEnd != std::string::npos) {
+            // Check if next non-whitespace char is a quote (missing comma case)
+            size_t afterParen = parenEnd + 1;
+            while (afterParen < r.length() && (r[afterParen] == ' ' || r[afterParen] == '\t')) {
+                afterParen++;
+            }
+            if (afterParen < r.length() && r[afterParen] == '"') {
+                // Insert comma after the closing paren
+                r.insert(parenEnd + 1, ",");
+                count++;
+                PLOGI.printf("ScriptPatcher: Fixed DMDSettings_Setup at pos %zu", pos);
+            }
+        }
+        pos = parenEnd + 1;
+    }
+
+    PLOGI.printf("ScriptPatcher: PatchDMDSettingsSetupMissingComma found %d issues", count);
+    return r;
+}
+
+
 bool ScriptPatcher::UsesSlingshotCorrection(const std::string& script) {
     static const RE2 p(R"((?i)Class\s+(SlingshotCorrection|FlipperPolarity|FlipperPhysics|BumperPhysics))");
     return RE2Search(script, p);
@@ -1162,6 +1222,39 @@ std::string ScriptPatcher::RemoveDuplicateVpmInit(const std::string& script) {
             // Comment out the duplicate instead of removing to preserve line numbers
             result = result.substr(0, pos) + "' [WINE: Removed duplicate] " + result.substr(pos, len) + result.substr(pos + len);
             PLOGI.printf("ScriptPatcher: Commented out duplicate vpmInit at position %zu", pos);
+        }
+    }
+
+    return result;
+}
+
+// ============================================================================
+// WINE BUG WORKAROUND: Fix single-line If...Then...Else...End If syntax
+// Wine VBScript is strict about single-line If syntax - End If is invalid
+// for single-line If statements. Windows VBScript is more lenient.
+// Pattern: If x Then y Else z End If -> If x Then y Else z
+// ============================================================================
+
+std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
+    std::string result = script;
+
+    // Pattern: If ... Then ... Else ... End If (all on same line)
+    // The key is that single-line If statements should NOT have End If
+    // We need to match: If <condition> Then <statement1> Else <statement2> End If
+    // And remove the trailing "End If"
+    static const RE2 singleLineIfElseEndIf(R"((?i)(If\s*\([^)]+\)\s*then\s+[^:\r\n]+\s+Else\s+[^:\r\n]+)\s+End\s+If)");
+
+    auto matches = RE2FindAll(result, singleLineIfElseEndIf);
+    if (!matches.empty()) {
+        PLOGI.printf("ScriptPatcher: Found %zu single-line If...Then...Else...End If patterns to fix", matches.size());
+
+        // Process in reverse order to preserve positions
+        for (auto it = matches.rbegin(); it != matches.rend(); ++it) {
+            // Replace with just the If...Then...Else part (group 1), removing "End If"
+            if (it->groups.size() > 0) {
+                result = result.substr(0, it->position) + it->groups[0] + result.substr(it->position + it->length);
+                PLOGI.printf("ScriptPatcher: Fixed single-line If...End If at position %zu", it->position);
+            }
         }
     }
 

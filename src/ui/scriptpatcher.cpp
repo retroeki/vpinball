@@ -310,6 +310,31 @@ std::string ScriptPatcher::RestoreNativeClasses(const std::string& script,
 // MAIN ENTRY POINT
 // ============================================================================
 
+// Helper to normalize line endings to CRLF (Wine VBScript expects Windows line endings)
+static std::string NormalizeLineEndings(const std::string& script) {
+    std::string result;
+    result.reserve(script.size() + script.size() / 10);  // Reserve extra for potential \n -> \r\n
+
+    for (size_t i = 0; i < script.size(); ++i) {
+        if (script[i] == '\r') {
+            // Check if this is already \r\n
+            if (i + 1 < script.size() && script[i + 1] == '\n') {
+                result += "\r\n";
+                ++i;  // Skip the \n
+            } else {
+                // Standalone \r (old Mac style) -> convert to \r\n
+                result += "\r\n";
+            }
+        } else if (script[i] == '\n') {
+            // Standalone \n (Unix style) -> convert to \r\n
+            result += "\r\n";
+        } else {
+            result += script[i];
+        }
+    }
+    return result;
+}
+
 std::string ScriptPatcher::PatchScript(const std::string& script) {
     // Master switch - disable ALL patching when needed for debugging
     if (!g_patchConfig.enabled) {
@@ -318,6 +343,7 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
     }
 
     std::string result = StripBOM(script);
+
     bool patched = result.length() != script.length();
     bool classEmulationApplied = false;
 
@@ -348,6 +374,24 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         }
     }
 
+    // Fix single-line If...Then...Else...End If syntax (Wine is strict about this)
+    {
+        std::string before = result;
+        result = FixSingleLineIfEndIf(result);
+        if (result != before) {
+            patched = true;
+        }
+    }
+
+    // STEP 0.6: Fix DMDSettings_Setup missing comma (Game of Thrones table)
+    // Some tables have syntax errors with missing commas between arguments
+    {
+        std::string before = result;
+        result = PatchDMDSettingsSetupMissingComma(result);
+        if (result != before) {
+            patched = true;
+        }
+    }
 
     // STEP 1: Extract native classes BEFORE any processing
     // These classes pass Me to external code and must remain 100% native
@@ -450,6 +494,12 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
         result = RestoreNativeClasses(result, nativeClasses);
         PLOGI.printf("ScriptPatcher: Restored %zu native classes", nativeClasses.size());
     }
+
+    // CRITICAL: Normalize line endings to CRLF AFTER all patching is complete
+    // Wine VBScript can fail to parse scripts with mixed line endings (LF + CRLF)
+    // Many patch functions use "\n" in string literals which creates LF-only endings
+    // This must happen LAST to catch all injected code
+    result = NormalizeLineEndings(result);
 
     if (patched) {
         PLOGI.printf("ScriptPatcher: Complete (length=%zu)", result.length());
