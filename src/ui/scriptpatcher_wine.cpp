@@ -1242,7 +1242,12 @@ std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
     // The key is that single-line If statements should NOT have End If
     // We need to match: If <condition> Then <statement1> Else <statement2> End If
     // And remove the trailing "End If"
-    static const RE2 singleLineIfElseEndIf(R"((?i)(If\s*\([^)]+\)\s*then\s+[^:\r\n]+\s+Else\s+[^:\r\n]+)\s+End\s+If)");
+    // Use non-greedy matching and word boundaries:
+    // - \b ensures we match whole keywords
+    // - *? and +? for non-greedy matching
+    // - Handle both parenthesized and non-parenthesized conditions
+    // - Handle missing spaces before/after Else (e.g., "CInt(x)Else")
+    static const RE2 singleLineIfElseEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]*?\bElse\b[^:\r\n]+?)\s+End\s+If)");
 
     auto matches = RE2FindAll(result, singleLineIfElseEndIf);
     if (!matches.empty()) {
