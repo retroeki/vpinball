@@ -901,7 +901,8 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             // Pattern: arrayName(idx).method(args) (parenthesized args)
             // Transform: arrayName(idx).method(args) -> ClassName_method(arrayName(idx), args)
             // Use function call syntax for expression context compatibility
-            RE2 parenArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\s*\\(([^()]*)\\)");
+            // NOTE: Method args may contain nested parens like this_("prop") from property transformation
+            RE2 parenArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)");
 
             result = RE2ReplaceWithCallback(result, parenArgsRegex, [&](const RE2Match& match) -> std::string {
                 std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
@@ -986,6 +987,44 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             });
         }
 
+        // Transform ARRAY property access on array elements: arrayName(idx).arrayProp(i) -> ClassName_arrayProp(i)
+        // Array properties are stored as global arrays, so the object reference is discarded
+        // MUST be processed BEFORE non-array property access!
+        std::unordered_set<std::string> arrayPropertyNames;
+        std::unordered_map<std::string, std::string> arrayPropertyOriginalCase;
+        for (const auto& prop : classDef->properties) {
+            if (!prop.isArray) continue;
+            std::string lowerProp = prop.name;
+            std::transform(lowerProp.begin(), lowerProp.end(), lowerProp.begin(), ::tolower);
+            arrayPropertyNames.insert(lowerProp);
+            arrayPropertyOriginalCase[lowerProp] = prop.name;
+        }
+
+        // Pattern: arrayName(idx).arrayProp(i) -> ClassName_arrayProp(i)
+        RE2 arrayPropRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\.(\\w+)\\s*\\(([^()]*)\\)");
+        result = RE2ReplaceWithCallback(result, arrayPropRegex, [&](const RE2Match& match) -> std::string {
+            std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+            std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
+            std::string propName = match.groups.size() > 2 ? match.groups[2] : "";
+            std::string propIndex = match.groups.size() > 3 ? match.groups[3] : "";
+
+            std::string lowerMatched = matchedArrayName;
+            std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
+            std::string lowerProp = propName;
+            std::transform(lowerProp.begin(), lowerProp.end(), lowerProp.begin(), ::tolower);
+
+            // Check if this is our array AND the property is an array property from our class
+            if (lowerMatched == lowerArrayName && arrayPropertyNames.count(lowerProp) > 0) {
+                std::string origProp = arrayPropertyOriginalCase[lowerProp];
+                PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s(%s) to global array access %s_%s(%s)",
+                            matchedArrayName.c_str(), indexExpr.c_str(), propName.c_str(), propIndex.c_str(),
+                            className.c_str(), origProp.c_str(), propIndex.c_str());
+                return className + "_" + origProp + "(" + propIndex + ")";
+            } else {
+                return match.full_match;
+            }
+        });
+
         // Build a set of property names (lowercase) for quick lookup
         std::unordered_set<std::string> propertyNames;
         std::unordered_map<std::string, std::string> propertyOriginalCase;
@@ -1029,7 +1068,8 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
             // Property Let WITH accessor params: arrayName(idx).accessor(param) = value -> ClassName_Let_accessor arrayName(idx), param, value
             // MUST be processed BEFORE the no-param pattern!
-            RE2 letWithParamsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*)\\)\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
+            // NOTE: Accessor params may contain nested parens like this_("prop") from property transformation
+            RE2 letWithParamsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
             result = RE2ReplaceWithCallback(result, letWithParamsRegex, [&](const RE2Match& match) -> std::string {
                 std::string prefix = match.groups.size() > 0 ? match.groups[0] : "";
                 std::string matchedArrayName = match.groups.size() > 1 ? match.groups[1] : "";
@@ -1089,7 +1129,8 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
 
             // Property Get WITH params: arrayName(idx).accessor(params) -> ClassName_Get_accessor(arrayName(idx), params)
             // MUST be processed BEFORE the no-params pattern!
-            RE2 getWithParamsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*)\\)");
+            // NOTE: Accessor params may contain nested parens like this_("prop") from property transformation
+            RE2 getWithParamsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*(?:\\([^()]*\\)[^()]*)*)\\)");
             result = RE2ReplaceWithCallback(result, getWithParamsRegex, [&](const RE2Match& match) -> std::string {
                 std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
                 std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";

@@ -66,6 +66,8 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
     static const RE2 classEndPattern(R"((?i)^\s*End\s+Class\s*$)");
     // RE2 doesn't support negative lookahead, so we match broadly and filter in code
     static const RE2 propertyDeclPattern(R"((?i)^\s*(Public|Private)\s+(.+)$)");
+    // Dim declarations at class level are private members (must be handled separately from method-level Dim)
+    static const RE2 dimDeclPattern(R"((?i)^\s*Dim\s+(.+)$)");
     static const RE2 methodStartPattern(R"((?i)^\s*(Public\s+|Private\s+)?(Default\s+)?(Sub|Function)\s+(\w+)(?:\s*\(([^)]*)\))?)");
     static const RE2 methodEndSubPattern(R"((?i)^\s*End\s+Sub\s*$)");
     static const RE2 methodEndFuncPattern(R"((?i)^\s*End\s+Function\s*$)");
@@ -297,6 +299,45 @@ std::vector<VBClassDefinition> ScriptPatcher::ParseClassDefinitions(const std::s
                     prop.isArray = isArray;
                     prop.arraySize = arraySize;
                     currentClass.properties.push_back(prop);
+                }
+            }
+        } else if (RE2::PartialMatch(line, dimDeclPattern, &cap1)) {
+            // Dim at class level (not inside method/accessor) = private member
+            // This only triggers when inMethod=false and inAccessor=false (due to earlier continues)
+            std::string varList = cap1;
+            // Strip VBScript comments (everything after ')
+            size_t commentPos = varList.find('\'');
+            if (commentPos != std::string::npos) {
+                varList = varList.substr(0, commentPos);
+            }
+            std::istringstream varStream(varList);
+            std::string varToken;
+            while (std::getline(varStream, varToken, ',')) {
+                varToken = Trim(varToken);
+                bool isArray = false;
+                int arraySize = -1;
+                size_t parenPos = varToken.find('(');
+                if (parenPos != std::string::npos) {
+                    isArray = true;
+                    size_t closeParenPos = varToken.find(')', parenPos);
+                    if (closeParenPos != std::string::npos && closeParenPos > parenPos + 1) {
+                        std::string sizeStr = Trim(varToken.substr(parenPos + 1, closeParenPos - parenPos - 1));
+                        if (!sizeStr.empty() && std::all_of(sizeStr.begin(), sizeStr.end(), ::isdigit)) {
+                            arraySize = std::stoi(sizeStr);
+                        }
+                    }
+                    varToken = varToken.substr(0, parenPos);
+                }
+                varToken = Trim(varToken);
+                if (!varToken.empty()) {
+                    VBClassProperty prop;
+                    prop.name = varToken;
+                    prop.isPublic = false;  // Dim = private
+                    prop.isArray = isArray;
+                    prop.arraySize = arraySize;
+                    currentClass.properties.push_back(prop);
+                    PLOGI.printf("ScriptPatcher: Class '%s' Dim property '%s' (array=%d, size=%d)",
+                                currentClass.name.c_str(), prop.name.c_str(), isArray, arraySize);
                 }
             }
         } else if (inClass && currentClass.name == "VPMLampUpdater") {
