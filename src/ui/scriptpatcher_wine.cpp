@@ -1248,10 +1248,18 @@ std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
     // IMPORTANT: Use [ \t]+ instead of \s+ before "End If" to ensure we only
     // match End If on the SAME line. Using \s+ would match across newlines and
     // incorrectly remove End If that belongs to an outer multi-line If block.
+    //
+    // IMPORTANT: Use (?:[^:\r\n"]|"[^"]*")* to match content that may contain
+    // colons INSIDE string literals. Plain [^:] would fail on:
+    //   MsgBox "Error: something" End If
+    // because it stops at the colon inside the string.
+
+    // Helper pattern for content that may contain colons in strings:
+    // (?:[^:\r\n"]|"[^"]*")* matches non-colon/newline/quote chars OR quoted strings
 
     // Pattern 1: If ... Then ... Else ... End If (with Else, same line)
     // Example: If x > 0 Then y = 1 Else y = 0 End If
-    static const RE2 singleLineIfElseEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]*?\bElse\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
+    static const RE2 singleLineIfElseEndIf(R"((?i)(If\b(?:[^:\r\n"]|"[^"]*")*?\bThen\b(?:[^:\r\n"]|"[^"]*")*?\bElse\b(?:[^:\r\n"]|"[^"]*")+?)[ \t]+End[ \t]+If)");
 
     auto matches = RE2FindAll(result, singleLineIfElseEndIf);
     if (!matches.empty()) {
@@ -1265,9 +1273,9 @@ std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
     }
 
     // Pattern 2: If ... Then ... End If (without Else, same line)
-    // Example: If TypeName(x) <> "String" Then MsgBox "error" End If
+    // Example: If TypeName(x) <> "String" Then MsgBox "error: details" End If
     // Must run AFTER Pattern 1 so Else cases are already handled
-    static const RE2 singleLineIfThenEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
+    static const RE2 singleLineIfThenEndIf(R"((?i)(If\b(?:[^:\r\n"]|"[^"]*")*?\bThen\b(?:[^:\r\n"]|"[^"]*")+?)[ \t]+End[ \t]+If)");
 
     matches = RE2FindAll(result, singleLineIfThenEndIf);
     if (!matches.empty()) {
