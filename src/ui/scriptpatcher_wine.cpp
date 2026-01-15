@@ -1238,16 +1238,21 @@ std::string ScriptPatcher::RemoveDuplicateVpmInit(const std::string& script) {
 std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
     std::string result = script;
 
-    // Pattern: If ... Then ... Else ... End If (all on same line)
+    // Pattern: If ... Then ... Else ... End If (all on SAME line)
     // The key is that single-line If statements should NOT have End If
     // We need to match: If <condition> Then <statement1> Else <statement2> End If
     // And remove the trailing "End If"
+    //
+    // IMPORTANT: Use [ \t]+ instead of \s+ before "End If" to ensure we only
+    // match End If on the SAME line. Using \s+ would match across newlines and
+    // incorrectly remove End If that belongs to an outer multi-line If block.
+    //
     // Use non-greedy matching and word boundaries:
     // - \b ensures we match whole keywords
     // - *? and +? for non-greedy matching
     // - Handle both parenthesized and non-parenthesized conditions
     // - Handle missing spaces before/after Else (e.g., "CInt(x)Else")
-    static const RE2 singleLineIfElseEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]*?\bElse\b[^:\r\n]+?)\s+End\s+If)");
+    static const RE2 singleLineIfElseEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]*?\bElse\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
 
     auto matches = RE2FindAll(result, singleLineIfElseEndIf);
     if (!matches.empty()) {
