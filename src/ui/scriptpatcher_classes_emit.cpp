@@ -527,6 +527,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             // Transform: accessor(params) -> ClassName_Get_accessor(this_, params)
             // Be careful not to match our own transformed Let calls
             // Skip if preceded by dot (accessing accessor on another object)
+            // Skip if followed by = (that's an assignment, handled by Let transformation)
             RE2 getRegex("(?i)\\b" + escapedName + "\\s*\\(([^)]+)\\)");
 
             // Use a callback-style replacement to avoid matching already-transformed calls
@@ -547,6 +548,18 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 if (!skip && matchPos > classDef.name.length() + 1) {
                     std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
                     if (before.find(classDef.name + "_") != std::string::npos) {
+                        skip = true;
+                    }
+                }
+
+                // Skip if followed by = (this is an assignment, Let transformation handles it)
+                // e.g., state(idx) = value should NOT become Get_state, Let handles it
+                if (!skip) {
+                    size_t afterPos = matchPos + match.length;
+                    while (afterPos < result.length() && (result[afterPos] == ' ' || result[afterPos] == '\t')) {
+                        afterPos++;
+                    }
+                    if (afterPos < result.length() && result[afterPos] == '=') {
                         skip = true;
                     }
                 }
