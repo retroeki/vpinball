@@ -45,13 +45,29 @@ std::string ScriptPatcher::TransformNewStatements(const std::string& script,
 
         // Pattern 3: Constructor with args (default method): (new ClassName)(args)
         // Transform: Set x = (new ClassName)(args) -> Set x = ClassName_defaultMethod(ClassName_Create(), args)
+        // If args is empty, omit the comma: ClassName_defaultMethod(ClassName_Create())
         auto it = defaultMethods.find(className);
         if (it != defaultMethods.end()) {
             std::string defaultMethodName = it->second;
             // Pattern: (new ClassName)(args) - with parentheses around "new ClassName"
             RE2 newPattern3("(?i)\\(\\s*new\\s+" + escapedClassName + "\\s*\\)\\s*\\(([^)]*)\\)");
-            result = RE2Replace(result, newPattern3,
-                className + "_" + defaultMethodName + "(" + className + "_Create(), \\1)");
+            result = RE2ReplaceWithCallback(result, newPattern3, [&](const RE2Match& m) -> std::string {
+                std::string args = m.groups.size() > 0 ? m.groups[0] : "";
+                // Trim whitespace from args
+                size_t start = args.find_first_not_of(" \t\r\n");
+                size_t end = args.find_last_not_of(" \t\r\n");
+                if (start == std::string::npos) {
+                    args.clear();  // All whitespace
+                } else {
+                    args = args.substr(start, end - start + 1);
+                }
+                // If args is empty, don't add comma
+                if (args.empty()) {
+                    return className + "_" + defaultMethodName + "(" + className + "_Create())";
+                } else {
+                    return className + "_" + defaultMethodName + "(" + className + "_Create(), " + args + ")";
+                }
+            });
         }
 
         // Pattern 1: Simple variable assignment: Set varName = New ClassName
@@ -465,6 +481,59 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
                             varName.c_str(), cls.name.c_str());
             }
         }
+
+        // Find IMPLICIT scalar properties: varName = value (assignment without declaration)
+        // Look for patterns at statement boundaries: start of line, after colon, after Then/Else
+        // These are class-level variables used without Public/Private declaration
+        static const RE2 assignmentPattern(R"((?im)(^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)([a-zA-Z_]\w*)\s*=\s*[^=])");
+        auto assignMatches = RE2FindAll(allBodies, assignmentPattern);
+
+        // Build set of method names and method parameters to exclude
+        std::unordered_set<std::string> excludeNames;
+        for (const auto& m : cls.methods) {
+            std::string lowerMethod = m.name;
+            std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
+            excludeNames.insert(lowerMethod);
+            for (const auto& p : m.params) {
+                std::string lowerParam = p;
+                std::transform(lowerParam.begin(), lowerParam.end(), lowerParam.begin(), ::tolower);
+                excludeNames.insert(lowerParam);
+            }
+        }
+        for (const auto& a : cls.accessors) {
+            for (const auto& p : a.params) {
+                std::string lowerParam = p;
+                std::transform(lowerParam.begin(), lowerParam.end(), lowerParam.begin(), ::tolower);
+                excludeNames.insert(lowerParam);
+            }
+        }
+        // Common VBScript/VPX keywords and objects to exclude
+        static const std::unordered_set<std::string> vbsKeywords = {
+            "i", "j", "k", "n", "x", "y", "z", "tmp", "temp", "result", "ret", "err",
+            "lockwall", "lockpost", "movesword", "true", "false", "nothing", "empty", "null"
+        };
+        for (const auto& kw : vbsKeywords) excludeNames.insert(kw);
+
+        for (const auto& match : assignMatches) {
+            std::string varName = match.groups.size() > 1 ? match.groups[1] : "";
+            std::string lowerName = varName;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+
+            // Skip if already known or excluded
+            if (existingProps.find(lowerName) != existingProps.end()) continue;
+            if (excludeNames.find(lowerName) != excludeNames.end()) continue;
+
+            // Add as implicit scalar property
+            VBClassProperty implicitProp;
+            implicitProp.name = varName;
+            implicitProp.isPublic = false;
+            implicitProp.isArray = false;
+            implicitProp.arraySize = -1;
+            cls.properties.push_back(implicitProp);
+            existingProps.insert(lowerName);
+            PLOGI.printf("ScriptPatcher: Added implicit scalar property '%s' in class '%s' (from assignment)",
+                        varName.c_str(), cls.name.c_str());
+        }
     }
 
     // Filter out classes that use vpmTimer.addResetObj Me - these pass 'Me' to external
@@ -824,6 +893,73 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
         for (const auto& m : classDef->methods) {
             std::string escapedMethod = EscapeRegex(m.name);
 
+            // IMPORTANT: Process patterns in order: paren-args, space-args, no-args
+            // The no-args pattern would otherwise match everything and leave args dangling.
+
+            // Pattern: arrayName(idx).method(args) (parenthesized args)
+            // Transform: arrayName(idx).method(args) -> ClassName_method(arrayName(idx), args)
+            // Use function call syntax for expression context compatibility
+            RE2 parenArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\s*\\(([^()]*)\\)");
+
+            result = RE2ReplaceWithCallback(result, parenArgsRegex, [&](const RE2Match& match) -> std::string {
+                std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
+                std::string args = match.groups.size() > 2 ? match.groups[2] : "";
+
+                std::string lowerMatched = matchedArrayName;
+                std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
+
+                if (lowerMatched == lowerArrayName) {
+                    PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s(paren args) to method call",
+                                matchedArrayName.c_str(), indexExpr.c_str(), m.name.c_str());
+                    // Use function call syntax (parens) for expression context compatibility
+                    if (args.empty()) {
+                        return className + "_" + m.name + "(" + matchedArrayName + "(" + indexExpr + "))";
+                    }
+                    return className + "_" + m.name + "(" + matchedArrayName + "(" + indexExpr + "), " + args + ")";
+                } else {
+                    return match.full_match;
+                }
+            });
+
+            // Pattern: arrayName(idx).method arg1, arg2, ... (space-separated args)
+            // Transform: arrayName(idx).method args -> ClassName_method arrayName(idx), args
+            // Match: word(expr).method followed by space and non-empty args until colon/newline
+            // IMPORTANT: First char of args must NOT be whitespace, quote, equals, colon, or newline
+            // Otherwise RE2 may match fewer spaces to capture whitespace as args start
+            RE2 spaceArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "[ \\t]+([^'=:\\r\\n\\s][^:\\r\\n]*)");
+
+            result = RE2ReplaceWithCallback(result, spaceArgsRegex, [&](const RE2Match& match) -> std::string {
+                std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
+                std::string args = match.groups.size() > 2 ? match.groups[2] : "";
+
+                std::string lowerMatched = matchedArrayName;
+                std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
+
+                if (lowerMatched == lowerArrayName) {
+                    // Trim trailing whitespace from args
+                    size_t endPos = args.find_last_not_of(" \t\r\n");
+                    if (endPos != std::string::npos) {
+                        args = args.substr(0, endPos + 1);
+                    } else {
+                        args.clear();  // Args was all whitespace
+                    }
+                    // Transform: arrayName(idx).method args -> ClassName_method arrayName(idx), args
+                    // Only add comma if args is not empty
+                    if (args.empty()) {
+                        PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s (no args) to method call",
+                                    matchedArrayName.c_str(), indexExpr.c_str(), m.name.c_str());
+                        return className + "_" + m.name + " " + matchedArrayName + "(" + indexExpr + ")";
+                    }
+                    PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s with args to method call",
+                                matchedArrayName.c_str(), indexExpr.c_str(), m.name.c_str());
+                    return className + "_" + m.name + " " + matchedArrayName + "(" + indexExpr + "), " + args;
+                } else {
+                    return match.full_match;
+                }
+            });
+
             // Pattern: arrayName(idx).method (no args, not followed by = or ()
             // RE2 doesn't support (?!), so we capture what follows and check in callback
             RE2 noArgsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedMethod + "\\b(\\s*[=(])?");
@@ -889,8 +1025,42 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             if (!EqualsIgnoreCase(acc.type, "Let") && !EqualsIgnoreCase(acc.type, "Set")) continue;
             std::string escapedAcc = EscapeRegex(acc.name);
 
-            // Property Let: arrayName(idx).accessor = value -> ClassName_Let_accessor arrayName(idx), value
-            // RE2 doesn't support lookahead, capture trailing boundary
+            // Property Let WITH accessor params: arrayName(idx).accessor(param) = value -> ClassName_Let_accessor arrayName(idx), param, value
+            // MUST be processed BEFORE the no-param pattern!
+            RE2 letWithParamsRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*)\\)\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
+            result = RE2ReplaceWithCallback(result, letWithParamsRegex, [&](const RE2Match& match) -> std::string {
+                std::string prefix = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string matchedArrayName = match.groups.size() > 1 ? match.groups[1] : "";
+                std::string indexExpr = match.groups.size() > 2 ? match.groups[2] : "";
+                std::string accParams = match.groups.size() > 3 ? match.groups[3] : "";
+                std::string value = match.groups.size() > 4 ? match.groups[4] : "";
+                std::string trailing = match.groups.size() > 5 ? match.groups[5] : "";
+
+                std::string lowerMatched = matchedArrayName;
+                std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
+
+                if (lowerMatched == lowerArrayName) {
+                    PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s(%s) = to setter call with params",
+                                matchedArrayName.c_str(), indexExpr.c_str(), acc.name.c_str(), accParams.c_str());
+                    // Trim whitespace from accParams
+                    size_t start = accParams.find_first_not_of(" \t");
+                    size_t end = accParams.find_last_not_of(" \t");
+                    if (start != std::string::npos) {
+                        accParams = accParams.substr(start, end - start + 1);
+                    } else {
+                        accParams.clear();
+                    }
+                    if (accParams.empty()) {
+                        return prefix + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + indexExpr + "), " + value + trailing;
+                    } else {
+                        return prefix + className + "_Let_" + acc.name + " " + matchedArrayName + "(" + indexExpr + "), " + accParams + ", " + value + trailing;
+                    }
+                } else {
+                    return match.full_match;
+                }
+            });
+
+            // Property Let WITHOUT accessor params: arrayName(idx).accessor = value -> ClassName_Let_accessor arrayName(idx), value
             RE2 letRegex("(?im)(^[ \\t]*|:[ \\t]*|\\bThen[ \\t]+|\\bElse[ \\t]+)(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*=\\s*([^:\\r\\n]+?)([ \\t]*(?::|\\r|\\n|$))");
             result = RE2ReplaceWithCallback(result, letRegex, [&](const RE2Match& match) -> std::string {
                 std::string prefix = match.groups.size() > 0 ? match.groups[0] : "";
@@ -915,7 +1085,39 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             if (!EqualsIgnoreCase(acc.type, "Get")) continue;
             std::string escapedAcc = EscapeRegex(acc.name);
 
-            // Property Get: arrayName(idx).accessor -> ClassName_Get_accessor(arrayName(idx))
+            // Property Get WITH params: arrayName(idx).accessor(params) -> ClassName_Get_accessor(arrayName(idx), params)
+            // MUST be processed BEFORE the no-params pattern!
+            RE2 getWithParamsRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\s*\\(([^()]*)\\)");
+            result = RE2ReplaceWithCallback(result, getWithParamsRegex, [&](const RE2Match& match) -> std::string {
+                std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
+                std::string indexExpr = match.groups.size() > 1 ? match.groups[1] : "";
+                std::string accParams = match.groups.size() > 2 ? match.groups[2] : "";
+
+                std::string lowerMatched = matchedArrayName;
+                std::transform(lowerMatched.begin(), lowerMatched.end(), lowerMatched.begin(), ::tolower);
+
+                if (lowerMatched == lowerArrayName) {
+                    PLOGI.printf("ScriptPatcher: Transformed %s(%s).%s(%s) to getter call with params",
+                                matchedArrayName.c_str(), indexExpr.c_str(), acc.name.c_str(), accParams.c_str());
+                    // Trim whitespace from accParams
+                    size_t start = accParams.find_first_not_of(" \t");
+                    size_t end = accParams.find_last_not_of(" \t");
+                    if (start != std::string::npos) {
+                        accParams = accParams.substr(start, end - start + 1);
+                    } else {
+                        accParams.clear();
+                    }
+                    if (accParams.empty()) {
+                        return className + "_Get_" + acc.name + "(" + matchedArrayName + "(" + indexExpr + "))";
+                    } else {
+                        return className + "_Get_" + acc.name + "(" + matchedArrayName + "(" + indexExpr + "), " + accParams + ")";
+                    }
+                } else {
+                    return match.full_match;
+                }
+            });
+
+            // Property Get WITHOUT params: arrayName(idx).accessor -> ClassName_Get_accessor(arrayName(idx))
             RE2 getRegex("(?i)\\b(\\w+)\\s*\\(([^()]+)\\)\\." + escapedAcc + "\\b");
             result = RE2ReplaceWithCallback(result, getRegex, [&](const RE2Match& match) -> std::string {
                 std::string matchedArrayName = match.groups.size() > 0 ? match.groups[0] : "";
@@ -951,6 +1153,119 @@ std::string ScriptPatcher::EmulateClasses(const std::string& script) {
             });
         }
     }
+
+    // ============================================================================
+    // CHAINED ACCESSOR PATTERN FIX (MUST RUN LAST - after all other transforms!)
+    // ============================================================================
+    // Handle patterns like: cHouse_Get_BattleState(...).SetCompletedWithDireWolf = True
+    // These occur when a Get accessor returns another class object, and we try to
+    // access a Let accessor on that returned object.
+    // Transform to: cBattleState_Let_SetCompletedWithDireWolf cHouse_Get_BattleState(...), True
+
+    // Build map of Let/Set accessor names to their owning class
+    std::unordered_map<std::string, std::string> letAccessorToClass;  // lowercase accName -> className
+    for (const auto& cls : classes) {
+        for (const auto& acc : cls.accessors) {
+            if (EqualsIgnoreCase(acc.type, "Let") || EqualsIgnoreCase(acc.type, "Set")) {
+                std::string lowerAcc = acc.name;
+                std::transform(lowerAcc.begin(), lowerAcc.end(), lowerAcc.begin(), ::tolower);
+                letAccessorToClass[lowerAcc] = cls.name;
+            }
+        }
+    }
+
+    // Build map of method names to their owning class
+    std::unordered_map<std::string, std::string> chainedMethodMap;  // lowercase methodName -> className
+    for (const auto& cls : classes) {
+        for (const auto& method : cls.methods) {
+            std::string lowerMethod = method.name;
+            std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
+            chainedMethodMap[lowerMethod] = cls.name;
+        }
+    }
+
+    // Find patterns: cXXX_Get_YYY(...).ZZZ = value where ... may have nested parens
+    // Use [^()]* for paren matching to allow quotes inside (needed for ExecuteGlobal templates)
+    RE2 chainedLetRegex(R"((?im)(^[ \t]*|:[ \t]*|\bThen[ \t]+|\bElse[ \t]+)(c\w+_Get_\w+\([^()]*(?:\([^()]*\)[^()]*)*\))\.(\w+)\s*=\s*([^:\r\n]+?)([ \t]*(?::|'|\r|\n|$)))");
+    result = RE2ReplaceWithCallback(result, chainedLetRegex, [&](const RE2Match& m) -> std::string {
+        std::string prefix = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string getterCall = m.groups.size() > 1 ? m.groups[1] : "";
+        std::string chainedAcc = m.groups.size() > 2 ? m.groups[2] : "";
+        std::string value = m.groups.size() > 3 ? m.groups[3] : "";
+        std::string trailing = m.groups.size() > 4 ? m.groups[4] : "";
+
+        std::string lowerChained = chainedAcc;
+        std::transform(lowerChained.begin(), lowerChained.end(), lowerChained.begin(), ::tolower);
+
+        auto it = letAccessorToClass.find(lowerChained);
+        if (it != letAccessorToClass.end()) {
+            const std::string& targetClass = it->second;
+            PLOGI.printf("ScriptPatcher: Transformed chained Let accessor %s.%s to %s_Let_%s",
+                        getterCall.c_str(), chainedAcc.c_str(), targetClass.c_str(), chainedAcc.c_str());
+            return prefix + targetClass + "_Let_" + chainedAcc + " " + getterCall + ", " + value + trailing;
+        }
+        return m.full_match;
+    });
+
+    // Find patterns: cXXX_Get_YYY(...).MethodName args (space-separated args)
+    // IMPORTANT: Use function call syntax (parens) not sub call syntax (space)
+    // because the result may be used in expression context (after &, +, etc.)
+    // - Paren matching uses [^()]* to allow quotes inside (needed for ExecuteGlobal templates)
+    // - Args capture uses [^':\r\n\"]* to stop at comments (') and quotes (")
+    RE2 chainedMethodArgsRegex(R"((?i)(c\w+_Get_\w+\([^()]*(?:\([^()]*\)[^()]*)*\))\.(\w+)[ \t]+([^'=:\r\n\s\"][^':\r\n\"]*))");
+    result = RE2ReplaceWithCallback(result, chainedMethodArgsRegex, [&](const RE2Match& m) -> std::string {
+        std::string getterCall = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string chainedMethod = m.groups.size() > 1 ? m.groups[1] : "";
+        std::string args = m.groups.size() > 2 ? m.groups[2] : "";
+
+        std::string lowerMethod = chainedMethod;
+        std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
+
+        auto it = chainedMethodMap.find(lowerMethod);
+        if (it != chainedMethodMap.end()) {
+            const std::string& targetClass = it->second;
+            size_t endPos = args.find_last_not_of(" \t\r\n");
+            if (endPos != std::string::npos) {
+                args = args.substr(0, endPos + 1);
+            }
+            PLOGI.printf("ScriptPatcher: Transformed chained method %s.%s to %s_%s",
+                        getterCall.c_str(), chainedMethod.c_str(), targetClass.c_str(), chainedMethod.c_str());
+            // Use function call syntax (parens) for expression context compatibility
+            return targetClass + "_" + chainedMethod + "(" + getterCall + ", " + args + ")";
+        }
+        return m.full_match;
+    });
+
+    // Find patterns: cXXX_Get_YYY(...).MethodName (no args)
+    // IMPORTANT: Use function call syntax (parens) for expression context compatibility
+    // - Paren matching uses [^()]* to allow quotes inside (needed for ExecuteGlobal templates)
+    RE2 chainedMethodNoArgsRegex(R"((?i)(c\w+_Get_\w+\([^()]*(?:\([^()]*\)[^()]*)*\))\.(\w+)\b)");
+    result = RE2ReplaceWithCallback(result, chainedMethodNoArgsRegex, [&](const RE2Match& m) -> std::string {
+        std::string getterCall = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string chainedMethod = m.groups.size() > 1 ? m.groups[1] : "";
+
+        // Check what follows - skip if ( or = follows
+        size_t afterPos = m.position + m.length;
+        while (afterPos < result.length() && (result[afterPos] == ' ' || result[afterPos] == '\t')) {
+            afterPos++;
+        }
+        if (afterPos < result.length() && (result[afterPos] == '(' || result[afterPos] == '=')) {
+            return m.full_match;  // Let other patterns handle this
+        }
+
+        std::string lowerMethod = chainedMethod;
+        std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
+
+        auto chainedIt = chainedMethodMap.find(lowerMethod);
+        if (chainedIt != chainedMethodMap.end()) {
+            const std::string& targetClass = chainedIt->second;
+            PLOGI.printf("ScriptPatcher: Transformed chained method %s.%s (no args) to %s_%s",
+                        getterCall.c_str(), chainedMethod.c_str(), targetClass.c_str(), chainedMethod.c_str());
+            // Use function call syntax (parens) for expression context compatibility
+            return targetClass + "_" + chainedMethod + "(" + getterCall + ")";
+        }
+        return m.full_match;
+    });
 
     return result;
 }

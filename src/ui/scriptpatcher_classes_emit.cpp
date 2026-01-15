@@ -66,9 +66,62 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         return paramNames.count(lower) > 0;
     };
 
-    // Me.Property -> this_("Property")
+    // Build sets of accessor names for quick lookup
+    std::unordered_set<std::string> accessorNamesLower;
+    for (const auto& acc : classDef.accessors) {
+        std::string lower = acc.name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        accessorNamesLower.insert(lower);
+    }
+
+    // Me.Accessor handling - MUST be done BEFORE generic Me.Property transform!
+    // Transform Me.accessor = value -> ClassName_Let_accessor this_, value
+    // Transform Me.accessor -> ClassName_Get_accessor(this_)
+    for (const auto& accessor : classDef.accessors) {
+        std::string escapedName = EscapeRegex(accessor.name);
+
+        if (EqualsIgnoreCase(accessor.type, "Let") || EqualsIgnoreCase(accessor.type, "Set")) {
+            // Me.accessor = value -> ClassName_Let_accessor this_, value
+            // IMPORTANT: Use non-greedy capture and stop at Else/Then/colon/comment/newline
+            // to handle: If ... Then Me.X = True Else Me.X = False
+            RE2 meLetRegex("(?i)\\bMe\\." + escapedName + "\\s*=\\s*([^:\\r\\n]+?)([ \\t]+(?:Else|Then)\\b|[ \\t]*(?::|'|\\r|\\n|$))");
+            result = RE2Replace(result, meLetRegex,
+                classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, \\1\\2");
+        }
+
+        if (EqualsIgnoreCase(accessor.type, "Get")) {
+            // Me.accessor -> ClassName_Get_accessor(this_)
+            // Must not be followed by = (that's handled by Let above)
+            RE2 meGetRegex("(?i)\\bMe\\." + escapedName + "\\b");
+            result = RE2ReplaceWithCallback(result, meGetRegex, [&](const RE2Match& m) -> std::string {
+                // Check if followed by = (already handled by Let transform)
+                size_t afterPos = m.position + m.length;
+                while (afterPos < result.length() && (result[afterPos] == ' ' || result[afterPos] == '\t')) {
+                    afterPos++;
+                }
+                if (afterPos < result.length() && result[afterPos] == '=') {
+                    return m.full_match;  // Keep original - Let will handle it
+                }
+                return classDef.name + "_Get_" + accessor.name + "(this_)";
+            });
+        }
+    }
+
+    // Me.Property -> this_("Property") - ONLY for non-accessor properties
+    // Accessors were already handled above
     static const RE2 meDotPattern(R"((?i)\bMe\.(\w+))");
-    result = RE2Replace(result, meDotPattern, "this_(\"\\1\")");
+    result = RE2ReplaceWithCallback(result, meDotPattern, [&](const RE2Match& m) -> std::string {
+        std::string propName = m.groups.size() > 0 ? m.groups[0] : "";
+        std::string lowerProp = propName;
+        std::transform(lowerProp.begin(), lowerProp.end(), lowerProp.begin(), ::tolower);
+
+        // Skip if this is an accessor (already transformed above)
+        if (accessorNamesLower.count(lowerProp) > 0) {
+            return m.full_match;  // Keep original - shouldn't happen since accessors handled above
+        }
+        return "this_(\"" + propName + "\")";
+    });
+
     // Standalone Me -> this_
     // Note: Me.Property already handled above, so remaining Me won't be followed by dot
     static const RE2 mePattern(R"((?i)\bMe\b)");
@@ -148,8 +201,11 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                 size_t aLastPos = 0;
                 for (const auto& amatch : matches) {
                     size_t aMatchPos = amatch.position;
+                    // Skip if this property name matches a method parameter
+                    // e.g., Sub Setup(Name, ...) with property Name - don't transform parameter Name
+                    bool aSkip = isMethodParam(prop.name);
                     // Check if preceded by dot
-                    bool aSkip = (aMatchPos > 0 && result[aMatchPos - 1] == '.');
+                    if (!aSkip) aSkip = (aMatchPos > 0 && result[aMatchPos - 1] == '.');
                     assignTemp += result.substr(aLastPos, aMatchPos - aLastPos);
                     if (aSkip) {
                         assignTemp += amatch.full_match;  // Keep original
@@ -173,9 +229,12 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             for (const auto& match : matches) {
                 size_t matchPos = match.position;
 
+                // Skip if this property name matches a method parameter
+                // e.g., Sub Setup(Name, ...) with property Name - don't transform parameter Name
+                bool skip = isMethodParam(prop.name);
+
                 // Check if this is inside this_("...") - already transformed
-                bool skip = false;
-                if (matchPos >= 7) {
+                if (!skip && matchPos >= 7) {
                     std::string before = result.substr(matchPos - 7, 7);
                     if (before == "this_(\"") {
                         skip = true;
@@ -188,6 +247,31 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
                     char charBefore = result[matchPos - 1];
                     if (charBefore == '.') {
                         skip = true;
+                    }
+                }
+
+                // Check if inside a Dim statement - don't transform local variable declarations
+                // e.g., "Dim a1, a2" should NOT become "Dim this_("a1"), this_("a2")"
+                if (!skip && matchPos >= 4) {
+                    // Find the start of the current statement (after last : or newline)
+                    size_t stmtStart = 0;
+                    for (size_t i = matchPos; i > 0; --i) {
+                        char c = result[i - 1];
+                        if (c == ':' || c == '\n' || c == '\r') {
+                            stmtStart = i;
+                            break;
+                        }
+                    }
+                    std::string stmt = result.substr(stmtStart, matchPos - stmtStart);
+                    // Check if statement starts with Dim (case-insensitive)
+                    size_t firstNonSpace = stmt.find_first_not_of(" \t");
+                    if (firstNonSpace != std::string::npos && firstNonSpace + 3 < stmt.length()) {
+                        std::string keyword = stmt.substr(firstNonSpace, 4);
+                        // Convert to lowercase for comparison
+                        for (char& c : keyword) c = std::tolower(c);
+                        if (keyword == "dim " || keyword == "dim\t") {
+                            skip = true;  // Inside Dim statement
+                        }
                     }
                 }
 
@@ -351,15 +435,40 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
     // Transform accessor calls within method bodies
     // Property Let: accessor(params) = value -> ClassName_Let_accessor this_, params, value
     // Property Get: accessor(params) -> ClassName_Get_accessor(this_, params)
+    // IMPORTANT: Skip if preceded by a dot - that means it's being called on a different object!
     for (const auto& accessor : classDef.accessors) {
         std::string escapedName = EscapeRegex(accessor.name);
 
         if (EqualsIgnoreCase(accessor.type, "Let") || EqualsIgnoreCase(accessor.type, "Set")) {
             // Transform: accessor(params) = value -> ClassName_Let_accessor this_, params, value
-            //// Pattern: accessor(params) = value
+            // Skip if preceded by dot (accessing accessor on another object)
             RE2 letRegex("(?i)\\b" + escapedName + "\\s*\\(([^)]+)\\)\\s*=\\s*(.+)");
-            result = RE2Replace(result, letRegex,
-                classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, \\1, \\2");
+
+            std::string letTemp;
+            auto letMatches = RE2FindAll(result, letRegex);
+            size_t letLastPos = 0;
+
+            for (const auto& match : letMatches) {
+                size_t matchPos = match.position;
+                bool skip = false;
+
+                // Skip if preceded by a dot (means obj.accessor, not standalone accessor)
+                if (matchPos > 0 && result[matchPos - 1] == '.') {
+                    skip = true;
+                }
+
+                letTemp += result.substr(letLastPos, matchPos - letLastPos);
+                if (skip) {
+                    letTemp += match.full_match;
+                } else {
+                    std::string params = match.groups.size() > 0 ? match.groups[0] : "";
+                    std::string value = match.groups.size() > 1 ? match.groups[1] : "";
+                    letTemp += classDef.name + "_" + accessor.type + "_" + accessor.name + " this_, " + params + ", " + value;
+                }
+                letLastPos = matchPos + match.length;
+            }
+            letTemp += result.substr(letLastPos);
+            if (!letTemp.empty()) result = letTemp;
 
             // Transform: accessor = value -> ClassName_Let_accessor this_, value
             // For accessors without index parameters (just the value param)
@@ -373,6 +482,7 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
         if (EqualsIgnoreCase(accessor.type, "Get")) {
             // Transform: accessor(params) -> ClassName_Get_accessor(this_, params)
             // Be careful not to match our own transformed Let calls
+            // Skip if preceded by dot (accessing accessor on another object)
             RE2 getRegex("(?i)\\b" + escapedName + "\\s*\\(([^)]+)\\)");
 
             // Use a callback-style replacement to avoid matching already-transformed calls
@@ -381,18 +491,24 @@ std::string ScriptPatcher::TransformMethodBody(const std::string& body, const VB
             size_t lastPos = 0;
 
             for (const auto& match : matches) {
-                // Check if this is preceded by our class name (already transformed)
                 size_t matchPos = match.position;
-                bool alreadyTransformed = false;
-                if (matchPos > classDef.name.length() + 1) {
+                bool skip = false;
+
+                // Skip if preceded by a dot (means obj.accessor, not standalone accessor)
+                if (matchPos > 0 && result[matchPos - 1] == '.') {
+                    skip = true;
+                }
+
+                // Check if this is preceded by our class name (already transformed)
+                if (!skip && matchPos > classDef.name.length() + 1) {
                     std::string before = result.substr(matchPos - classDef.name.length() - 1, classDef.name.length() + 1);
                     if (before.find(classDef.name + "_") != std::string::npos) {
-                        alreadyTransformed = true;
+                        skip = true;
                     }
                 }
 
                 temp += result.substr(lastPos, matchPos - lastPos);
-                if (alreadyTransformed) {
+                if (skip) {
                     temp += match.full_match;
                 } else {
                     temp += classDef.name + "_Get_" + accessor.name + "(this_, " + match[1] + ")";
