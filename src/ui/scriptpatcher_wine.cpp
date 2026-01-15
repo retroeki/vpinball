@@ -1238,32 +1238,44 @@ std::string ScriptPatcher::RemoveDuplicateVpmInit(const std::string& script) {
 std::string ScriptPatcher::FixSingleLineIfEndIf(const std::string& script) {
     std::string result = script;
 
-    // Pattern: If ... Then ... Else ... End If (all on SAME line)
-    // The key is that single-line If statements should NOT have End If
-    // We need to match: If <condition> Then <statement1> Else <statement2> End If
-    // And remove the trailing "End If"
+    // Wine VBScript is strict about single-line If syntax:
+    // - Single-line If statements should NOT have "End If"
+    // - Multi-line If statements MUST have "End If"
+    //
+    // Windows VBScript is lenient and accepts "End If" on single-line If.
+    // We fix this by removing "End If" from single-line If statements.
     //
     // IMPORTANT: Use [ \t]+ instead of \s+ before "End If" to ensure we only
     // match End If on the SAME line. Using \s+ would match across newlines and
     // incorrectly remove End If that belongs to an outer multi-line If block.
-    //
-    // Use non-greedy matching and word boundaries:
-    // - \b ensures we match whole keywords
-    // - *? and +? for non-greedy matching
-    // - Handle both parenthesized and non-parenthesized conditions
-    // - Handle missing spaces before/after Else (e.g., "CInt(x)Else")
+
+    // Pattern 1: If ... Then ... Else ... End If (with Else, same line)
+    // Example: If x > 0 Then y = 1 Else y = 0 End If
     static const RE2 singleLineIfElseEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]*?\bElse\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
 
     auto matches = RE2FindAll(result, singleLineIfElseEndIf);
     if (!matches.empty()) {
         PLOGI.printf("ScriptPatcher: Found %zu single-line If...Then...Else...End If patterns to fix", matches.size());
-
-        // Process in reverse order to preserve positions
         for (auto it = matches.rbegin(); it != matches.rend(); ++it) {
-            // Replace with just the If...Then...Else part (group 1), removing "End If"
             if (it->groups.size() > 0) {
                 result = result.substr(0, it->position) + it->groups[0] + result.substr(it->position + it->length);
-                PLOGI.printf("ScriptPatcher: Fixed single-line If...End If at position %zu", it->position);
+                PLOGI.printf("ScriptPatcher: Fixed single-line If...Else...End If at position %zu", it->position);
+            }
+        }
+    }
+
+    // Pattern 2: If ... Then ... End If (without Else, same line)
+    // Example: If TypeName(x) <> "String" Then MsgBox "error" End If
+    // Must run AFTER Pattern 1 so Else cases are already handled
+    static const RE2 singleLineIfThenEndIf(R"((?i)(If\b[^:\r\n]*?\bThen\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
+
+    matches = RE2FindAll(result, singleLineIfThenEndIf);
+    if (!matches.empty()) {
+        PLOGI.printf("ScriptPatcher: Found %zu single-line If...Then...End If patterns to fix", matches.size());
+        for (auto it = matches.rbegin(); it != matches.rend(); ++it) {
+            if (it->groups.size() > 0) {
+                result = result.substr(0, it->position) + it->groups[0] + result.substr(it->position + it->length);
+                PLOGI.printf("ScriptPatcher: Fixed single-line If...Then...End If at position %zu", it->position);
             }
         }
     }
