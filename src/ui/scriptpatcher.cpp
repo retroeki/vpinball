@@ -74,7 +74,7 @@ struct ScriptPatcherConfig {
     bool logPatchApplications = true;       // Log each patch as it's applied
     bool removeUnusedClasses = true;        // Remove classes that are never instantiated
     bool removeDuplicateVpmInit = true;     // Remove duplicate vpmInit Me calls
-    bool classEmulation = true;             // Transform classes to Dictionary objects
+    bool classEmulation = false;            // Transform classes to Dictionary objects (DISABLED for testing)
     bool dtArrayPatches = true;             // DTArray/STArray compatibility
     bool wineArrayPatches = true;           // Wine array compatibility (UBound, etc.)
     bool singleLineIfPatches = true;        // Fix invalid single-line If patterns
@@ -335,6 +335,32 @@ static std::string NormalizeLineEndings(const std::string& script) {
     return result;
 }
 
+// Helper to sanitize non-ASCII characters from script
+// Wine VBScript's lexer may have issues with UTF-8 encoded characters even in comments.
+// This replaces any byte > 127 with a space to preserve script structure while
+// removing problematic characters like curly quotes and special symbols.
+static std::string SanitizeNonAscii(const std::string& script) {
+    std::string result;
+    result.reserve(script.size());
+    int nonAsciiCount = 0;
+
+    for (size_t i = 0; i < script.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(script[i]);
+        if (c > 127) {
+            // Replace non-ASCII byte with space
+            result += ' ';
+            nonAsciiCount++;
+        } else {
+            result += script[i];
+        }
+    }
+
+    if (nonAsciiCount > 0) {
+        PLOGI.printf("ScriptPatcher: Sanitized %d non-ASCII bytes (replaced with spaces)", nonAsciiCount);
+    }
+    return result;
+}
+
 std::string ScriptPatcher::PatchScript(const std::string& script) {
     // Master switch - disable ALL patching when needed for debugging
     if (!g_patchConfig.enabled) {
@@ -500,6 +526,11 @@ std::string ScriptPatcher::PatchScript(const std::string& script) {
     // Many patch functions use "\n" in string literals which creates LF-only endings
     // This must happen LAST to catch all injected code
     result = NormalizeLineEndings(result);
+
+    // Sanitize non-ASCII characters AFTER line ending normalization
+    // Wine VBScript's lexer may fail on UTF-8 encoded characters (even in comments)
+    // Common offenders: curly quotes (" "), checkmarks (√), and other Unicode symbols
+    result = SanitizeNonAscii(result);
 
     if (patched) {
         PLOGI.printf("ScriptPatcher: Complete (length=%zu)", result.length());

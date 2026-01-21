@@ -22,7 +22,7 @@ DEFINE_GUID(CLSID_VBScript, 0xb54f3741, 0x5b07, 0x11cf, 0xa4, 0xb0, 0x0, 0xaa, 0
 #ifdef __STANDALONE__
 #include <sstream>
 #include <climits>
-#include "scriptpatcher.h"
+#include "simplescriptpatcher.h"
 #endif
 
 //#define RECOLOR_LINE WM_USER+100
@@ -1924,7 +1924,7 @@ void CodeViewer::LoadFromStream(IStream *pistream, const HCRYPTHASH hcrypthash, 
 #else
    m_script_text = szText;
    // Apply Wine VBScript compatibility patches for DTArray/STArray patterns
-   m_script_text = ScriptPatcher::PatchScript(m_script_text);
+   m_script_text = SimpleScriptPatcher::PatchScript(m_script_text);
 #endif
    delete[] szText;
 
@@ -1971,7 +1971,7 @@ void CodeViewer::LoadFromFile(const string& filename)
 #else
 		m_script_text = szText;
 		// Apply Wine VBScript compatibility patches for DTArray/STArray patterns
-		m_script_text = ScriptPatcher::PatchScript(m_script_text);
+		m_script_text = SimpleScriptPatcher::PatchScript(m_script_text);
 #endif
 		delete[] szText;
 
