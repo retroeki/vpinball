@@ -141,11 +141,28 @@ std::string SimpleScriptPatcher::PatchMultiplicationInSubCall(const std::string&
     // Match: SubName (expr)*number at statement position
     // Transform to: SubName number*(expr)
     // Example: AddScore (Score+100)*2 -> AddScore 2*(Score+100)
-    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*)(\w+)[ \t]+\(([^)]+)\)\s*\*\s*(\d+))");
+    //
+    // IMPORTANT: We must NOT match array accesses like BGArray(x,y) = value
+    // The pattern uses [^),]+ to exclude expressions with commas (multi-index arrays)
+    // We also check in the callback for trailing = or ( which indicate array access
+    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*)(\w+)[ \t]+\(([^),]+)\)\s*\*\s*(\d+)([ \t]*[^\r\n]*))");
 
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        std::string trailing = m[5];
+        // Don't transform if followed by ( or = or , or )
+        // These indicate array access/assignment or we're inside a larger expression
+        if (!trailing.empty()) {
+            size_t firstNonSpace = trailing.find_first_not_of(" \t");
+            if (firstNonSpace != std::string::npos) {
+                char nextChar = trailing[firstNonSpace];
+                if (nextChar == '(' || nextChar == '=' || nextChar == ',' || nextChar == ')') {
+                    // This is likely an array access or inside expression - don't transform
+                    return std::string(m[0]);  // Return original unchanged
+                }
+            }
+        }
         count++;
-        return m[1] + m[2] + " " + m[4] + "*(" + m[3] + ")";
+        return m[1] + m[2] + " " + m[4] + "*(" + m[3] + ")" + trailing;
     });
 
     LogPatch("Bug 54177: Reordered multiplication in sub calls", count);
