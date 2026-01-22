@@ -335,14 +335,15 @@ ElseIfs
 ElseIf
     : tELSEIF Expression tTHEN StSep_opt StatementsNl_opt
                                             { $$ = new_elseif_decl(ctx, @$, $2, $5); }
-    /* Wine extension: Single-line ElseIf without separator */
-    | tELSEIF Expression tTHEN Statement    { $$ = new_elseif_decl(ctx, @$, $2, $4); }
+    /* Wine extension: Single-line ElseIf with trailing newline */
+    | tELSEIF Expression tTHEN SimpleStatement tNL
+                                            { $$ = new_elseif_decl(ctx, @$, $2, $4); }
 
 Else_opt
     : /* empty */                           { $$ = NULL; }
     | tELSE StSep_opt StatementsNl_opt      { $$ = $3; }
-    /* Wine extension: Inline Else without separator (for single-line patterns) */
-    | tELSE Statement                       { $$ = $2; }
+    /* Wine extension: Inline Else with statement followed by newline */
+    | tELSE SimpleStatement tNL             { $$ = $2; }
 
 CaseClausules
     : /* empty */                                                      { $$ = NULL; }
