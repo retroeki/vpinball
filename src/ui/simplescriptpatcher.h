@@ -60,8 +60,16 @@ private:
     // Bug 54291: UBound on Empty
     static std::string PatchUBound(const std::string& script);
 
-    // Bug 55006/55037: Single-line If issues
-    static std::string PatchSingleLineIf(const std::string& script);
+    // Bug 55006/55037: REMOVED - Wine parser now handles single-line If patterns natively
+
+    // AlwaysOnTop Sub: Windows-only PowerShell functionality - stub on Android
+    static std::string PatchAlwaysOnTop(const std::string& script);
+
+    // WScript.Shell: Windows-only COM object - disable on Android
+    static std::string PatchWScriptShell(const std::string& script);
+
+    // (new Class)(args) chained call - Wine doesn't support this
+    static std::string PatchNewClassCall(const std::string& script);
 
     // Bug 56480: Line continuation before dot
     static std::string PatchLineContinuation(const std::string& script);
@@ -81,8 +89,7 @@ private:
     // GLF Boolean Array Bug - Wine corrupts VT_BOOL in SAFEARRAY
     static std::string PatchGlfBooleanArray(const std::string& script);
 
-    // Inline statements (Then X End If on same line)
-    static std::string PatchInlineStatements(const std::string& script);
+    // Inline statements: REMOVED - Wine parser now handles these patterns natively
 
     // Multi-dimensional array access Array(x)(y)
     static std::string Patch2DArrayAccess(const std::string& script);

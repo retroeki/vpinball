@@ -164,110 +164,94 @@ std::string SimpleScriptPatcher::PatchUBound(const std::string& script) {
 }
 
 // =============================================================================
-// Bug 55006: Single-line if-else without else body fails
-// Bug 55037: Colon on new line after Then causes failure
+// Bug 55006/55037: REMOVED - Wine parser now handles these patterns natively
+// Single-line If-Else and related patterns are now supported by the parser
 // =============================================================================
-std::string SimpleScriptPatcher::PatchSingleLineIf(const std::string& script) {
+
+// =============================================================================
+// AlwaysOnTop Sub: Windows-only functionality using PowerShell
+// Replace with stub on Android since it can't work and has complex syntax
+// that Wine VBScript parser struggles with (line continuations + If-Else)
+// =============================================================================
+std::string SimpleScriptPatcher::PatchAlwaysOnTop(const std::string& script) {
     std::string r = script;
     int count = 0;
 
-    // Fix: If x Then y Else End If -> If x Then y
-    // Wine requires else body or no Else keyword
-    static const RE2 p1(R"((?i)(If\b[^:\r\n]+\bThen\b[^:\r\n]+)\bElse\s*$)");
-    std::string before = r;
-    r = RE2Replace(r, p1, "\\1");
-    if (r != before) count++;
-
-    // Fix invalid single-line If...End If (End If not valid on single line)
-    // Pattern: If cond Then stmt End If -> If cond Then stmt
-    static const RE2 p2(R"((?i)(If\b[^:\r\n]+\bThen\b[^:\r\n]+?)[ \t]+End[ \t]+If)");
-    before = r;
-    r = RE2Replace(r, p2, "\\1");
-    if (r != before) count++;
-
-    // Fix: Then followed by newline then colon (Bug 55037)
-    // Pattern: Then\n: stmt -> Then : stmt (or Then\nstmt)
-    static const RE2 p3(R"((?i)(\bThen)\s*\r?\n\s*:)");
-    before = r;
-    r = RE2Replace(r, p3, "\\1 :");
-    if (r != before) count++;
-
-    // Fix: If-Then-Else without End If before colon
-    // Pattern: If x Then y Else z : stmt -> If x Then y Else z End If : stmt
-    // Wine requires End If when Else clause is followed by colon
-    static const RE2 p4(R"((?i)(\bIf\b[^:\r\n]+\bThen\b[^:\r\n]+\bElse\b[^:\r\n]+?)(\s*:\s*))");
-    r = RE2ReplaceWithCallback(r, p4, [&count](const RE2Match& m) -> std::string {
-        std::string elsePart = m[1];
-        std::string colonPart = m[2];
-        // Check if already has End If
-        std::string lower = elsePart;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find("end if") != std::string::npos) {
-            return m.full_match;  // Already has End If
-        }
+    // Match Sub AlwaysOnTop with any content until End Sub
+    // The Sub contains PowerShell commands that only work on Windows
+    static const RE2 p(R"((?is)\bSub\s+AlwaysOnTop\s*\([^)]*\).*?End\s+Sub)");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         count++;
-        return elsePart + " End If" + colonPart;
+        // Simple stub - just empty Sub body
+        return "Sub AlwaysOnTop(appName, regExpTitle, setOnTop)\r\nEnd Sub";
     });
 
-    // Fix: If-Then split across lines with Else on same line as statement
-    // Pattern: Then\n stmt else stmt\n End If... -> Then stmt Else stmt\n...
-    // Example:
-    //   if IsObject(aInput) then
-    //   FlipperStart = aInput.x else FlipperStart = aInput
-    //   End If : end if : End Property
-    // Becomes:
-    //   if IsObject(aInput) then FlipperStart = aInput.x else FlipperStart = aInput
-    //   End Property
-    // Note: Also consumes duplicate ": end if" sequences that sometimes appear
-    // Using [ \t]+ around else to avoid matching across lines
-    static const RE2 p5(R"((?i)(\bThen)[ \t]*\r?\n[ \t]*([^\r\n]+?)[ \t]+else[ \t]+([^\r\n]+?)[ \t]*\r?\n[ \t]*End[ \t]+If\b(?:[ \t]*:[ \t]*end[ \t]+if\b)*[ \t]*:?[ \t]*)");
-    r = RE2ReplaceWithCallback(r, p5, [&count](const RE2Match& m) -> std::string {
+    if (count > 0) {
+        LogPatch("Replaced Windows-only AlwaysOnTop Sub with stub", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// WScript.Shell: Windows-only COM object
+// Comment out the CreateObject line to avoid runtime errors on Android
+// =============================================================================
+std::string SimpleScriptPatcher::PatchWScriptShell(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Match: Set variable = CreateObject("WScript.Shell")
+    static const RE2 p(R"((?i)(Set\s+\w+\s*=\s*CreateObject\s*\(\s*"WScript\.Shell"\s*\)))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         count++;
-        // Combine into single-line If, remove the End If (not needed for single-line)
-        return std::string(m[1]) + " " + std::string(m[2]) + " Else " + std::string(m[3]) + "\r\n";
+        // Comment out the line - WScript.Shell not available on Android
+        return "' DISABLED ON ANDROID: " + std::string(m[1]);
     });
 
-    // Fix: ElseIf cond Then stmt1 Else stmt2 (all on one line)
-    // Wine doesn't support single-line ElseIf-Then-Else, convert to multi-line
-    // Add End If only if followed by End Sub/Function (script relies on implicit closure)
-    // Example:
-    //   Elseif cnt=0 then QueueSceneV ... Else QueueSceneV ...
-    //   End Sub
-    // Becomes:
-    //   Elseif cnt=0 then
-    //       QueueSceneV ...
-    //   Else
-    //       QueueSceneV ...
-    //   End If
-    //   End Sub
-    // Note: Don't exclude colons from match - statements may contain colons in strings
-    // Pattern captures what follows to decide if End If is needed
-    static const RE2 p6a(R"((?i)(\bElseIf\b[^\r\n]+?\bThen)\s+([^\r\n]+?)\s+\bElse\b\s+([^\r\n]+?)\s*\r?\n(\s*End\s+(Sub|Function)\b))");
-    r = RE2ReplaceWithCallback(r, p6a, [&count](const RE2Match& m) -> std::string {
+    if (count > 0) {
+        LogPatch("Disabled Windows-only WScript.Shell creation", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// (new ClassName)(args) pattern - Wine doesn't support chained call on new object
+// Transform: Set x = (new Class)(a,b,c) -> Set x = new Class : x.Init a,b,c
+// This assumes the class has an Init method (common VPX pattern)
+// =============================================================================
+std::string SimpleScriptPatcher::PatchNewClassCall(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Check if pattern exists in script (debug)
+    if (r.find("(new ") != std::string::npos) {
+        PLOGI.printf("SimpleScriptPatcher: Found '(new ' pattern in script");
+    }
+
+    // Match: Set varname = (new ClassName)(arg1, arg2, ...)
+    // Note: Arguments may contain commas but no nested parens in typical VPX scripts
+    static const RE2 p(R"((?i)Set\s+(\w+)\s*=\s*\(\s*new\s+(\w+)\s*\)\s*\(([^)]*)\))");
+
+    // Debug: Check if regex is valid
+    if (!p.ok()) {
+        PLOGE.printf("SimpleScriptPatcher: PatchNewClassCall regex is INVALID: %s", p.error().c_str());
+    }
+
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         count++;
-        // Add End If before End Sub/Function
-        return std::string(m[1]) + "\r\n\t\t" + std::string(m[2]) + "\r\n\tElse\r\n\t\t" + std::string(m[3]) + "\r\n\tEnd If\r\n" + std::string(m[4]);
+        std::string varName = m[1];    // variable name
+        std::string className = m[2];  // class name
+        std::string args = m[3];       // arguments
+        PLOGI.printf("SimpleScriptPatcher: Transforming (new %s) for var %s", className.c_str(), varName.c_str());
+        // Transform to: Set varname = new ClassName : varname.Init args
+        return "Set " + varName + " = new " + className + " : " + varName + ".Init " + args;
     });
 
-    // Also handle case where there's already an End If (don't add another)
-    static const RE2 p6b(R"((?i)(\bElseIf\b[^\r\n]+?\bThen)\s+([^\r\n]+?)\s+\bElse\b\s+([^\r\n]+?)\s*\r?\n(\s*End\s+If\b))");
-    r = RE2ReplaceWithCallback(r, p6b, [&count](const RE2Match& m) -> std::string {
-        count++;
-        // Keep existing End If
-        return std::string(m[1]) + "\r\n\t\t" + std::string(m[2]) + "\r\n\tElse\r\n\t\t" + std::string(m[3]) + "\r\n" + std::string(m[4]);
-    });
-
-    // General case: ElseIf-Then-Else on one line followed by other code (not End If/Sub/Function)
-    // Just expand to multi-line without adding End If - the If structure continues
-    // This runs after p6a/p6b to catch remaining cases
-    static const RE2 p6c(R"((?i)(\bElseIf\b[^\r\n]+?\bThen)\s+([^\r\n]+?)\s+\bElse\b\s+([^\r\n]+?)\s*(\r?\n))");
-    r = RE2ReplaceWithCallback(r, p6c, [&count](const RE2Match& m) -> std::string {
-        count++;
-        // Just expand to multi-line, If block continues with more ElseIf/Else/End If later
-        return std::string(m[1]) + "\r\n\t\t" + std::string(m[2]) + "\r\n\tElse\r\n\t\t" + std::string(m[3]) + std::string(m[4]);
-    });
-
-    LogPatch("Bug 55006/55037: Fixed single-line If syntax", count);
+    if (count > 0) {
+        LogPatch("Fixed (new Class)(args) chained call pattern", count);
+    } else if (r.find("(new ") != std::string::npos) {
+        PLOGW.printf("SimpleScriptPatcher: '(new ' exists but regex didn't match - check pattern");
+    }
     return r;
 }
 
@@ -438,40 +422,8 @@ std::string SimpleScriptPatcher::PatchGlfBooleanArray(const std::string& script)
 
 
 // =============================================================================
-// Inline statement fix - statements on same line with If/Then/End If
-// VBScript: Then Stmt End If on same line is invalid
-// Pattern: Then Stmt End If -> Then\n  Stmt\nEnd If
+// Inline statement fix: REMOVED - Wine parser now handles these patterns natively
 // =============================================================================
-std::string SimpleScriptPatcher::PatchInlineStatements(const std::string& script) {
-    std::string r = script;
-    int count = 0;
-
-    // Fix: If cond Then stmt1 stmt2 End If (all on one line without colons)
-    // This is a complex pattern - focus on common cases
-
-    // Pattern: Then followed by multiple words then End If (inline)
-    // Note: legitimate single-line: If x Then y  (no End If)
-    // Invalid in Wine: If x Then y End If (on same line)
-    static const RE2 p(R"((?i)(\bThen\b)[ \t]+([^\r\n:]+?)[ \t]+(End[ \t]+If\b))");
-    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
-        std::string stmt = m[2];
-        // Check if stmt itself contains another End If or Then
-        std::string stmtLower = stmt;
-        std::transform(stmtLower.begin(), stmtLower.end(), stmtLower.begin(), ::tolower);
-        if (stmtLower.find("end if") != std::string::npos ||
-            stmtLower.find("then") != std::string::npos) {
-            // Complex case - don't transform
-            return m.full_match;
-        }
-        count++;
-        return m[1] + "\r\n\t\t" + m[2] + "\r\n\t" + m[3];
-    });
-
-    if (count > 0) {
-        LogPatch("Fixed inline If/Then/End If statements", count);
-    }
-    return r;
-}
 
 // =============================================================================
 // Multi-dimensional Array Access: Array(x)(y) fails in Wine
@@ -877,14 +829,17 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     bool patched = false;
 
     // Apply patches in order of likelihood/impact
+    result = PatchAlwaysOnTop(result);              // Windows-only PowerShell Sub - stub on Android
+    result = PatchWScriptShell(result);             // Windows-only WScript.Shell - disable on Android
+    result = PatchNewClassCall(result);             // (new Class)(args) chained call pattern
     result = PatchMultiplicationInSubCall(result);  // Bug 54177
     result = PatchUBound(result);                    // Bug 54291
-    result = PatchSingleLineIf(result);             // Bug 55006/55037
+    // REMOVED: PatchSingleLineIf - Wine parser now handles these patterns natively
     result = PatchBooleanNot(result);               // Bug 55093
     result = PatchLineContinuation(result);         // Bug 56480
     result = PatchDoubleDot(result);                // Common typo fix
     result = PatchGlfBooleanArray(result);          // GLF Boolean Array Bug
-    result = PatchInlineStatements(result);         // Inline If/Then/End If
+    // REMOVED: PatchInlineStatements - Wine parser now handles these patterns natively
     result = Patch2DArrayAccess(result);            // Bug 53877
     result = PatchDTArray(result);                  // DTArray patterns
     result = PatchSTArray(result);                  // STArray patterns
