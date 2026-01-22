@@ -605,6 +605,41 @@ std::string SimpleScriptPatcher::PatchControllerPause(const std::string& script)
 }
 
 // =============================================================================
+// PinUp Player file access patch - Android doesn't have these files
+// Pattern: Code that reads DMDType from a PinUp Player ScreenType.txt file
+// This is Windows-specific and will fail on Android. Comment out and set default.
+// =============================================================================
+std::string SimpleScriptPatcher::PatchPinUpPlayerFileAccess(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Comment out: Dim ObjFso: Set ObjFso = CreateObject("Scripting.FileSystemObject")
+    static const RE2 p1(R"((?i)(^|\n)([ \t]*)(Dim\s+ObjFso\s*:\s*Set\s+ObjFso\s*=\s*CreateObject\s*\(\s*"Scripting\.FileSystemObject"\s*\)))");
+    r = RE2ReplaceWithCallback(r, p1, [&count](const RE2Match& m) -> std::string {
+        count++;
+        return std::string(m[1]) + std::string(m[2]) + "' " + std::string(m[3]) + " ' Disabled for Android";
+    });
+
+    // Comment out: Dim ObjFile: Set ObjFile = ObjFso.OpenTextFile(...)
+    static const RE2 p2(R"((?i)(^|\n)([ \t]*)(Dim\s+ObjFile\s*:\s*Set\s+ObjFile\s*=\s*ObjFso\.OpenTextFile\s*\([^)]*\)))");
+    r = RE2ReplaceWithCallback(r, p2, [&count](const RE2Match& m) -> std::string {
+        count++;
+        return std::string(m[1]) + std::string(m[2]) + "' " + std::string(m[3]) + " ' Disabled for Android";
+    });
+
+    // Replace: Dim DMDType: DMDType = ObjFile.ReadLine -> Dim DMDType: DMDType = "1"
+    static const RE2 p3(R"((?i)(Dim\s+DMDType\s*:\s*DMDType\s*=\s*)ObjFile\.ReadLine)");
+    std::string before = r;
+    r = RE2Replace(r, p3, "\\1\"1\" ' Default for Android (was ObjFile.ReadLine)");
+    if (r != before) count++;
+
+    if (count > 0) {
+        LogPatch("Patched PinUp Player file access for Android", count);
+    }
+    return r;
+}
+
+// =============================================================================
 // Fix parenthesized Not function calls - Wine VBScript arity mismatch bug
 // Pattern: (Not IsNull)(m_transition) -> Not IsNull(m_transition)
 // This is invalid VBScript syntax that Windows tolerates but Wine rejects
@@ -829,6 +864,7 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchSTArray(result);                  // STArray patterns
     // REMOVED: PatchNewClassCall - now handled in Wine VBScript compiler (compile.c)
     result = PatchControllerPause(result);          // Controller.Pause not available on Android
+    result = PatchPinUpPlayerFileAccess(result);    // PinUp Player file access not available on Android
     result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
     // DISABLED: FlexDMD Virtual Segment DMD hides the light-based segments, but FlexDMD can't render overlays on Android
     // result = PatchEnableFlexDMDByDefault(result);   // Enable FlexDMD segment display for GLF tables

@@ -313,12 +313,11 @@ IfStatement
     | tIF Expression tTHEN Statement EndIf_opt { $$ = new_if_statement(ctx, @$, $2, $4, NULL, NULL); CHECK_ERROR; }
     | tIF Expression tTHEN Statement tELSE Statement EndIf_opt
                                                { $$ = new_if_statement(ctx, @$, $2, $4, NULL, $6); CHECK_ERROR; }
-    /* Wine extension: Handle If-Then with inline else after newline */
-    /* Pattern: If cond Then\n stmt else stmt\n End If */
-    | tIF Expression tTHEN tNL SimpleStatement tELSE Statement tNL tEND tIF
-                                               { $$ = new_if_statement(ctx, @$, $2, $5, NULL, $7); CHECK_ERROR; }
-    | tIF Expression tTHEN tNL SimpleStatement tELSE Statement tNL EndIf_opt
-                                               { $$ = new_if_statement(ctx, @$, $2, $5, NULL, $7); CHECK_ERROR; }
+    /* Wine extension: Handle single-line If-Then-Else where Statement contains an expression
+       ending with ) and immediately followed by Else (no space). This is handled by making
+       SimpleStatement explicit when followed by tELSE */
+    | tIF Expression tTHEN SimpleStatement tELSE Statement EndIf_opt
+                                               { $$ = new_if_statement(ctx, @$, $2, $4, NULL, $6); CHECK_ERROR; }
 
 EndIf_opt
     : /* empty */
@@ -335,15 +334,10 @@ ElseIfs
 ElseIf
     : tELSEIF Expression tTHEN StSep_opt StatementsNl_opt
                                             { $$ = new_elseif_decl(ctx, @$, $2, $5); }
-    /* Wine extension: Single-line ElseIf with trailing newline */
-    | tELSEIF Expression tTHEN SimpleStatement tNL
-                                            { $$ = new_elseif_decl(ctx, @$, $2, $4); }
 
 Else_opt
     : /* empty */                           { $$ = NULL; }
     | tELSE StSep_opt StatementsNl_opt      { $$ = $3; }
-    /* Wine extension: Inline Else with statement followed by newline */
-    | tELSE SimpleStatement tNL             { $$ = $2; }
 
 CaseClausules
     : /* empty */                                                      { $$ = NULL; }

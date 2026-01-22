@@ -101,6 +101,9 @@ private:
     // Controller.Pause - not supported on Android (no Controller object before init)
     static std::string PatchControllerPause(const std::string& script);
 
+    // PinUp Player file access - not available on Android
+    static std::string PatchPinUpPlayerFileAccess(const std::string& script);
+
     // Parenthesized Not function calls - Wine arity mismatch bug
     // Pattern: (Not IsNull)(x) -> Not IsNull(x)
     static std::string PatchParenthesizedNot(const std::string& script);
