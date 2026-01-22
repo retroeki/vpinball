@@ -68,7 +68,7 @@ private:
     // WScript.Shell: Windows-only COM object - disable on Android
     static std::string PatchWScriptShell(const std::string& script);
 
-    // (new Class)(args) chained call - Wine doesn't support this
+    // (new Class)(args) chained call - REMOVED: now handled in Wine compiler (compile.c)
     static std::string PatchNewClassCall(const std::string& script);
 
     // Bug 56480: Line continuation before dot

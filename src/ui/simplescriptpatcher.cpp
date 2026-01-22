@@ -217,42 +217,12 @@ std::string SimpleScriptPatcher::PatchWScriptShell(const std::string& script) {
 // =============================================================================
 // (new ClassName)(args) pattern - Wine doesn't support chained call on new object
 // Transform: Set x = (new Class)(a,b,c) -> Set x = new Class : x.Init a,b,c
-// This assumes the class has an Init method (common VPX pattern)
+// NOTE: This is now handled in Wine VBScript compiler (compile.c)
+// The compiler detects (new ClassName)(args) and calls Init method explicitly
 // =============================================================================
 std::string SimpleScriptPatcher::PatchNewClassCall(const std::string& script) {
-    std::string r = script;
-    int count = 0;
-
-    // Check if pattern exists in script (debug)
-    if (r.find("(new ") != std::string::npos) {
-        PLOGI.printf("SimpleScriptPatcher: Found '(new ' pattern in script");
-    }
-
-    // Match: Set varname = (new ClassName)(arg1, arg2, ...)
-    // Note: Arguments may contain commas but no nested parens in typical VPX scripts
-    static const RE2 p(R"((?i)Set\s+(\w+)\s*=\s*\(\s*new\s+(\w+)\s*\)\s*\(([^)]*)\))");
-
-    // Debug: Check if regex is valid
-    if (!p.ok()) {
-        PLOGE.printf("SimpleScriptPatcher: PatchNewClassCall regex is INVALID: %s", p.error().c_str());
-    }
-
-    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
-        count++;
-        std::string varName = m[1];    // variable name
-        std::string className = m[2];  // class name
-        std::string args = m[3];       // arguments
-        PLOGI.printf("SimpleScriptPatcher: Transforming (new %s) for var %s", className.c_str(), varName.c_str());
-        // Transform to: Set varname = new ClassName : varname.Init args
-        return "Set " + varName + " = new " + className + " : " + varName + ".Init " + args;
-    });
-
-    if (count > 0) {
-        LogPatch("Fixed (new Class)(args) chained call pattern", count);
-    } else if (r.find("(new ") != std::string::npos) {
-        PLOGW.printf("SimpleScriptPatcher: '(new ' exists but regex didn't match - check pattern");
-    }
-    return r;
+    // No-op - now handled in Wine VBScript compiler
+    return script;
 }
 
 // =============================================================================
@@ -461,10 +431,12 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
     int totalCount = 0;
 
     // Step 1: Convert DT variable Array() initialization to class instantiation
-    // Pattern: DT1 = Array(primary, secondary, prim, sw, animate, isDropped)
-    // To: Set DT1 = (new DropTarget)(primary, secondary, prim, sw, animate, isDropped)
-    // Match DT followed by digits ONLY (DT1, DT2, etc.) - NOT DTArray!
-    static const RE2 arrayInit(R"((?im)(^[ \t]*)(DT\d+)\s*=\s*Array\s*\(([^)]+)\))");
+    // Pattern: DT1 = Array(primary, secondary, prim, sw, animate)
+    // To: Set DT1 = (new DropTarget)(primary, secondary, prim, sw, animate)
+    // Wine compiler fix in compile.c handles (new ClassName)(args) by calling Init explicitly
+    // Match DT followed by digits and optional letters (DT1, DT54a) - NOT DTArray!
+    // DT\d+\w* matches DT1, DT54, DT54a but not DTArray (which has no digit after DT)
+    static const RE2 arrayInit(R"((?im)(^[ \t]*)(DT\d+\w*)\s*=\s*Array\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         return m[1] + "Set " + m[2] + " = (new DropTarget)(" + m[3] + ")";
@@ -548,10 +520,11 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
     int totalCount = 0;
 
     // Step 1: Convert ST variable Array() initialization to class instantiation
-    // Pattern: ST12 = Array(primary, prim, sw, animate)
-    // To: Set ST12 = (new StandupTarget)(primary, prim, sw, animate)
-    // Match ST followed by digits ONLY (ST12, ST15, etc.) - NOT STArray!
-    static const RE2 arrayInit(R"((?im)(^[ \t]*)(ST\d+)\s*=\s*Array\s*\(([^)]+)\))");
+    // Pattern: ST12 = Array(primary, prim, sw, animate, id)
+    // To: Set ST12 = (new StandupTarget)(primary, prim, sw, animate, id)
+    // Match ST followed by digits and optional letters (ST12, ST18a, ST18b) - NOT STArray!
+    // ST\d+\w* matches ST18, ST18a, ST18b but not STArray (which has no digit after ST)
+    static const RE2 arrayInit(R"((?im)(^[ \t]*)(ST\d+\w*)\s*=\s*Array\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         return m[1] + "Set " + m[2] + " = (new StandupTarget)(" + m[3] + ")";
@@ -586,6 +559,13 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
     r = RE2ReplaceWithCallback(r, idx3, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         return "STArray(" + m[1] + ").animate";
+    });
+
+    // STArray(i)(4) -> STArray(i).id
+    static const RE2 idx4(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*4\s*\))");
+    r = RE2ReplaceWithCallback(r, idx4, [&totalCount](const RE2Match& m) -> std::string {
+        totalCount++;
+        return "STArray(" + m[1] + ").id";
     });
 
     if (totalCount > 0) {
@@ -744,13 +724,13 @@ Class DropTarget
   Public Property Get IsDropped(): IsDropped = m_isDropped: End Property
   Public Property Let IsDropped(input): m_isDropped = input: End Property
 
-  Public default Function init(primary, secondary, prim, sw, animate, isDropped)
+  Public default Function init(primary, secondary, prim, sw, animate)
     Set m_primary = primary
     Set m_secondary = secondary
     Set m_prim = prim
     m_sw = sw
     m_animate = animate
-    m_isDropped = isDropped
+    m_isDropped = False
     Set Init = Me
   End Function
 End Class
@@ -764,8 +744,9 @@ End Class
         helpers += R"(
 ' StandupTarget class - Wine VBScript cannot handle Array(x)(y) syntax
 ' This class converts STArray indexed access to property access
+' Array format: Array(primary, prim, sw, animate, identifier)
 Class StandupTarget
-  Private m_primary, m_prim, m_sw, m_animate
+  Private m_primary, m_prim, m_sw, m_animate, m_id
 
   Public Property Get Primary(): Set Primary = m_primary: End Property
   Public Property Let Primary(input): Set m_primary = input: End Property
@@ -779,11 +760,15 @@ Class StandupTarget
   Public Property Get Animate(): Animate = m_animate: End Property
   Public Property Let Animate(input): m_animate = input: End Property
 
-  Public default Function init(primary, prim, sw, animate)
+  Public Property Get Id(): Id = m_id: End Property
+  Public Property Let Id(input): m_id = input: End Property
+
+  Public default Function init(primary, prim, sw, animate, id)
     Set m_primary = primary
     Set m_prim = prim
     m_sw = sw
     m_animate = animate
+    m_id = id
     Set Init = Me
   End Function
 End Class
@@ -831,7 +816,6 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     // Apply patches in order of likelihood/impact
     result = PatchAlwaysOnTop(result);              // Windows-only PowerShell Sub - stub on Android
     result = PatchWScriptShell(result);             // Windows-only WScript.Shell - disable on Android
-    result = PatchNewClassCall(result);             // (new Class)(args) chained call pattern
     result = PatchMultiplicationInSubCall(result);  // Bug 54177
     result = PatchUBound(result);                    // Bug 54291
     // REMOVED: PatchSingleLineIf - Wine parser now handles these patterns natively
@@ -843,6 +827,7 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = Patch2DArrayAccess(result);            // Bug 53877
     result = PatchDTArray(result);                  // DTArray patterns
     result = PatchSTArray(result);                  // STArray patterns
+    // REMOVED: PatchNewClassCall - now handled in Wine VBScript compiler (compile.c)
     result = PatchControllerPause(result);          // Controller.Pause not available on Android
     result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
     // DISABLED: FlexDMD Virtual Segment DMD hides the light-based segments, but FlexDMD can't render overlays on Android
