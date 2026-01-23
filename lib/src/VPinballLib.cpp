@@ -337,6 +337,57 @@ void VPinballLib::InitHeadless(VPinballEventCallback callback)
    }
 
    UpdateWebServer();
+   m_initialized = true;
+}
+
+void VPinballLib::UpdateEventCallback(VPinballEventCallback callback)
+{
+   PLOGI.printf("UpdateEventCallback called");
+   SetEventCallback(callback);
+}
+
+void VPinballLib::Shutdown()
+{
+   PLOGI.printf("Shutdown called - cleaning up all state");
+
+   // Stop player FIRST if running (player references table)
+   if (g_pplayer) {
+      PLOGI.printf("Stopping player");
+      delete g_pplayer;
+      g_pplayer = nullptr;
+   }
+
+   // Close any active table AFTER player is stopped
+   if (g_pvp) {
+      CComObject<PinTable>* pActiveTable = g_pvp->GetActiveTable();
+      if (pActiveTable) {
+         PLOGI.printf("Closing active table: %s", pActiveTable->m_filename.c_str());
+         g_pvp->CloseTable(pActiveTable);
+      }
+   }
+
+   // Unload all loaded plugins (only unload if actually loaded)
+   PLOGI.printf("Unloading plugins");
+   for (const auto& plugin : MsgPI::MsgPluginManager::GetInstance().GetPlugins()) {
+      if (plugin->IsLoaded()) {
+         PLOGI.printf("Unloading plugin: %s", plugin->m_id.c_str());
+         plugin->Unload();
+      }
+   }
+
+   // Delete VPinball instance
+   if (g_pvp) {
+      PLOGI.printf("Deleting VPinball instance");
+      delete g_pvp;
+      g_pvp = nullptr;
+   }
+
+   // Clear callback and state
+   m_eventCallback = nullptr;
+   m_gameLoop = nullptr;
+   m_initialized = false;
+
+   PLOGI.printf("Shutdown complete");
 }
 
 void VPinballLib::SetEventCallback(VPinballEventCallback callback)
@@ -699,6 +750,41 @@ VPINBALL_STATUS VPinballLib::Stop()
    pActiveTable->QuitPlayer(Player::CS_CLOSE_APP);
 
    return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::Pause()
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   g_pplayer->SetPlayState(false);
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::Resume()
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   g_pplayer->SetPlayState(true);
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::SetBloomStrength(float strength)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return VPINBALL_STATUS_FAILURE;
+
+   g_pplayer->m_ptable->m_bloom_strength = strength;
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetBloomStrength()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 1.0f;
+
+   return g_pplayer->m_ptable->m_bloom_strength;
 }
 
 VPINBALL_VIEW_MODE VPinballLib::GetViewMode()
