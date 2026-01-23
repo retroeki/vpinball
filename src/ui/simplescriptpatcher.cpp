@@ -625,10 +625,17 @@ std::string SimpleScriptPatcher::PatchControllerPause(const std::string& script)
     r = RE2Replace(r, p3, ":");
     if (r != before) count++;
 
-    // Handle Controller.Stop on its own line
-    static const RE2 p4(R"((?i)(\s*)(Controller\.Stop)\s*)");
+    // Handle single-line If-Then with Controller.Stop (e.g., If B2SOn Then Controller.Stop)
+    // Must replace with a valid statement, not just a comment
+    static const RE2 p3b(R"((?i)(If\s+[^\r\n]+\s+Then\s+)Controller\.Stop)");
     before = r;
-    r = RE2Replace(r, p4, "\\1' \\2 ' Disabled for Android\n");
+    r = RE2Replace(r, p3b, "\\1Exit Sub ' Controller.Stop disabled for Android");
+    if (r != before) count++;
+
+    // Handle Controller.Stop on its own line
+    static const RE2 p4(R"((?i)(^[ \t]*)(Controller\.Stop)[ \t]*$)");
+    before = r;
+    r = RE2Replace(r, p4, "\\1' \\2 ' Disabled for Android");
     if (r != before) count++;
 
     if (count > 0) {
@@ -767,8 +774,8 @@ std::string SimpleScriptPatcher::PatchSolCallbackBlock(const std::string& script
 
 // =============================================================================
 // Select Case with array element access - Wine VBScript doesn't support this
-// Pattern: Select Case ArrayName(index) -> Dim tmp : tmp = ArrayName(CInt(index)) : Select Case tmp
-// Also wraps index in CInt() to handle Wine's issues with ByRef parameters as indices
+// Pattern: Select Case ArrayName(index) -> Dim tmp : tmp = ArrayName(index) : Select Case tmp
+// Uses temp variable to work around Wine's Select Case limitations
 // =============================================================================
 std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& script) {
     std::string r = script;
@@ -791,14 +798,27 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
         if (lowerName == "ubound" || lowerName == "lbound" || lowerName == "len" ||
             lowerName == "mid" || lowerName == "left" || lowerName == "right" ||
             lowerName == "instr" || lowerName == "cint" || lowerName == "clng" ||
-            lowerName == "cstr" || lowerName == "asc" || lowerName == "chr") {
+            lowerName == "cstr" || lowerName == "asc" || lowerName == "chr" ||
+            lowerName == "int" || lowerName == "fix" || lowerName == "abs" ||
+            lowerName == "sgn" || lowerName == "rnd" || lowerName == "round" ||
+            lowerName == "hex" || lowerName == "oct" || lowerName == "cbool" ||
+            lowerName == "cbyte" || lowerName == "ccur" || lowerName == "cdate" ||
+            lowerName == "cdbl" || lowerName == "csng" || lowerName == "trim" ||
+            lowerName == "ltrim" || lowerName == "rtrim" || lowerName == "lcase" ||
+            lowerName == "ucase" || lowerName == "space" || lowerName == "string" ||
+            lowerName == "split" || lowerName == "join" || lowerName == "replace" ||
+            lowerName == "instrrev" || lowerName == "strreverse" || lowerName == "array" ||
+            lowerName == "filter" || lowerName == "isarray" || lowerName == "isdate" ||
+            lowerName == "isempty" || lowerName == "isnull" || lowerName == "isnumeric" ||
+            lowerName == "isobject" || lowerName == "typename" || lowerName == "vartype") {
             return std::string(m[0]);  // Don't transform function calls
         }
 
         count++;
-        PLOGI.printf("PatchSelectCaseArrayAccess: %s(%s) -> temp variable with CInt", arrayName.c_str(), index.c_str());
-        // Wrap index in CInt() to handle Wine's ByRef parameter array index bug
-        return indent + "Dim ssc_tmp : ssc_tmp = " + arrayName + "(CInt(" + index + ")) : " + selectCase + "ssc_tmp";
+        PLOGI.printf("PatchSelectCaseArrayAccess: %s(%s) -> temp variable", arrayName.c_str(), index.c_str());
+        // Use temp variable to work around Wine's Select Case array access limitations
+        // Don't wrap in CInt - it only takes one argument and this could be multi-dimensional
+        return indent + "Dim ssc_tmp : ssc_tmp = " + arrayName + "(" + index + ") : " + selectCase + "ssc_tmp";
     });
 
     if (count > 0) {
