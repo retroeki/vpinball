@@ -94,6 +94,8 @@ VPINBALLAPI VPINBALL_STATUS VPinballPause();
 VPINBALLAPI VPINBALL_STATUS VPinballResume();
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);
 VPINBALLAPI float VPinballGetBloomStrength();
+VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale);
+VPINBALLAPI float VPinballGetEmissionScale();
 
 // View Mode
 

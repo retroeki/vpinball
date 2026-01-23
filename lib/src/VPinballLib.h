@@ -87,6 +87,8 @@ public:
    VPINBALL_STATUS Resume();
    VPINBALL_STATUS SetBloomStrength(float strength);
    float GetBloomStrength();
+   VPINBALL_STATUS SetEmissionScale(float scale);
+   float GetEmissionScale();
    VPINBALL_VIEW_MODE GetViewMode();
    VPINBALL_STATUS SetViewMode(VPINBALL_VIEW_MODE mode);
    VPINBALL_STATUS CycleViewMode();

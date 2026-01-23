@@ -197,6 +197,16 @@ VPINBALLAPI float VPinballGetBloomStrength()
    return VPinballLib::VPinballLib::Instance().GetBloomStrength();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale)
+{
+   return VPinballLib::VPinballLib::Instance().SetEmissionScale(scale);
+}
+
+VPINBALLAPI float VPinballGetEmissionScale()
+{
+   return VPinballLib::VPinballLib::Instance().GetEmissionScale();
+}
+
 VPINBALLAPI VPINBALL_VIEW_MODE VPinballGetViewMode()
 {
    return VPinballLib::VPinballLib::Instance().GetViewMode();

@@ -288,6 +288,16 @@ JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetBloomS
    return VPinballGetBloomStrength();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetEmissionScale(JNIEnv* env, jobject obj, jfloat scale)
+{
+   return VPinballSetEmissionScale(scale);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetEmissionScale(JNIEnv* env, jobject obj)
+{
+   return VPinballGetEmissionScale();
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewMode(JNIEnv* env, jobject obj)
 {
    return VPinballGetViewMode();
@@ -448,6 +458,16 @@ JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_V
 JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetBloomStrength(JNIEnv* env, jobject obj)
 {
    return VPinballGetBloomStrength();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetEmissionScale(JNIEnv* env, jobject obj, jfloat scale)
+{
+   return VPinballSetEmissionScale(scale);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetEmissionScale(JNIEnv* env, jobject obj)
+{
+   return VPinballGetEmissionScale();
 }
 
 }
