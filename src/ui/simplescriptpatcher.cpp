@@ -594,29 +594,45 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
 }
 
 // =============================================================================
-// Controller.Pause patch - Android/Wine doesn't have Controller before init
-// Pattern: Controller.Pause = True/False -> comment out
+// Controller.Pause and Controller.Stop patch - Android/Wine doesn't have Controller before init
+// Pattern: Controller.Pause = True/False/1/0 -> comment out
+// Pattern: Controller.Stop -> remove from colon-separated or comment out
 // =============================================================================
 std::string SimpleScriptPatcher::PatchControllerPause(const std::string& script) {
     std::string r = script;
     int count = 0;
 
-    // First handle colon-separated statements (e.g., Sub Foo:Controller.Pause = True:End Sub)
+    // === Controller.Pause ===
+    // First handle colon-separated statements (e.g., Sub Foo:Controller.Pause = 1:End Sub)
     // These can't be safely commented out, so remove them entirely
     // Pattern matches :Controller.Pause = Value followed by :
-    static const RE2 p1(R"((?i):[ \t]*Controller\.Pause\s*=\s*(True|False)[ \t]*:)");
+    // Value can be True/False or 1/0
+    static const RE2 p1(R"((?i):[ \t]*Controller\.Pause\s*=\s*(True|False|1|0)[ \t]*:)");
     std::string before = r;
     r = RE2Replace(r, p1, ":");
     if (r != before) count++;
 
     // Then handle statements on their own lines (comment them out)
-    static const RE2 p2(R"((?i)(\s*)(Controller\.Pause\s*=\s*(True|False)))");
+    static const RE2 p2(R"((?i)(\s*)(Controller\.Pause\s*=\s*(True|False|1|0)))");
     before = r;
     r = RE2Replace(r, p2, "\\1' \\2 ' Disabled for Android");
     if (r != before) count++;
 
+    // === Controller.Stop ===
+    // Handle colon-separated (e.g., Sub Foo_Exit:Controller.Stop:End Sub)
+    static const RE2 p3(R"((?i):[ \t]*Controller\.Stop[ \t]*:)");
+    before = r;
+    r = RE2Replace(r, p3, ":");
+    if (r != before) count++;
+
+    // Handle Controller.Stop on its own line
+    static const RE2 p4(R"((?i)(\s*)(Controller\.Stop)\s*)");
+    before = r;
+    r = RE2Replace(r, p4, "\\1' \\2 ' Disabled for Android\n");
+    if (r != before) count++;
+
     if (count > 0) {
-        LogPatch("Commented out Controller.Pause statements", count);
+        LogPatch("Commented out Controller.Pause/Stop statements", count);
     }
     return r;
 }
@@ -680,6 +696,113 @@ std::string SimpleScriptPatcher::PatchParenthesizedNot(const std::string& script
 
     if (count > 0) {
         LogPatch("Fixed parenthesized Not function calls (Wine arity bug)", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// Fix forward reference to cGameName constant
+// Pattern: If Right(cGamename,1)="c" Then ... uses cGameName before it's defined
+// Wine VBScript doesn't handle forward references to constants like Windows does
+// Wrap in error handling to allow script to continue
+// =============================================================================
+std::string SimpleScriptPatcher::PatchForwardConstantReference(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Match: If Right(cGamename,1)="c" Then CustomDMD=True (or similar)
+    // This pattern uses cGameName before it's defined as a Const
+    // Wrap in On Error Resume Next to handle the forward reference
+    static const RE2 p(R"((?i)(If\s+Right\s*\(\s*cGamename\s*,\s*1\s*\)\s*=\s*"c"\s+Then\s+)(\w+\s*=\s*True))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        count++;
+        PLOGI.printf("PatchForwardConstantReference: Wrapping cGamename check in error handling");
+        // Default to False and comment out the check - color ROM detection doesn't work with forward ref
+        return "' " + std::string(m[0]) + " ' Disabled - cGameName forward reference issue on Android";
+    });
+
+    if (count > 0) {
+        LogPatch("Fixed cGameName forward reference issue", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// SolCallback assignments - Wine VBScript fails because constants aren't defined yet
+// The SolCallback array and constants like sBallRelease are defined in VPM helper scripts
+// Wrap the SolCallback block in On Error Resume Next to allow compilation to continue
+// =============================================================================
+std::string SimpleScriptPatcher::PatchSolCallbackBlock(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Find the first SolCallback line and wrap the block in error handling
+    // Pattern: Find "'Solenoid Call backs" comment or first SolCallback line
+    // Insert On Error Resume Next before it
+    static const RE2 commentPattern(R"((?i)('\*+\s*\r?\n'\s*Solenoid\s+Call\s*backs?\s*\r?\n'\*+))");
+    RE2Match match;
+    if (RE2FindFirst(r, commentPattern, match)) {
+        // Found the comment block, insert error handling before it
+        count++;
+        PLOGI.printf("PatchSolCallbackBlock: Found Solenoid Callbacks comment block");
+        std::string replacement = "On Error Resume Next ' Wine VBScript SolCallback fix\r\n" + std::string(match[0]);
+        r = r.substr(0, match.position) + replacement + r.substr(match.position + match.length);
+    } else {
+        // Try finding first SolCallback line
+        static const RE2 solCallbackPattern(R"((?i)(^|\r?\n)([ \t]*SolCallback\s*\())");
+        if (RE2FindFirst(r, solCallbackPattern, match)) {
+            count++;
+            PLOGI.printf("PatchSolCallbackBlock: Found first SolCallback line");
+            // Insert On Error Resume Next before the first SolCallback
+            std::string replacement = std::string(match[1]) + "On Error Resume Next ' Wine VBScript SolCallback fix\r\n" + std::string(match[2]);
+            r = r.substr(0, match.position) + replacement + r.substr(match.position + match.length);
+        }
+    }
+
+    if (count > 0) {
+        LogPatch("Added error handling for SolCallback block (Wine VPM compatibility)", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// Select Case with array element access - Wine VBScript doesn't support this
+// Pattern: Select Case ArrayName(index) -> Dim tmp : tmp = ArrayName(CInt(index)) : Select Case tmp
+// Also wraps index in CInt() to handle Wine's issues with ByRef parameters as indices
+// =============================================================================
+std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Match: Select Case ArrayName(index)
+    // where ArrayName is a word and index can be a variable or expression
+    // Transform to: Dim ssc_tmp : ssc_tmp = ArrayName(CInt(index)) : Select Case ssc_tmp
+    // Using CInt() to ensure proper integer index - Wine has issues with ByRef params as array indices
+    static const RE2 p(R"((?i)([ \t]*)(Select\s+Case\s+)(\w+)\s*\(\s*([^)]+)\s*\))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        std::string indent = m[1];
+        std::string selectCase = m[2];
+        std::string arrayName = m[3];
+        std::string index = m[4];
+
+        // Skip if it looks like a function call (common VBS functions)
+        std::string lowerName = arrayName;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+        if (lowerName == "ubound" || lowerName == "lbound" || lowerName == "len" ||
+            lowerName == "mid" || lowerName == "left" || lowerName == "right" ||
+            lowerName == "instr" || lowerName == "cint" || lowerName == "clng" ||
+            lowerName == "cstr" || lowerName == "asc" || lowerName == "chr") {
+            return std::string(m[0]);  // Don't transform function calls
+        }
+
+        count++;
+        PLOGI.printf("PatchSelectCaseArrayAccess: %s(%s) -> temp variable with CInt", arrayName.c_str(), index.c_str());
+        // Wrap index in CInt() to handle Wine's ByRef parameter array index bug
+        return indent + "Dim ssc_tmp : ssc_tmp = " + arrayName + "(CInt(" + index + ")) : " + selectCase + "ssc_tmp";
+    });
+
+    if (count > 0) {
+        LogPatch("Fixed Select Case with array access (Wine limitation)", count);
     }
     return r;
 }
@@ -883,6 +1006,9 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchControllerPause(result);          // Controller.Pause not available on Android
     result = PatchPinUpPlayerFileAccess(result);    // PinUp Player file access not available on Android
     result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
+    result = PatchForwardConstantReference(result); // cGameName forward reference issue
+    result = PatchSolCallbackBlock(result);         // SolCallback VPM constants not defined
+    result = PatchSelectCaseArrayAccess(result);    // Select Case Array(x) Wine limitation
     // DISABLED: FlexDMD Virtual Segment DMD hides the light-based segments, but FlexDMD can't render overlays on Android
     // result = PatchEnableFlexDMDByDefault(result);   // Enable FlexDMD segment display for GLF tables
     // result = PatchFlexDMDSegments(result);          // Convert .Segments array to string method for Wine

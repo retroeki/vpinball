@@ -108,6 +108,18 @@ private:
     // Pattern: (Not IsNull)(x) -> Not IsNull(x)
     static std::string PatchParenthesizedNot(const std::string& script);
 
+    // Forward reference to cGameName constant - Wine doesn't handle this
+    // Pattern: If Right(cGamename,1)="c" uses cGameName before it's defined
+    static std::string PatchForwardConstantReference(const std::string& script);
+
+    // SolCallback block - VPM constants not defined at compile time
+    // Wrap in On Error Resume Next to allow script to continue
+    static std::string PatchSolCallbackBlock(const std::string& script);
+
+    // Select Case with array element access - Wine doesn't support this
+    // Pattern: Select Case Array(x) -> temp variable approach
+    static std::string PatchSelectCaseArrayAccess(const std::string& script);
+
     // Enable FlexDMD Virtual Segment DMD by default for GLF tables
     static std::string PatchEnableFlexDMDByDefault(const std::string& script);
 
