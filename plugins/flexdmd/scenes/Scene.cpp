@@ -1,0 +1,216 @@
+#include "Scene.h"
+#include "actors/FadeOverlay.h"
+#include "common.h"
+
+namespace Flex {
+
+Scene::Scene(FlexDMD* pFlexDMD, AnimationType animateIn, float pauseS, AnimationType animateOut, const string& id) : Group(pFlexDMD, id)
+{
+   SetVisible(true);
+   m_active = false;
+   m_time = 0;
+   m_animateIn = animateIn;
+   m_animateOut = animateOut;
+   m_pause = pauseS;
+}
+
+Scene::~Scene()
+{
+   for (auto it = m_tweens.begin(); it != m_tweens.end();)
+      m_tweens.erase(it);
+}
+
+void Scene::OnStageStateChanged()
+{
+   Group::OnStageStateChanged();
+   UpdateState();
+}
+
+void Scene::UpdateState()
+{
+   bool shouldBeActive = GetVisible() && GetOnStage();
+   if (shouldBeActive && !m_active) {
+      m_active = true;
+      SetSize(GetParent()->GetWidth(), GetParent()->GetHeight());
+      m_inAnimLength = StartAnimation(m_animateIn);
+      m_outAnimLength = -1;
+      Begin();
+   }
+   else if (!shouldBeActive && m_active) {
+      m_active = false;
+      for (auto it = m_tweens.begin(); it != m_tweens.end();)
+         m_tweens.erase(it);
+   }
+}
+
+float Scene::StartAnimation(AnimationType animation)
+{
+   float alphaLength = 0.5f;
+   float scrollWLength = 0.5f;
+   float scrollHLength = scrollWLength * (float)GetHeight() / (float)GetWidth();
+   // TODO Missing animations: ZoomIn = 2, ZoomOut = 3
+   switch (animation) {
+      case AnimationType_FadeIn:
+      {
+         FadeOverlay* pFade = new FadeOverlay(GetFlexDMD(), string());
+         AddActor(pFade);
+         pFade->SetAlpha(1.0f);
+         pFade->SetColor(RGB(0, 0, 0));
+         AddTween(pFade->GetAlpha(), 0.f, alphaLength, ([pFade](float newValue) {
+            pFade->SetAlpha(newValue);
+            return false;
+         }));
+         return alphaLength;
+      }
+      case AnimationType_FadeOut:
+      {
+         FadeOverlay* pFade = new FadeOverlay(GetFlexDMD(), string());
+         AddActor(pFade);
+         pFade->SetAlpha(0.0f);
+         pFade->SetColor(RGB(0, 0, 0));
+         AddTween(pFade->GetAlpha(), 1.0f, alphaLength, ([pFade](float newValue) {
+            pFade->SetAlpha(newValue);
+            return false;
+         }));
+         return alphaLength;
+      }
+      case AnimationType_ScrollOffLeft:
+      {
+         SetX(0);
+         AddTween(GetX(), (float)-GetWidth(), scrollWLength, ([this](float newValue) {
+            this->SetX(newValue);
+            return false;
+         }));
+         return scrollWLength;
+      }
+      case AnimationType_ScrollOffRight:
+      {
+         SetX(0);
+         AddTween(GetX(), (float)GetWidth(), scrollWLength, ([this](float newValue) {
+            this->SetX(newValue);
+            return false;
+         }));
+         return scrollWLength;
+      }
+      case AnimationType_ScrollOnLeft:
+      {
+         SetX((float)GetWidth());
+         AddTween(GetX(), 0.0f, scrollWLength, ([this](float newValue) {
+            this->SetX(newValue);
+            return false;
+         }));
+         return scrollWLength;
+      }
+      case AnimationType_ScrollOnRight:
+      {
+         SetX((float)-GetWidth());
+         AddTween(GetX(), 0.0f, scrollWLength, ([this](float newValue) {
+            this->SetX(newValue);
+            return false;
+         }));
+         return scrollWLength;
+      }
+      case AnimationType_ScrollOffUp:
+      {
+         SetY(0);
+         AddTween(GetY(), (float)-GetHeight(), scrollHLength, ([this](float newValue) {
+            this->SetY(newValue);
+            return false;
+         }));
+         return scrollHLength;
+      }
+      case AnimationType_ScrollOffDown:
+      {
+         SetY(0);
+         AddTween(GetY(), (float)GetHeight(), scrollHLength, ([this](float newValue) {
+            this->SetY(newValue);
+            return false;
+         }));
+         return scrollHLength;
+      }
+      case AnimationType_ScrollOnUp:
+      {
+         SetY((float)GetHeight());
+         AddTween(GetY(), 0.0f, scrollHLength, ([this](float newValue) {
+            this->SetY(newValue);
+            return false;
+         }));
+         return scrollHLength;
+      }
+      case AnimationType_ScrollOnDown:
+      {
+         SetY((float)-GetHeight());
+         AddTween(GetY(), 0.0f, scrollHLength, ([this](float newValue) {
+            this->SetY(newValue);
+            return false;
+         }));
+         return scrollHLength;
+      }
+      case AnimationType_FillFadeIn:
+      {
+         FadeOverlay* pFade = new FadeOverlay(GetFlexDMD(), string());
+         pFade->SetAlpha(1.0f);
+         pFade->SetColor(RGB(0, 0, 0));
+         AddActor(pFade);
+
+         pFade = new FadeOverlay(GetFlexDMD(), string());
+         pFade->SetAlpha(0.0f);
+         pFade->SetColor(RGB(255, 255, 255));
+         AddActor(pFade);
+         AddTween(pFade->GetAlpha(), 1.0f, alphaLength, ([pFade](float newValue) {
+            pFade->SetAlpha(newValue);
+            return false;
+         }));
+         return alphaLength;
+      }
+      case AnimationType_FillFadeOut:
+      {
+         FadeOverlay* pFade = new FadeOverlay(GetFlexDMD(), string());
+         pFade->SetAlpha(1.0f);
+         pFade->SetColor(RGB(255, 255, 255));
+         AddActor(pFade);
+         pFade = new FadeOverlay(GetFlexDMD(), string());
+         pFade->SetAlpha(0.0f);
+         pFade->SetColor(RGB(0, 0, 0));
+         AddActor(pFade);
+         AddTween(pFade->GetAlpha(), 1.0f, alphaLength, ([pFade](float newValue) {
+            pFade->SetAlpha(newValue);
+            return false;
+         }));
+        return alphaLength;
+      }
+      case AnimationType_None:
+         return 0.0f;
+      default:
+         LOGE("Unsupported animation in scene '%s': %d", GetName().c_str(), animation);
+         return 0.0f;
+   }
+}
+
+void Scene::Update(float secondsElapsed)
+{
+   Group::Update(secondsElapsed);
+   m_time += secondsElapsed;
+   if (m_pause >= 0.0f && m_outAnimLength < 0.f && m_time >= m_inAnimLength + m_pause)
+      m_outAnimLength = StartAnimation(m_animateOut);
+
+   for (auto it = m_tweens.begin(); it != m_tweens.end();) {
+      it->step((int)(secondsElapsed * 1000.0f));
+      if (it->progress() >= 1.0f)
+         m_tweens.erase(it);
+      else
+        ++it;
+   }
+}
+
+bool Scene::IsFinished() const
+{
+   return m_pause >= 0.0f && m_outAnimLength >= 0.f && m_time >= m_inAnimLength + m_pause + m_outAnimLength;
+}
+
+void Scene::AddTween(float from, float to, float duration, const std::function<bool (float)>& callback)
+{
+   m_tweens.emplace_back(tweeny::from(from).to(to).during(duration * 1000.0f).onStep(callback));
+}
+
+}

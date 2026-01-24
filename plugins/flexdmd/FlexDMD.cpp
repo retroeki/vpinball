@@ -240,6 +240,55 @@ void FlexDMD::SetSegments(const std::vector<uint16_t>& segments)
    }
 }
 
+void FlexDMD::SetSegmentsFromString(const string& segStr)
+{
+   // Parse comma-separated string of segment values (Wine VBScript workaround)
+   // Format: "val0,val1,val2,..." where each value is a uint16
+
+   uint16_t newSegData[38] = {0};
+   size_t index = 0;
+   size_t start = 0;
+
+   for (size_t i = 0; i <= segStr.length() && index < 38; i++)
+   {
+      if (i == segStr.length() || segStr[i] == ',')
+      {
+         if (i > start)
+         {
+            string valStr = segStr.substr(start, i - start);
+            try {
+               newSegData[index] = static_cast<uint16_t>(std::stoul(valStr));
+            } catch (...) {
+               LOGE("SetSegmentsFromString: Failed to parse value at index %zu: '%s'", index, valStr.c_str());
+            }
+         }
+         index++;
+         start = i + 1;
+      }
+   }
+
+   // Check if any segment has non-zero value
+   bool hasNonZero = false;
+   for (size_t i = 0; i < 38; i++) {
+      if (newSegData[i] != 0) {
+         hasNonZero = true;
+         break;
+      }
+   }
+
+   if (hasNonZero) {
+      LOGI("SetSegmentsFromString: GOT NON-ZERO SEGMENTS! First few: %u,%u,%u,%u,%u,%u,%u,%u",
+           newSegData[0], newSegData[1], newSegData[2], newSegData[3],
+           newSegData[4], newSegData[5], newSegData[6], newSegData[7]);
+   }
+
+   if (memcmp(m_segData, newSegData, 38 * sizeof(uint16_t)) != 0)
+   {
+      memcpy(m_segData, newSegData, 38 * sizeof(uint16_t));
+      m_frameId++;
+   }
+}
+
 Group* FlexDMD::NewGroup(const string& name) { return new Group(this, name); }
 
 Frame* FlexDMD::NewFrame(const string& name) { return new Frame(this, name); }

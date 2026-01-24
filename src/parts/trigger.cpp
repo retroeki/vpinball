@@ -1,0 +1,1239 @@
+// license:GPLv3+
+
+#include "core/stdafx.h"
+#include "utils/objloader.h"
+#include "meshes/triggerSimpleMesh.h"
+#include "meshes/triggerStarMesh.h"
+#include "meshes/triggerButtonMesh.h"
+#include "meshes/triggerWireDMesh.h"
+#include "meshes/triggerInderMesh.h"
+#include "renderer/Shader.h"
+
+Trigger::Trigger()
+{
+   m_ptriggerhitcircle = nullptr;
+
+   m_hitEvent = false;
+   m_unhitEvent = false;
+   m_doAnimation = false;
+   m_moveDown = false;
+   m_animHeightOffset = 0.0f;
+   m_vertexBuffer_animHeightOffset = -FLT_MAX;
+
+   m_menuid = IDR_SURFACEMENU;
+   m_propVisual = nullptr;
+}
+
+Trigger::~Trigger()
+{
+   assert(m_rd == nullptr);
+}
+
+Trigger *Trigger::CopyForPlay(PinTable *live_table) const
+{
+   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Trigger, live_table, m_vdpoint)
+   return dst;
+}
+
+void Trigger::UpdateStatusBarInfo()
+{
+   if(g_pplayer)
+       return;
+
+   if (m_d.m_shape != TriggerNone)
+   {
+      const Vertex3D_NoTex2 *meshVertices;
+      switch(m_d.m_shape)
+      {
+      case TriggerWireA:
+      case TriggerWireB:
+      case TriggerWireC:
+      {
+         m_numVertices = triggerSimpleNumVertices;
+         m_numIndices = triggerSimpleNumIndices;
+         m_faceIndices = triggerSimpleIndices;
+         meshVertices = triggerSimple;
+         break;
+      }
+      case TriggerWireD:
+      {
+         m_numVertices = triggerDWireNumVertices;
+         m_numIndices = triggerDWireNumIndices;
+         m_faceIndices = triggerDWireIndices;
+         meshVertices = triggerDWireMesh;
+         break;
+      }
+      case TriggerInder:
+      {
+         m_numVertices = triggerInderNumVertices;
+         m_numIndices = triggerInderNumIndices;
+         m_faceIndices = triggerInderIndices;
+         meshVertices = triggerInderMesh;
+         break;
+      }
+      case TriggerButton:
+      {
+         m_numVertices = triggerButtonNumVertices;
+         m_numIndices = triggerButtonNumIndices;
+         m_faceIndices = triggerButtonIndices;
+         meshVertices = triggerButtonMesh;
+         break;
+      }
+      case TriggerStar:
+      {
+         m_numVertices = triggerStarNumVertices;
+         m_numIndices = triggerStarNumIndices;
+         m_faceIndices = triggerStarIndices;
+         meshVertices = triggerStar;
+         break;
+      }
+      default:
+         assert(!"Unhandled Trigger case");
+         break;
+      }
+
+      m_vertices.resize(m_numVertices);
+      const Matrix3D fullMatrix = Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
+      for (int i = 0; i < m_numVertices; i++)
+      {
+         m_vertices[i] = fullMatrix * meshVertices[i];
+         if (m_d.m_shape != TriggerStar && m_d.m_shape != TriggerButton)
+         {
+            m_vertices[i].x *= m_d.m_scaleX;
+            m_vertices[i].y *= m_d.m_scaleY;
+         }
+         else
+         {
+            m_vertices[i].x *= m_d.m_radius;
+            m_vertices[i].y *= m_d.m_radius;
+         }
+         m_vertices[i].x += m_d.m_vCenter.x;
+         m_vertices[i].y += m_d.m_vCenter.y;
+      }
+   }
+}
+
+void Trigger::InitShape(float x, float y)
+{
+   constexpr float lengthX = 30.0f;
+   constexpr float lengthY = 30.0f;
+   UpdateStatusBarInfo();
+
+   for (size_t i = 0; i < m_vdpoint.size(); i++)
+      m_vdpoint[i]->Release();
+   m_vdpoint.clear();
+
+   // First time shape has been set to custom - set up some points
+   CComObject<DragPoint> *pdp;
+   CComObject<DragPoint>::CreateInstance(&pdp);
+   if (pdp)
+   {
+      pdp->AddRef();
+      pdp->Init(this, x - lengthX, y - lengthY, 0.f, false);
+      m_vdpoint.push_back(pdp);
+   }
+   CComObject<DragPoint>::CreateInstance(&pdp);
+   if (pdp)
+   {
+      pdp->AddRef();
+      pdp->Init(this, x - lengthX, y + lengthY, 0.f, false);
+      m_vdpoint.push_back(pdp);
+   }
+   CComObject<DragPoint>::CreateInstance(&pdp);
+   if (pdp)
+   {
+      pdp->AddRef();
+      pdp->Init(this, x + lengthX, y + lengthY, 0.f, false);
+      m_vdpoint.push_back(pdp);
+   }
+   CComObject<DragPoint>::CreateInstance(&pdp);
+   if (pdp)
+   {
+      pdp->AddRef();
+      pdp->Init(this, x + lengthX, y - lengthY, 0.f, false);
+      m_vdpoint.push_back(pdp);
+   }
+}
+
+HRESULT Trigger::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+{
+   m_ptable = ptable;
+   SetDefaults(fromMouseClick);
+   m_d.m_vCenter.x = x;
+   m_d.m_vCenter.y = y;
+   if (m_vdpoint.empty())
+      InitShape(x, y);
+   return forPlay ? S_OK : InitVBA(true, nullptr);
+}
+
+void Trigger::SetDefaults(const bool fromMouseClick)
+{
+#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsTrigger_##prop() : Settings::GetDefaultPropsTrigger_##prop##_Default()
+   LinkProp(m_d.m_radius, Radius);
+   LinkProp(m_d.m_rotation, Rotation);
+   LinkProp(m_d.m_wireThickness, WireThickness);
+   LinkProp(m_d.m_scaleX, ScaleX);
+   LinkProp(m_d.m_scaleY, ScaleY);
+   LinkProp(m_d.m_enabled, Enabled);
+   LinkProp(m_d.m_visible, Visible);
+   LinkProp(m_d.m_hit_height, HitHeight);
+   LinkProp(m_d.m_shape, Shape);
+   LinkProp(m_d.m_szSurface, Surface);
+   LinkProp(m_d.m_animSpeed, AnimSpeed);
+   LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
+   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
+   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+#undef LinkProp
+}
+
+void Trigger::WriteRegDefaults()
+{
+#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsTrigger_##prop(field, false)
+   LinkProp(m_d.m_radius, Radius);
+   LinkProp(m_d.m_rotation, Rotation);
+   LinkProp(m_d.m_wireThickness, WireThickness);
+   LinkProp(m_d.m_scaleX, ScaleX);
+   LinkProp(m_d.m_scaleY, ScaleY);
+   LinkProp(m_d.m_enabled, Enabled);
+   LinkProp(m_d.m_visible, Visible);
+   LinkProp(m_d.m_hit_height, HitHeight);
+   LinkProp(m_d.m_shape, Shape);
+   LinkProp(m_d.m_szSurface, Surface);
+   LinkProp(m_d.m_animSpeed, AnimSpeed);
+   LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
+   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
+   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+#undef LinkProp
+}
+
+void Trigger::UIRenderPass1(Sur * const psur)
+{
+   if (m_vdpoint.empty())
+      InitShape(m_d.m_vCenter.x, m_d.m_vCenter.y);
+
+   psur->SetBorderColor(-1, false, 0);
+   psur->SetObject(this);
+
+   if (m_d.m_shape != TriggerStar && m_d.m_shape != TriggerButton)
+   {
+      psur->SetFillColor(m_ptable->RenderSolid() ? RGB(200, 220, 200) : -1);
+
+      vector<RenderVertex> vvertex;
+      GetRgVertex(vvertex);
+
+      psur->Polygon(vvertex);
+   }
+   else
+   {
+      psur->SetFillColor(-1);
+      psur->Ellipse(m_d.m_vCenter.x, m_d.m_vCenter.y, m_d.m_radius);
+   }
+}
+
+void Trigger::UIRenderPass2(Sur * const psur)
+{
+   psur->SetLineColor(RGB(0, 0, 0), false, 0);
+   psur->SetObject(this);
+   psur->SetFillColor(-1);
+
+   if (m_d.m_shape != TriggerStar && m_d.m_shape != TriggerButton)
+   {
+      vector<RenderVertex> vvertex;
+      GetRgVertex(vvertex);
+
+      psur->SetObject(nullptr);
+      psur->SetBorderColor(RGB(0, 180, 0), false, 1);
+
+      psur->Polygon(vvertex);
+
+      bool drawDragpoints = (m_selectstate != eNotSelected) || (m_vpinball->m_alwaysDrawDragPoints);
+      // if the item is selected then draw the dragpoints (or if we are always to draw dragpoints)
+      if (!drawDragpoints)
+      {
+         // if any of the dragpoints of this object are selected then draw all the dragpoints
+         for (size_t i = 0; i < m_vdpoint.size(); i++)
+         {
+            const CComObject<DragPoint> * const pdp = m_vdpoint[i];
+            if (pdp->m_selectstate != eNotSelected)
+            {
+               drawDragpoints = true;
+               break;
+            }
+         }
+      }
+
+      if (drawDragpoints)
+      {
+         for (size_t i = 0; i < m_vdpoint.size(); i++)
+         {
+            CComObject<DragPoint> * const pdp = m_vdpoint[i];
+            psur->SetFillColor(-1);
+            psur->SetBorderColor(pdp->m_dragging ? RGB(0, 255, 0) : RGB(0, 180, 0), false, 0);
+            psur->SetObject(pdp);
+
+            psur->Ellipse2(pdp->m_v.x, pdp->m_v.y, 8);
+         }
+      }
+   }
+   else
+   {
+      psur->SetObject(nullptr);
+      psur->SetBorderColor(RGB(0, 180, 0), false, 1);
+
+      psur->Line(m_d.m_vCenter.x - m_d.m_radius, m_d.m_vCenter.y, m_d.m_vCenter.x + m_d.m_radius, m_d.m_vCenter.y);
+      psur->Line(m_d.m_vCenter.x, m_d.m_vCenter.y - m_d.m_radius, m_d.m_vCenter.x, m_d.m_vCenter.y + m_d.m_radius);
+
+      const float r2 = m_d.m_radius * (float)sin(M_PI / 4.0);
+
+      psur->Line(m_d.m_vCenter.x - r2, m_d.m_vCenter.y - r2, m_d.m_vCenter.x + r2, m_d.m_vCenter.y + r2);
+      psur->Line(m_d.m_vCenter.x - r2, m_d.m_vCenter.y + r2, m_d.m_vCenter.x + r2, m_d.m_vCenter.y - r2);
+   }
+
+   if (m_d.m_shape == TriggerWireA || m_d.m_shape == TriggerWireB || m_d.m_shape == TriggerWireC || m_d.m_shape == TriggerWireD || m_d.m_shape == TriggerInder)
+   {
+      if (m_numIndices > 0)
+      {
+         const size_t numPts = m_numIndices / 3 + 1;
+         vector<Vertex2D> drawVertices(numPts);
+
+         const Vertex3Ds& A = m_vertices[m_faceIndices[0]];
+         drawVertices[0] = Vertex2D(A.x, A.y);
+
+         size_t o = 1;
+         for (int i = 0; i < m_numIndices; i += 3, ++o)
+         {
+            const Vertex3Ds& B = m_vertices[m_faceIndices[i + 1]];
+            drawVertices[o] = Vertex2D(B.x, B.y);
+         }
+
+         psur->Polyline(drawVertices.data(), (int)drawVertices.size());
+      }
+   }
+}
+
+void Trigger::RenderBlueprint(Sur *psur, const bool solid)
+{
+   if (solid)
+      psur->SetFillColor(BLUEPRINT_SOLID_COLOR);
+   else
+      psur->SetFillColor(-1);
+   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
+   psur->SetObject(this);
+
+   psur->Ellipse(m_d.m_vCenter.x, m_d.m_vCenter.y, m_d.m_radius);
+}
+
+
+#pragma region Physics
+
+// Ported at: VisualPinball.Engine/VPT/Trigger/TriggerHitGenerator.cs
+
+void Trigger::PhysicSetup(PhysicsEngine* physics, const bool isUI)
+{
+   if (!isUI && GetPartGroup() != nullptr && GetPartGroup()->GetReferenceSpace() != PartGroupData::SpaceReference::SR_PLAYFIELD)
+      return;
+
+   const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y);
+   if (m_d.m_shape == TriggerStar || m_d.m_shape == TriggerButton)
+   {
+      TriggerHitCircle* hitcircle = new TriggerHitCircle(this, m_d.m_vCenter, m_d.m_radius, height, height + m_d.m_hit_height);
+      hitcircle->m_enabled = isUI ? true : m_d.m_enabled;
+      hitcircle->m_ObjType = eTrigger;
+      hitcircle->m_obj = (IFireEvents *)this;
+      if (!isUI) // Keep reference to update enable flag
+      {
+         assert(m_ptriggerhitcircle == nullptr);
+         m_ptriggerhitcircle = hitcircle;
+      }
+      physics->AddCollider(hitcircle, isUI);
+   }
+   else
+   {
+      vector<RenderVertex> vvertex;
+      GetRgVertex(vvertex);
+
+      const int count = (int)vvertex.size();
+      for (int i = 0; i < count; i++)
+      {
+         const RenderVertex &pv1 = vvertex[(i < count - 1) ? (i + 1) : 0];
+         const RenderVertex &pv2 = vvertex[(i < count - 2) ? (i + 2) : (i + 2 - count)];
+
+         LineSeg *const plineseg = isUI ? 
+              new LineSeg(this, pv1, pv2, height, height + max(m_d.m_hit_height - 8.0f, 0.f)) //adjust for same hit height as circular
+            : new TriggerLineSeg(this, pv1, pv2, height, height + max(m_d.m_hit_height - 8.0f, 0.f));
+         plineseg->m_ObjType = eTrigger;
+         plineseg->m_obj = (IFireEvents *)this;
+         physics->AddCollider(plineseg, isUI);
+      }
+
+      Vertex3Ds *const rgv3D = new Vertex3Ds[count];
+      for (int i = 0; i < count; i++)
+      {
+         rgv3D[i].x = vvertex[i].x;
+         rgv3D[i].y = vvertex[i].y;
+         rgv3D[i].z = height + (float)(PHYS_SKIN * 2.0);
+      }
+      Hit3DPoly *const ph3dpoly = new Hit3DPoly(this, rgv3D, count);
+      ph3dpoly->m_ObjType = eTrigger;
+      ph3dpoly->m_obj = (IFireEvents *)this;
+      if (!isUI) // Keep reference to update enable flag
+      {
+         assert(m_ptriggerhitpoly == nullptr);
+         m_ptriggerhitpoly = ph3dpoly;
+      }
+      physics->AddCollider(ph3dpoly, isUI);
+   }
+}
+
+void Trigger::PhysicRelease(PhysicsEngine* physics, const bool isUI)
+{
+   if (!isUI)
+   {
+      m_ptriggerhitcircle = nullptr;
+      m_ptriggerhitpoly = nullptr;
+   }
+}
+
+void Trigger::TriggerAnimationHit()
+{
+   m_hitEvent = true;
+}
+
+void Trigger::TriggerAnimationUnhit()
+{
+   m_unhitEvent = true;
+}
+
+#pragma endregion
+
+
+#pragma region Rendering
+
+void Trigger::RenderSetup(RenderDevice *device)
+{
+   assert(m_rd == nullptr);
+   m_rd = device;
+   m_hitEvent = false;
+   m_unhitEvent = false;
+   m_doAnimation = false;
+   m_moveDown = false;
+   m_animHeightOffset = 0.0f;
+   m_vertexBuffer_animHeightOffset = -FLT_MAX;
+
+   if (!m_d.m_visible || m_d.m_shape == TriggerNone)
+      return;
+
+   const WORD* indices;
+   switch(m_d.m_shape)
+   {
+   case TriggerWireA:
+   case TriggerWireB:
+   case TriggerWireC:
+   {
+      m_numVertices = triggerSimpleNumVertices;
+      m_numIndices = triggerSimpleNumIndices;
+      indices = triggerSimpleIndices;
+      break;
+   }
+   case TriggerWireD:
+   {
+      m_numVertices = triggerDWireNumVertices;
+      m_numIndices = triggerDWireNumIndices;
+      indices = triggerDWireIndices;
+      break;
+   }
+   case TriggerInder:
+   {
+      m_numVertices = triggerInderNumVertices;
+      m_numIndices = triggerInderNumIndices;
+      indices = triggerInderIndices;
+      break;
+   }
+   case TriggerButton:
+   {
+      m_numVertices = triggerButtonNumVertices;
+      m_numIndices = triggerButtonNumIndices;
+      indices = triggerButtonIndices;
+      break;
+   }
+   case TriggerStar:
+   {
+      m_numVertices = triggerStarNumVertices;
+      m_numIndices = triggerStarNumIndices;
+      indices = triggerStarIndices;
+      break;
+   }
+   default:
+   {
+      assert(!"Unknown Trigger");
+      break;
+   }
+   }
+
+   GenerateMesh();
+   std::shared_ptr<IndexBuffer> triggerIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_numIndices, indices);
+   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices, (float *)m_triggerVertices, true);
+   m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), vertexBuffer, triggerIndexBuffer, true);
+}
+
+void Trigger::RenderRelease()
+{
+   assert(m_rd != nullptr);
+   m_rd = nullptr;
+   m_meshBuffer = nullptr;
+   delete[] m_triggerVertices;
+   m_triggerVertices = nullptr;
+}
+
+// Ported at: VisualPinball.Unity/VisualPinball.Unity/VPT/Trigger/TriggerAnimationSystem.cs
+
+void Trigger::UpdateAnimation(const float diff_time_msec)
+{
+   assert(m_rd != nullptr);
+   float animLimit;
+   switch (m_d.m_shape)
+   {
+      case TriggerStar:   animLimit = m_d.m_radius * (float)(1.0 /  5.0); break;
+      case TriggerButton: animLimit = m_d.m_radius * (float)(1.0 / 10.0); break;
+      case TriggerWireC:  animLimit = 60.0f; break;
+      case TriggerWireD:  animLimit = 25.0f; break;
+      case TriggerInder:  animLimit = 25.0f; break;
+      default:            animLimit = 32.0f; break;
+   }
+
+   if (m_hitEvent)
+   {
+      m_doAnimation = true;
+      m_hitEvent = false;
+      // unhitEvent = false;   // Bugfix: If HitEvent and unhitEvent happen at the same time, you want to favor the unhit, otherwise the switch gets stuck down.
+      m_animHeightOffset = 0.0f;
+      m_moveDown = true;
+   }
+   if (m_unhitEvent)
+   {
+      m_doAnimation = true;
+      m_unhitEvent = false;
+      m_hitEvent = false;
+      m_animHeightOffset = animLimit;
+      m_moveDown = false;
+   }
+
+   if (m_doAnimation)
+   {
+      float step = diff_time_msec*m_d.m_animSpeed;
+      if (m_moveDown)
+         step = -step;
+      m_animHeightOffset += step;
+
+      if (m_moveDown)
+      {
+         if (m_animHeightOffset <= -animLimit)
+         {
+            m_animHeightOffset = -animLimit;
+            m_doAnimation = false;
+            m_moveDown = false;
+         }
+      }
+      else
+      {
+         if (m_animHeightOffset >= 0.0f)
+         {
+            m_animHeightOffset = 0.0f;
+            m_doAnimation = false;
+            m_moveDown = true;
+         }
+      }
+      FireGroupEvent(DISPID_AnimateEvents_Animate);
+   }
+}
+
+void Trigger::Render(const unsigned int renderMask)
+{
+   assert(m_rd != nullptr);
+   assert(!m_backglass);
+   const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
+   const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
+   const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
+   TRACE_FUNCTION();
+
+   if (!m_d.m_visible 
+   || m_d.m_shape == TriggerNone 
+   || isStaticOnly 
+   || (isReflectionPass && !m_d.m_reflectionEnabled))
+      return;
+      
+   if (m_animHeightOffset != m_vertexBuffer_animHeightOffset)
+   {
+      m_vertexBuffer_animHeightOffset = m_animHeightOffset;
+      Vertex3D_NoTex2 *buf;
+      m_meshBuffer->m_vb->Lock(buf);
+      for (int i = 0; i < m_numVertices; i++)
+      {
+         buf[i].x = m_triggerVertices[i].x;
+         buf[i].y = m_triggerVertices[i].y;
+         buf[i].z = m_triggerVertices[i].z + m_animHeightOffset;
+         buf[i].nx = m_triggerVertices[i].nx;
+         buf[i].ny = m_triggerVertices[i].ny;
+         buf[i].nz = m_triggerVertices[i].nz;
+         buf[i].tu = m_triggerVertices[i].tu;
+         buf[i].tv = m_triggerVertices[i].tv;
+      }
+      m_meshBuffer->m_vb->Unlock();
+   }
+
+   m_rd->ResetRenderState();
+   if (m_d.m_shape == TriggerWireA || m_d.m_shape == TriggerWireB || m_d.m_shape == TriggerWireC || m_d.m_shape == TriggerWireD || m_d.m_shape == TriggerInder)
+      m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+   m_rd->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), nullptr);
+   m_rd->DrawMesh(m_rd->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
+}
+
+#pragma endregion
+
+
+void Trigger::ExportMesh(ObjLoader& loader)
+{
+   if (!m_d.m_visible || m_d.m_shape == TriggerNone)
+      return;
+
+   const string name = MakeString(m_wzName);
+   GenerateMesh();
+   loader.WriteObjectName(name);
+   loader.WriteVertexInfo(m_triggerVertices, m_numVertices);
+   const Material * const mat = m_ptable->GetMaterial(m_d.m_szMaterial);
+   loader.WriteMaterial(m_d.m_szMaterial, string(), mat);
+   loader.UseTexture(m_d.m_szMaterial);
+
+   const WORD* indices;
+   switch(m_d.m_shape)
+   {
+   case TriggerWireA:
+   case TriggerWireB:
+   case TriggerWireC:
+   {
+      indices = triggerSimpleIndices;
+      break;
+   }
+   case TriggerWireD:
+   {
+      indices = triggerDWireIndices;
+      break;
+   }
+   case TriggerInder:
+   {
+      indices = triggerInderIndices;
+      break;
+   }
+   case TriggerButton:
+   {
+      indices = triggerButtonIndices;
+      break;
+   }
+   case TriggerStar:
+   {
+      indices = triggerStarIndices;
+      break;
+   }
+   default:
+   {
+      assert(!"Unknown Trigger");
+      break;
+   }
+   }
+
+   loader.WriteFaceInfoList(indices, m_numIndices);
+   loader.UpdateFaceOffset(m_numVertices);
+   
+   delete[] m_triggerVertices;
+   m_triggerVertices = nullptr;
+}
+
+// Ported at: VisualPinball.Engine/VPT/Trigger/TriggerMeshGenerator.cs
+
+void Trigger::GenerateMesh()
+{
+   // This create m_triggerVertices which must be disposed by caller
+   assert(m_triggerVertices == nullptr);
+   const float baseHeight = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y);
+   const Vertex3D_NoTex2 *verts;
+   float zoffset = (m_d.m_shape == TriggerButton) ? 5.0f : 0.0f;
+   if (m_d.m_shape == TriggerWireC) zoffset = -19.0f;
+
+   m_boundingSphereCenter.Set(m_d.m_vCenter.x, m_d.m_vCenter.y, baseHeight);
+
+   switch(m_d.m_shape)
+   {
+   case TriggerWireA:
+   case TriggerWireB:
+   case TriggerWireC:
+   {
+      m_numVertices = triggerSimpleNumVertices;
+      m_numIndices = triggerSimpleNumIndices;
+      verts = triggerSimple;
+      break;
+   }
+   case TriggerWireD:
+   {
+      m_numVertices = triggerDWireNumVertices;
+      m_numIndices = triggerDWireNumIndices;
+      verts = triggerDWireMesh;
+      break;
+   }
+   case TriggerInder:
+   {
+      m_numVertices = triggerInderNumVertices;
+      m_numIndices = triggerInderNumIndices;
+      verts = triggerInderMesh;
+      break;
+   }
+   case TriggerButton:
+   {
+      m_numVertices = triggerButtonNumVertices;
+      m_numIndices = triggerButtonNumIndices;
+      verts = triggerButtonMesh;
+      break;
+   }
+   case TriggerStar:
+   {
+      m_numVertices = triggerStarNumVertices;
+      m_numIndices = triggerStarNumIndices;
+      verts = triggerStar;
+      break;
+   }
+   default:
+   {
+      ShowError("Unknown Trigger type");
+      return;
+   }
+   }
+
+   m_triggerVertices = new Vertex3D_NoTex2[m_numVertices];
+
+   Matrix3D fullMatrix;
+   if (m_d.m_shape == TriggerWireB)
+   {
+      fullMatrix = Matrix3D::MatrixRotateX(ANGTORAD(-23.f))
+                 * Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
+   }
+   else if (m_d.m_shape == TriggerWireC)
+   {
+      fullMatrix = Matrix3D::MatrixRotateX(ANGTORAD(140.f))
+                 * Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
+   }
+   else
+      fullMatrix = Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
+
+   for (int i = 0; i < m_numVertices; i++)
+   {
+      Vertex3Ds vert = fullMatrix * Vertex3Ds{verts[i].x, verts[i].y, verts[i].z};
+
+      if (m_d.m_shape == TriggerButton || m_d.m_shape == TriggerStar)
+      {
+         m_triggerVertices[i].x = vert.x*m_d.m_radius + m_d.m_vCenter.x;
+         m_triggerVertices[i].y = vert.y*m_d.m_radius + m_d.m_vCenter.y;
+         m_triggerVertices[i].z = vert.z*m_d.m_radius + baseHeight+zoffset;
+      }
+      else 
+      {
+         m_triggerVertices[i].x = vert.x*m_d.m_scaleX + m_d.m_vCenter.x;
+         m_triggerVertices[i].y = vert.y*m_d.m_scaleY + m_d.m_vCenter.y;
+         m_triggerVertices[i].z = vert.z*1.0f + baseHeight+zoffset;
+      }
+
+      vert = Vertex3Ds(verts[i].nx, verts[i].ny, verts[i].nz);
+      vert = fullMatrix.MultiplyVectorNoTranslate(vert);
+      m_triggerVertices[i].nx = vert.x;
+      m_triggerVertices[i].ny = vert.y;
+      m_triggerVertices[i].nz = vert.z;
+      m_triggerVertices[i].tu = verts[i].tu;
+      m_triggerVertices[i].tv = verts[i].tv;
+
+      if (m_d.m_shape == TriggerWireA || m_d.m_shape == TriggerWireB || m_d.m_shape == TriggerWireC || m_d.m_shape == TriggerWireD || m_d.m_shape == TriggerInder)
+      {
+         m_triggerVertices[i].x += m_triggerVertices[i].nx*m_d.m_wireThickness;
+         m_triggerVertices[i].y += m_triggerVertices[i].ny*m_d.m_wireThickness;
+         m_triggerVertices[i].z += m_triggerVertices[i].nz*m_d.m_wireThickness;
+      }
+   }
+}
+
+void Trigger::SetObjectPos()
+{
+    m_vpinball->SetObjectPosCur(m_d.m_vCenter.x, m_d.m_vCenter.y);
+}
+
+void Trigger::MoveOffset(const float dx, const float dy)
+{
+   m_d.m_vCenter.x += dx;
+   m_d.m_vCenter.y += dy;
+
+   for (size_t i = 0; i < m_vdpoint.size(); i++)
+   {
+      CComObject<DragPoint> * const pdp = m_vdpoint[i];
+
+      pdp->m_v.x += dx;
+      pdp->m_v.y += dy;
+   }
+
+   UpdateStatusBarInfo();
+}
+
+Vertex2D Trigger::GetPointCenter() const
+{
+   return m_d.m_vCenter;
+}
+
+void Trigger::PutPointCenter(const Vertex2D& pv)
+{
+   m_d.m_vCenter = pv;
+}
+
+void Trigger::EditMenu(CMenu &menu)
+{
+#ifndef __STANDALONE__
+   menu.EnableMenuItem(ID_WALLMENU_FLIP, MF_BYCOMMAND | MF_ENABLED);
+   menu.EnableMenuItem(ID_WALLMENU_MIRROR, MF_BYCOMMAND | MF_ENABLED);
+   menu.EnableMenuItem(ID_WALLMENU_ROTATE, MF_BYCOMMAND | MF_ENABLED);
+   menu.EnableMenuItem(ID_WALLMENU_SCALE, MF_BYCOMMAND | MF_ENABLED);
+   menu.EnableMenuItem(ID_WALLMENU_ADDPOINT, MF_BYCOMMAND | MF_ENABLED);
+#endif
+}
+
+void Trigger::DoCommand(int icmd, int x, int y)
+{
+   ISelect::DoCommand(icmd, x, y);
+
+   switch (icmd)
+   {
+   case ID_WALLMENU_FLIP:
+      FlipPointY(GetPointCenter());
+      break;
+
+   case ID_WALLMENU_MIRROR:
+      FlipPointX(GetPointCenter());
+      break;
+
+   case ID_WALLMENU_ROTATE:
+      RotateDialog();
+      break;
+
+   case ID_WALLMENU_SCALE:
+      ScaleDialog();
+      break;
+
+   case ID_WALLMENU_TRANSLATE:
+      TranslateDialog();
+      break;
+
+   case ID_WALLMENU_ADDPOINT:
+   {
+      STARTUNDO
+
+      const Vertex2D v = m_ptable->TransformPoint(x, y);
+
+      vector<RenderVertex> vvertex;
+      GetRgVertex(vvertex);
+
+      int iSeg;
+      Vertex2D vOut;
+      ClosestPointOnPolygon(vvertex, v, vOut, iSeg, true);
+
+      // Go through vertices (including iSeg itself) counting control points until iSeg
+      int icp = 0;
+      for (int i = 0; i < (iSeg + 1); i++)
+         if (vvertex[i].controlPoint)
+            icp++;
+
+      //if (icp == 0) // need to add point after the last point
+      //icp = m_vdpoint.size();
+
+      CComObject<DragPoint> *pdp;
+      CComObject<DragPoint>::CreateInstance(&pdp);
+      if (pdp)
+      {
+         pdp->AddRef();
+         pdp->Init(this, vOut.x, vOut.y, 0.f, false);
+         m_vdpoint.insert(m_vdpoint.begin() + icp, pdp); // push the second point forward, and replace it with this one.  Should work when index2 wraps.
+      }
+
+      STOPUNDO
+   }
+   break;
+   }
+}
+
+void Trigger::FlipY(const Vertex2D& pvCenter)
+{
+   if (m_d.m_shape == TriggerNone)
+      IHaveDragPoints::FlipPointY(pvCenter);
+}
+
+void Trigger::FlipX(const Vertex2D& pvCenter)
+{
+   if (m_d.m_shape == TriggerNone)
+      IHaveDragPoints::FlipPointX(pvCenter);
+}
+
+void Trigger::Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter)
+{
+   if (m_d.m_shape == TriggerNone)
+      IHaveDragPoints::RotatePoints(ang, pvCenter, useElementCenter);
+   else
+   {
+      STARTUNDOSELECT
+      m_d.m_rotation = ang;
+      STOPUNDOSELECT
+      UpdateStatusBarInfo();
+   }
+}
+
+void Trigger::Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter)
+{
+   if (m_d.m_shape == TriggerNone)
+      IHaveDragPoints::ScalePoints(scalex, scaley, pvCenter, useElementCenter);
+   else
+   {
+      STARTUNDOSELECT
+      m_d.m_scaleX = scalex;
+      m_d.m_scaleY = scaley;
+      STOPUNDOSELECT
+      UpdateStatusBarInfo();
+   }
+}
+
+void Trigger::Translate(const Vertex2D &pvOffset)
+{
+   if (m_d.m_shape == TriggerNone)
+      IHaveDragPoints::TranslatePoints(pvOffset);
+   else
+   {
+      STARTUNDOSELECT
+      MoveOffset(pvOffset.x, pvOffset.y);
+      STOPUNDOSELECT
+   }
+}
+
+HRESULT Trigger::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
+{
+   BiffWriter bw(pstm, hcrypthash);
+
+   bw.WriteVector2(FID(VCEN), m_d.m_vCenter);
+   bw.WriteFloat(FID(RADI), m_d.m_radius);
+   bw.WriteFloat(FID(ROTA), m_d.m_rotation);
+   bw.WriteFloat(FID(WITI), m_d.m_wireThickness);
+   bw.WriteFloat(FID(SCAX), m_d.m_scaleX);
+   bw.WriteFloat(FID(SCAY), m_d.m_scaleY);
+   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
+   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
+   bw.WriteString(FID(SURF), m_d.m_szSurface);
+   bw.WriteString(FID(MATR), m_d.m_szMaterial);
+   bw.WriteBool(FID(EBLD), m_d.m_enabled);
+   bw.WriteBool(FID(VSBL), m_d.m_visible);
+   bw.WriteFloat(FID(THOT), m_d.m_hit_height);
+   bw.WriteWideString(FID(NAME), m_wzName);
+   bw.WriteInt(FID(SHAP), m_d.m_shape);
+   bw.WriteFloat(FID(ANSP), m_d.m_animSpeed);
+   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+
+   ISelect::SaveData(pstm, hcrypthash);
+
+   HRESULT hr;
+   if (FAILED(hr = SavePointData(pstm, hcrypthash)))
+      return hr;
+
+   bw.WriteTag(FID(ENDB));
+
+   return S_OK;
+}
+
+void Trigger::ClearForOverwrite()
+{
+   ClearPointsForOverwrite();
+}
+
+HRESULT Trigger::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+{
+   SetDefaults(false);
+
+   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
+
+   m_ptable = ptable;
+
+   br.Load();
+   return S_OK;
+}
+
+bool Trigger::LoadToken(const int id, BiffReader * const pbr)
+{
+   switch(id)
+   {
+   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
+   case FID(VCEN): pbr->GetVector2(m_d.m_vCenter); break;
+   case FID(RADI): pbr->GetFloat(m_d.m_radius); break;
+   case FID(ROTA): pbr->GetFloat(m_d.m_rotation); break;
+   case FID(WITI): pbr->GetFloat(m_d.m_wireThickness); break;
+   case FID(SCAX): pbr->GetFloat(m_d.m_scaleX); break;
+   case FID(SCAY): pbr->GetFloat(m_d.m_scaleY); break;
+   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
+   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
+   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
+   case FID(SURF): pbr->GetString(m_d.m_szSurface); break;
+   case FID(EBLD): pbr->GetBool(m_d.m_enabled); break;
+   case FID(THOT): pbr->GetFloat(m_d.m_hit_height); break;
+   case FID(VSBL): pbr->GetBool(m_d.m_visible); break;
+   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
+   case FID(SHAP): pbr->GetInt(&m_d.m_shape); break;
+   case FID(ANSP): pbr->GetFloat(m_d.m_animSpeed); break;
+   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
+   default:
+   {
+      if (id == FID(DPNT))
+         LoadPointToken(pbr);
+      ISelect::LoadToken(id, pbr);
+      break;
+   }
+   }
+   return true;
+}
+
+HRESULT Trigger::InitPostLoad()
+{
+   UpdateStatusBarInfo();
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::InterfaceSupportsErrorInfo(REFIID riid)
+{
+   static const IID* arr[] =
+   {
+      &IID_ITrigger,
+   };
+
+   for (size_t i = 0; i < std::size(arr); i++)
+      if (InlineIsEqualGUID(*arr[i], riid))
+         return S_OK;
+
+   return S_FALSE;
+}
+
+STDMETHODIMP Trigger::get_Radius(float *pVal)
+{
+   *pVal = m_d.m_radius;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Radius(float newVal)
+{
+   m_d.m_radius = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_X(float *pVal)
+{
+   *pVal = m_d.m_vCenter.x;
+   m_vpinball->SetStatusBarUnitInfo(string(), true);
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_X(float newVal)
+{
+   m_d.m_vCenter.x = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Y(float *pVal)
+{
+   *pVal = m_d.m_vCenter.y;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Y(float newVal)
+{
+   m_d.m_vCenter.y = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Surface(BSTR *pVal)
+{
+   *pVal = MakeWideBSTR(m_d.m_szSurface);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Surface(BSTR newVal)
+{
+   m_d.m_szSurface = MakeString(newVal);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Enabled(VARIANT_BOOL *pVal)
+{
+   *pVal = FTOVB(m_d.m_enabled);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Enabled(VARIANT_BOOL newVal)
+{
+   m_d.m_enabled = VBTOb(newVal);
+   if (m_ptriggerhitcircle)
+      m_ptriggerhitcircle->m_enabled = m_d.m_enabled;
+   if (m_ptriggerhitpoly)
+      m_ptriggerhitpoly->m_enabled = m_d.m_enabled;
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Visible(VARIANT_BOOL *pVal)
+{
+   *pVal = FTOVB(m_d.m_visible);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Visible(VARIANT_BOOL newVal)
+{
+   m_d.m_visible = VBTOb(newVal);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::BallCntOver(int *pVal)
+{
+   int cnt = 0;
+
+   if (g_pplayer)
+   {
+      for (size_t i = 0; i < g_pplayer->m_vball.size(); i++)
+      {
+         HitBall *const pball = g_pplayer->m_vball[i];
+
+         if (pball->m_d.m_vpVolObjs && FindIndexOf(*(pball->m_d.m_vpVolObjs), (IFireEvents*)this) >= 0) // cast to IFireEvents necessary, as it is stored like this in HitObject.m_obj
+         {
+            g_pplayer->m_pactiveball = pball; // set active ball for scriptor
+            ++cnt;
+         }
+      }
+   }
+
+   *pVal = cnt;
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::DestroyBall(int *pVal)
+{
+   if (pVal)
+      *pVal = 0;
+   
+   if (!g_pplayer)
+      return S_OK;
+
+   for (HitBall *ball : g_pplayer->m_vball)
+   {
+      if (ball->m_d.m_vpVolObjs)
+      {
+         const auto it = std::ranges::find(*(ball->m_d.m_vpVolObjs), (IFireEvents *)this); // cast to IFireEvents necessary, as it is stored like this in HitObject.m_obj
+         if (it != ball->m_d.m_vpVolObjs->end())
+         {
+            if (pVal)
+               (*pVal) = (*pVal) + 1;
+            ball->m_d.m_vpVolObjs->erase(it);
+            g_pplayer->DestroyBall(ball); // inside trigger volume?
+         }
+      }
+   }
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_HitHeight(float *pVal)
+{
+   *pVal = m_d.m_hit_height;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_HitHeight(float newVal)
+{
+   m_d.m_hit_height = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Rotation(float *pVal)
+{
+   *pVal = m_d.m_rotation;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Rotation(float newVal)
+{
+   m_d.m_rotation = newVal;
+   UpdateStatusBarInfo();
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_WireThickness(float *pVal)
+{
+   *pVal = m_d.m_wireThickness;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_WireThickness(float newVal)
+{
+   m_d.m_wireThickness = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_AnimSpeed(float *pVal)
+{
+   *pVal = m_d.m_animSpeed;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_AnimSpeed(float newVal)
+{
+   m_d.m_animSpeed = newVal;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_CurrentAnimOffset(float *pVal)
+{
+   *pVal = m_animHeightOffset;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_Material(BSTR *pVal)
+{
+   *pVal = MakeWideBSTR(m_d.m_szMaterial);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_Material(BSTR newVal)
+{
+   m_d.m_szMaterial = MakeString(newVal);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_TriggerShape(TriggerShape *pVal)
+{
+   *pVal = m_d.m_shape;
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_TriggerShape(TriggerShape newVal)
+{
+   m_d.m_shape = newVal;
+   UpdateStatusBarInfo();
+
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::get_ReflectionEnabled(VARIANT_BOOL *pVal)
+{
+   *pVal = FTOVB(m_d.m_reflectionEnabled);
+   return S_OK;
+}
+
+STDMETHODIMP Trigger::put_ReflectionEnabled(VARIANT_BOOL newVal)
+{
+   m_d.m_reflectionEnabled = VBTOb(newVal);
+   return S_OK;
+}

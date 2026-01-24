@@ -1,0 +1,77 @@
+// ============================================================================
+// External Class Method Transformation
+// ============================================================================
+// Transforms method calls for known classes from core.vbs even when the class
+// definition is not in the current script.
+
+static std::string TransformExternalClassMethodCalls(const std::string& script) {
+    // Known VPM classes from core.vbs and their methods
+    struct ExternalClass {
+        const char* name;
+        std::vector<const char*> methods;
+    };
+
+    std::vector<ExternalClass> knownClasses = {
+        {"cvpmDropTarget", {"InitDrop", "CreateEvents", "InitSnd", "Hit", "SolHit", "SolUnhit", "SolDropDown", "DropSol"}},
+        {"cvpmBallStack", {"InitSw", "InitKick", "InitAltKick", "InitExitSnd", "InitEntrySnd", "InitSaucer", "CreateEvents", "AddBall", "SolIn", "SolOut", "SolOutAlt", "Reset", "EntrySnd", "ExitSnd"}},
+        {"cvpmTrough", {"CreateEvents", "InitSwitches", "InitExit", "InitEntrySnd", "InitExitSnd", "Reset", "AddBall", "SolIn", "SolOut"}},
+        {"cvpmSaucer", {"InitKicker", "InitAltKick", "InitExitSnd", "InitEntrySnd", "CreateEvents", "AddBall", "SolOut"}},
+        {"cvpmMagnet", {"InitMagnet", "CreateEvents", "AttractBall", "ReleaseBall", "SolCallback"}},
+        {"cvpmVLock", {"InitVLock", "InitSnd", "CreateEvents", "TrigHit", "TrigUnhit", "KickHit", "SolExit", "Reset"}},
+        {"cvpmTurntable", {"InitTurntable", "CreateEvents", "MaxSpeed", "MotorOn", "SpinCW", "SpinCCW", "SolMotorState"}},
+        {"cvpmMech", {"Sol1", "Sol2", "MechSol", "AddSw", "AddPulseSw", "Start", "Stop", "Callback"}},
+        {"cvpmCaptiveBall", {"InitCaptive", "CreateEvents", "Start", "TrigHit", "BallHit"}},
+        {"cvpmImpulseP", {"InitImpulseP", "CreateEvents", "Strength", "SolOn", "Random", "AutoFire"}},
+        {"cvpmTimer", {"PulseSw", "AddTimer", "Reset", "InitStruct", "AddResetObj"}},
+        {"cvpmNudge", {"TiltSwitch", "Sensitivity", "TiltObj", "SolGameOn", "CheckStuckBalls"}}
+    };
+
+    std::string result = script;
+
+    for (const auto& cls : knownClasses) {
+        std::string className = cls.name;
+
+        // Find variables assigned from this class
+        std::vector<std::string> varsOfType;
+
+        // Pattern 1: Set var = New ClassName
+        std::regex newPattern("Set\\s+(\\w+)\\s*=\\s*New\\s+" + className + "\\b", std::regex::icase);
+        std::smatch m;
+        std::string::const_iterator it = result.cbegin();
+        while (std::regex_search(it, result.cend(), m, newPattern)) {
+            varsOfType.push_back(m[1].str());
+            it = m.suffix().first;
+        }
+
+        // Pattern 2: Set var = ClassName_Create()
+        std::regex createPattern("Set\\s+(\\w+)\\s*=\\s*" + className + "_Create\\s*\\(", std::regex::icase);
+        it = result.cbegin();
+        while (std::regex_search(it, result.cend(), m, createPattern)) {
+            varsOfType.push_back(m[1].str());
+            it = m.suffix().first;
+        }
+
+        // For each variable of this type, transform method calls
+        for (const auto& varName : varsOfType) {
+            for (const auto& methodName : cls.methods) {
+                // var.Method(args) -> ClassName_Method var, args
+                std::string p1 = "\\b" + varName + "\\." + std::string(methodName) + "\\s*\\(([^)]*)\\)";
+                std::regex r1(p1, std::regex::icase);
+                result = std::regex_replace(result, r1, className + "_" + methodName + " " + varName + ", $1");
+
+                // var.Method args (no parens) -> ClassName_Method var, args
+                std::string p2 = "\\b" + varName + "\\." + std::string(methodName) + "[ \\t]+([^':\\r\\n]+)";
+                std::regex r2(p2, std::regex::icase);
+                result = std::regex_replace(result, r2, className + "_" + methodName + " " + varName + ", $1");
+
+                // var.Method (no args) -> ClassName_Method var
+                std::string p3 = "\\b" + varName + "\\." + std::string(methodName) + "\\b(?!\\s*[=(\\w])";
+                std::regex r3(p3, std::regex::icase);
+                result = std::regex_replace(result, r3, className + "_" + methodName + " " + varName);
+            }
+        }
+    }
+
+    return result;
+}
+

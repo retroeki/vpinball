@@ -78,6 +78,7 @@ public:
    const std::vector<uint8_t>& GetDmdPixels();
 
    void SetSegments(const std::vector<uint16_t>& segments);
+   void SetSegmentsFromString(const string& segStr);  // Wine VBScript workaround - accepts comma-separated values
 
    void LockRenderThread() { m_renderLockCount++; }
    void UnlockRenderThread() { m_renderLockCount--; }

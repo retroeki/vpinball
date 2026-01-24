@@ -789,21 +789,19 @@ float VPinballLib::GetBloomStrength()
 
 VPINBALL_STATUS VPinballLib::SetEmissionScale(float scale)
 {
-   if (!g_pplayer || !g_pplayer->m_renderer)
+   if (!g_pplayer || !g_pplayer->m_ptable)
       return VPINBALL_STATUS_FAILURE;
 
-   // Set mode to User and update the light level for live update
-   g_pplayer->m_renderer->m_sceneLighting.SetMode(Renderer::SceneLighting::Mode::User);
-   g_pplayer->m_renderer->m_sceneLighting.SetUserLightLevel(scale);
+   g_pplayer->m_ptable->m_globalEmissionScale = scale;
    return VPINBALL_STATUS_SUCCESS;
 }
 
 float VPinballLib::GetEmissionScale()
 {
-   if (!g_pplayer || !g_pplayer->m_renderer)
+   if (!g_pplayer || !g_pplayer->m_ptable)
       return 1.0f;
 
-   return g_pplayer->m_renderer->m_sceneLighting.GetUserLightLevel();
+   return g_pplayer->m_ptable->m_globalEmissionScale;
 }
 
 VPINBALL_VIEW_MODE VPinballLib::GetViewMode()

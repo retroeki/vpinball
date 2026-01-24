@@ -1055,9 +1055,11 @@ std::string ScriptPatcher::PatchSingleLineIfEndIf(const std::string& script) {
 
     // Match: If ... then <statement> end if  (on single line, NO colons)
     // Example: "If GifCountr > 3 then GifCountr = 0 end If"
+    // Example: "If(x <> "")Then y = 1 End If"  (no spaces around keywords)
     // Should become: "If GifCountr > 3 then GifCountr = 0"
-    // Use [ \t] instead of \s to avoid matching across lines
-    static const RE2 p(R"((?i)(if[ \t]+[^\r\n:]+?[ \t]+then)[ \t]+([^:\r\n]+?)[ \t]+end[ \t]+if)");
+    // Use \b word boundary to handle cases without spaces (e.g., "If(x)Then")
+    // Also handle quoted strings in statements using (?:[^:\r\n"]|"[^"]*")*
+    static const RE2 p(R"((?i)(if\b(?:[^:\r\n"]|"[^"]*")*?\bthen)\b((?:[^:\r\n"]|"[^"]*")+?)[ \t]+end[ \t]+if)");
     std::string before;
     int iterations = 0;
     const int maxIterations = 100;

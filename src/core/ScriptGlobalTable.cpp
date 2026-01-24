@@ -811,6 +811,11 @@ STDMETHODIMP ScriptGlobalTable::get_NightDay(int *pVal)
 STDMETHODIMP ScriptGlobalTable::get_ShowDT(VARIANT_BOOL *pVal)
 {
    *pVal = FTOVB(m_pt->GetViewMode() == BG_DESKTOP || m_pt->GetViewMode() == BG_FSS); // DT & FSS
+   static int showDTLogCount = 0;
+   if (showDTLogCount < 5) {
+      showDTLogCount++;
+      PLOGI.printf("get_ShowDT: viewMode=%d result=%s", (int)m_pt->GetViewMode(), VBTOb(*pVal) ? "True" : "False");
+   }
    return S_OK;
 }
 

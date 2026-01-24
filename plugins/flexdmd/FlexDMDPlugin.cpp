@@ -297,7 +297,7 @@ PSC_CLASS_START(FlexDMD)
    PSC_PROP_R(FlexDMD, IntArray, DmdColoredPixels)
    PSC_PROP_R(FlexDMD, ByteArray, DmdPixels)
    PSC_PROP_W(FlexDMD, ShortArray, Segments)
-   PSC_PROP_W(FlexDMD, ShortArray, Segments)
+   PSC_FUNCTION1(FlexDMD, void, SetSegmentsFromString, string)  // Wine VBScript workaround
    PSC_PROP_R(FlexDMD, Group, Stage)
    PSC_FUNCTION0(FlexDMD, void, LockRenderThread)
    PSC_FUNCTION0(FlexDMD, void, UnlockRenderThread)
@@ -399,6 +399,14 @@ static void AddSegSrc(GetSegSrcMsg& msg, uint32_t flexId, int displayIndex, int 
 static void onGetSegSrc(const unsigned int eventId, void* userData, void* msgData)
 {
    GetSegSrcMsg& msg = *static_cast<GetSegSrcMsg*>(msgData);
+   static int logCount = 0;
+   if (logCount < 5) {
+      logCount++;
+      LPI_LOGI("onGetSegSrc: %zu FlexDMD instances", flexDmds.size());
+      for (const FlexDMD* pFlex : flexDmds) {
+         LPI_LOGI("  FlexDMD id=%u Show=%d RenderMode=%d", pFlex->GetId(), pFlex->GetShow(), pFlex->GetRenderMode());
+      }
+   }
    for (const FlexDMD* pFlex : flexDmds)
    {
       if (pFlex->GetShow())

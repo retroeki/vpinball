@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b \"C:\\\\vpinball-master\\\\build\\\\android-arm64-v8a\\\\*.so\")",
+      "Bash(dir /s /b \"C:\\\\vpinball-master\\\\standalone\\\\android\\\\app\\\\src\\\\main\\\\jniLibs\\\\*.so\")",
+      "Bash(dir /b \"C:\\\\vpinball-master\")"
+    ]
+  }
+}
