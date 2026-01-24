@@ -187,6 +187,16 @@ VPINBALLAPI VPINBALL_STATUS VPinballResume()
    return VPinballLib::VPinballLib::Instance().Resume();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSoftPause()
+{
+   return VPinballLib::VPinballLib::Instance().SoftPause();
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballSoftResume()
+{
+   return VPinballLib::VPinballLib::Instance().SoftResume();
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength)
 {
    return VPinballLib::VPinballLib::Instance().SetBloomStrength(strength);

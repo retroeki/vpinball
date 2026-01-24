@@ -832,6 +832,31 @@ VPINBALL_STATUS VPinballLib::Resume()
    return VPINBALL_STATUS_SUCCESS;
 }
 
+VPINBALL_STATUS VPinballLib::SoftPause()
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   PLOGI << "SoftPause: Pausing game logic only (rendering continues)";
+
+   // Only pause the game logic - keep rendering so live settings preview works
+   g_pplayer->SetPlayState(false);
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::SoftResume()
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   PLOGI << "SoftResume: Resuming game logic";
+
+   g_pplayer->SetPlayState(true);
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
 VPINBALL_STATUS VPinballLib::SetBloomStrength(float strength)
 {
    if (!g_pplayer || !g_pplayer->m_ptable)

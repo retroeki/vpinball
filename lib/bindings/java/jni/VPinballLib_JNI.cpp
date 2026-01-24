@@ -278,6 +278,16 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResume(JNIE
    return VPinballResume();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSoftPause(JNIEnv* env, jobject obj)
+{
+   return VPinballSoftPause();
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSoftResume(JNIEnv* env, jobject obj)
+{
+   return VPinballSoftResume();
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetBloomStrength(JNIEnv* env, jobject obj, jfloat strength)
 {
    return VPinballSetBloomStrength(strength);
@@ -448,6 +458,16 @@ JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_V
 JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballResume(JNIEnv* env, jobject obj)
 {
    return VPinballResume();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSoftPause(JNIEnv* env, jobject obj)
+{
+   return VPinballSoftPause();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSoftResume(JNIEnv* env, jobject obj)
+{
+   return VPinballSoftResume();
 }
 
 JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetBloomStrength(JNIEnv* env, jobject obj, jfloat strength)

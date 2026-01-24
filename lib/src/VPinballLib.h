@@ -87,6 +87,8 @@ public:
    VPINBALL_STATUS Stop();
    VPINBALL_STATUS Pause();
    VPINBALL_STATUS Resume();
+   VPINBALL_STATUS SoftPause();   // Pause game logic only, keep rendering for live settings preview
+   VPINBALL_STATUS SoftResume();
    VPINBALL_STATUS SetBloomStrength(float strength);
    float GetBloomStrength();
    VPINBALL_STATUS SetEmissionScale(float scale);
