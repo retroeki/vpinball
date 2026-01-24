@@ -19,6 +19,10 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 
+#ifdef ENABLE_BGFX
+#include "bgfx/bgfx.h"
+#endif
+
 #ifdef __APPLE__
 #include "VPinballLib_iOS.h"
 #endif
@@ -126,6 +130,34 @@ int VPinballLib::AppInit(int argc, char** argv)
 
 void VPinballLib::AppIterate()
 {
+   // Check if we're suspended (surface destroyed, app in background)
+   if (m_suspended.load()) {
+      // Signal that we've acknowledged the suspend request
+      if (!m_suspendAcknowledged.load()) {
+         PLOGI << "AppIterate: Acknowledging suspend request";
+
+         // Flush any pending bgfx work by calling frame() to ensure the render thread
+         // has finished processing before we signal acknowledge. This prevents crashes
+         // when the Android surface is destroyed while bgfx is still rendering.
+#ifdef ENABLE_BGFX
+         if (g_pplayer && g_pplayer->m_renderer && g_pplayer->m_renderer->m_renderDevice) {
+            PLOGI << "AppIterate: Flushing bgfx render pipeline";
+            // Discard any pending draw calls and submit empty frame
+            bgfx::discard();
+            bgfx::frame();
+            // Call frame() again to wait for the previous frame to complete
+            bgfx::frame();
+            PLOGI << "AppIterate: bgfx pipeline flushed";
+         }
+#endif
+
+         m_suspendAcknowledged.store(true);
+         m_suspendCV.notify_all();
+      }
+      // Don't render while suspended - the surface may be invalid
+      return;
+   }
+
    if (m_gameLoop) {
       m_gameLoop();
 
@@ -757,7 +789,29 @@ VPINBALL_STATUS VPinballLib::Pause()
    if (!g_pplayer)
       return VPINBALL_STATUS_FAILURE;
 
+   PLOGI << "Pause: Setting play state to false and suspending render loop";
+
+   // First pause the game logic
    g_pplayer->SetPlayState(false);
+
+   // Now suspend the render loop and wait for it to stop
+   // This is critical for Android - we must stop rendering BEFORE the surface is destroyed
+   m_suspendAcknowledged.store(false);
+   m_suspended.store(true);
+
+   // Wait for the render loop to acknowledge the suspend (with timeout)
+   {
+      std::unique_lock<std::mutex> lock(m_suspendMutex);
+      bool acknowledged = m_suspendCV.wait_for(lock, std::chrono::milliseconds(500), [this]() {
+         return m_suspendAcknowledged.load();
+      });
+      if (acknowledged) {
+         PLOGI << "Pause: Render loop acknowledged suspend";
+      } else {
+         PLOGW << "Pause: Timeout waiting for render loop to suspend (may already be idle)";
+      }
+   }
+
    return VPINBALL_STATUS_SUCCESS;
 }
 
@@ -766,7 +820,15 @@ VPINBALL_STATUS VPinballLib::Resume()
    if (!g_pplayer)
       return VPINBALL_STATUS_FAILURE;
 
+   PLOGI << "Resume: Clearing suspend and resuming play state";
+
+   // First clear the suspend flag so the render loop can run again
+   m_suspended.store(false);
+   m_suspendAcknowledged.store(false);
+
+   // Then resume the game logic
    g_pplayer->SetPlayState(true);
+
    return VPINBALL_STATUS_SUCCESS;
 }
 

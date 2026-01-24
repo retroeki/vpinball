@@ -6,6 +6,8 @@
 #include <functional>
 #include <queue>
 #include <mutex>
+#include <atomic>
+#include <condition_variable>
 #include "../include/vpinball/VPinballLib_C.h"
 #include "WebServer.h"
 #include "core/vpversion.h"
@@ -115,6 +117,12 @@ private:
    std::mutex m_eventMutex;
    bool m_captureInProgress = false;
    bool m_initialized = false;
+
+   // Suspend/resume synchronization for safe surface lifecycle handling
+   std::atomic<bool> m_suspended{false};           // Request to suspend rendering
+   std::atomic<bool> m_suspendAcknowledged{false}; // Render loop has acknowledged suspend
+   std::mutex m_suspendMutex;
+   std::condition_variable m_suspendCV;
 };
 
 }
