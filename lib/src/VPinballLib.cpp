@@ -789,10 +789,21 @@ float VPinballLib::GetBloomStrength()
 
 VPINBALL_STATUS VPinballLib::SetEmissionScale(float scale)
 {
-   if (!g_pplayer || !g_pplayer->m_ptable)
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
       return VPINBALL_STATUS_FAILURE;
 
+   // Set the scene lighting mode to User and update the light level
+   // This mirrors what the in-game UI does for live updates
+   g_pplayer->m_renderer->m_sceneLighting.SetMode(Renderer::SceneLighting::Mode::User);
+   g_pplayer->m_renderer->m_sceneLighting.SetUserLightLevel(scale);
+
+   // Also update the table's global emission scale for consistency
    g_pplayer->m_ptable->m_globalEmissionScale = scale;
+
+   // Trigger renderer update (same as MiscSettingsPage::RequestDynamicRendererUpdate)
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   g_pplayer->m_renderer->MarkShaderDirty();
+
    return VPINBALL_STATUS_SUCCESS;
 }
 
@@ -800,6 +811,10 @@ float VPinballLib::GetEmissionScale()
 {
    if (!g_pplayer || !g_pplayer->m_ptable)
       return 1.0f;
+
+   // Return the scene lighting's current emission scale (the actual rendered value)
+   if (g_pplayer->m_renderer)
+      return g_pplayer->m_renderer->m_sceneLighting.GetGlobalEmissionScale();
 
    return g_pplayer->m_ptable->m_globalEmissionScale;
 }
