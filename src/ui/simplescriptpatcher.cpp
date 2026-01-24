@@ -783,7 +783,8 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
 
     // Match: Select Case ArrayName(index)
     // where ArrayName is a word and index can be a variable or expression
-    // Transform to: Dim ssc_tmp : ssc_tmp = ArrayName(CInt(index)) : Select Case ssc_tmp
+    // Transform to: vpx_ssc_tmp = ArrayName(index) : Select Case vpx_ssc_tmp
+    // Note: vpx_ssc_tmp is declared globally in InjectHelpers (Dim not allowed inside Case blocks)
     // Using CInt() to ensure proper integer index - Wine has issues with ByRef params as array indices
     static const RE2 p(R"((?i)([ \t]*)(Select\s+Case\s+)(\w+)\s*\(\s*([^)]+)\s*\))");
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
@@ -818,7 +819,9 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
         PLOGI.printf("PatchSelectCaseArrayAccess: %s(%s) -> temp variable", arrayName.c_str(), index.c_str());
         // Use temp variable to work around Wine's Select Case array access limitations
         // Don't wrap in CInt - it only takes one argument and this could be multi-dimensional
-        return indent + "Dim ssc_tmp : ssc_tmp = " + arrayName + "(" + index + ") : " + selectCase + "ssc_tmp";
+        // Don't use Dim inline - Wine VBScript doesn't allow Dim inside Case blocks
+        // vpx_ssc_tmp is declared globally in InjectHelpers
+        return indent + "vpx_ssc_tmp = " + arrayName + "(" + index + ") : " + selectCase + "vpx_ssc_tmp";
     });
 
     if (count > 0) {
@@ -890,6 +893,10 @@ std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
 ' ============================================================================
 ' Wine VBScript Compatibility Helpers (SimpleScriptPatcher)
 ' ============================================================================
+
+' Global temp variable for Select Case array access workaround
+' (Wine VBScript doesn't allow Dim inside Case blocks)
+Dim vpx_ssc_tmp
 
 )";
 
