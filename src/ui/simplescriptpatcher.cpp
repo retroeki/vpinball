@@ -900,8 +900,9 @@ Dim vpx_ssc_tmp
 
 )";
 
-    // Add DropTarget class if needed
-    if (s_needsDropTargetClass) {
+    // Add DropTarget class if needed (but only if not already defined)
+    static const RE2 dropTargetClassPattern(R"((?i)\bClass\s+DropTarget\b)");
+    if (s_needsDropTargetClass && !RE2::PartialMatch(script, dropTargetClassPattern)) {
         helpers += R"(
 ' DropTarget class - Wine VBScript cannot handle Array(x)(y) syntax
 ' This class converts DTArray indexed access to property access
@@ -939,10 +940,13 @@ End Class
 
 )";
         PLOGI.printf("SimpleScriptPatcher: Injected DropTarget class");
+    } else if (s_needsDropTargetClass) {
+        PLOGI.printf("SimpleScriptPatcher: DropTarget class already exists in script, skipping injection");
     }
 
-    // Add StandupTarget class if needed
-    if (s_needsStandupTargetClass) {
+    // Add StandupTarget class if needed (but only if not already defined)
+    static const RE2 standupTargetClassPattern(R"((?i)\bClass\s+StandupTarget\b)");
+    if (s_needsStandupTargetClass && !RE2::PartialMatch(script, standupTargetClassPattern)) {
         helpers += R"(
 ' StandupTarget class - Wine VBScript cannot handle Array(x)(y) syntax
 ' This class converts STArray indexed access to property access
@@ -977,6 +981,8 @@ End Class
 
 )";
         PLOGI.printf("SimpleScriptPatcher: Injected StandupTarget class");
+    } else if (s_needsStandupTargetClass) {
+        PLOGI.printf("SimpleScriptPatcher: StandupTarget class already exists in script, skipping injection");
     }
 
     helpers += R"(' End Wine VBScript Compatibility Helpers

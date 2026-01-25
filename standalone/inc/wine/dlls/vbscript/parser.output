@@ -9,7 +9,9 @@ State 104 conflicts: 1 shift/reduce
 State 108 conflicts: 1 shift/reduce
 State 179 conflicts: 1 shift/reduce
 State 230 conflicts: 2 shift/reduce
-State 302 conflicts: 1 shift/reduce
+State 231 conflicts: 2 shift/reduce
+State 304 conflicts: 1 shift/reduce
+State 306 conflicts: 1 shift/reduce
 
 
 Grammar
@@ -125,239 +127,240 @@ Grammar
    82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt tEND tIF
    83            | tIF Expression tTHEN Statement EndIf_opt
    84            | tIF Expression tTHEN Statement tELSE Statement EndIf_opt
+   85            | tIF Expression tTHEN SimpleStatement tELSE Statement EndIf_opt
 
-   85 EndIf_opt: ε
-   86          | tEND tIF
+   86 EndIf_opt: ε
+   87          | tEND tIF
 
-   87 ElseIfs_opt: ε
-   88            | ElseIfs
+   88 ElseIfs_opt: ε
+   89            | ElseIfs
 
-   89 ElseIfs: ElseIf
-   90        | ElseIf ElseIfs
+   90 ElseIfs: ElseIf
+   91        | ElseIf ElseIfs
 
-   91 ElseIf: tELSEIF Expression tTHEN StSep_opt StatementsNl_opt
+   92 ElseIf: tELSEIF Expression tTHEN StSep_opt StatementsNl_opt
 
-   92 Else_opt: ε
-   93         | tELSE StSep_opt StatementsNl_opt
+   93 Else_opt: ε
+   94         | tELSE StSep_opt StatementsNl_opt
 
-   94 CaseClausules: ε
-   95              | tCASE tELSE StSep_opt StatementsNl_opt
-   96              | tCASE ExpressionList StSep_opt StatementsNl_opt CaseClausules
+   95 CaseClausules: ε
+   96              | tCASE tELSE StSep_opt StatementsNl_opt
+   97              | tCASE ExpressionList StSep_opt StatementsNl_opt CaseClausules
 
-   97 Arguments: tEMPTYBRACKETS
-   98          | '(' ArgumentList ')'
+   98 Arguments: tEMPTYBRACKETS
+   99          | '(' ArgumentList ')'
 
-   99 ArgumentList_opt: ε
-  100                 | ArgumentList
+  100 ArgumentList_opt: ε
+  101                 | ArgumentList
 
-  101 ArgumentList: Expression
-  102             | Expression ',' ArgumentList
-  103             | ',' ArgumentList
+  102 ArgumentList: Expression
+  103             | Expression ',' ArgumentList
+  104             | ',' ArgumentList
 
-  104 EmptyBrackets_opt: ε
-  105                  | tEMPTYBRACKETS
+  105 EmptyBrackets_opt: ε
+  106                  | tEMPTYBRACKETS
 
-  106 ExpressionList: Expression
-  107               | Expression ',' ExpressionList
+  107 ExpressionList: Expression
+  108               | Expression ',' ExpressionList
 
-  108 Expression: EqvExpression
-  109           | Expression tIMP EqvExpression
+  109 Expression: EqvExpression
+  110           | Expression tIMP EqvExpression
 
-  110 EqvExpression: XorExpression
-  111              | EqvExpression tEQV XorExpression
+  111 EqvExpression: XorExpression
+  112              | EqvExpression tEQV XorExpression
 
-  112 XorExpression: OrExpression
-  113              | XorExpression tXOR OrExpression
+  113 XorExpression: OrExpression
+  114              | XorExpression tXOR OrExpression
 
-  114 OrExpression: AndExpression
-  115             | OrExpression tOR AndExpression
+  115 OrExpression: AndExpression
+  116             | OrExpression tOR AndExpression
 
-  116 AndExpression: NotExpression
-  117              | AndExpression tAND NotExpression
+  117 AndExpression: NotExpression
+  118              | AndExpression tAND NotExpression
 
-  118 NotExpression: EqualityExpression
-  119              | tNOT NotExpression
+  119 NotExpression: EqualityExpression
+  120              | tNOT NotExpression
 
-  120 EqualityExpression: ConcatExpression
-  121                   | EqualityExpression '=' ConcatExpression
-  122                   | EqualityExpression tNEQ ConcatExpression
-  123                   | EqualityExpression '>' ConcatExpression
-  124                   | EqualityExpression '<' ConcatExpression
-  125                   | EqualityExpression tGTEQ ConcatExpression
-  126                   | EqualityExpression tLTEQ ConcatExpression
-  127                   | EqualityExpression tIS ConcatExpression
+  121 EqualityExpression: ConcatExpression
+  122                   | EqualityExpression '=' ConcatExpression
+  123                   | EqualityExpression tNEQ ConcatExpression
+  124                   | EqualityExpression '>' ConcatExpression
+  125                   | EqualityExpression '<' ConcatExpression
+  126                   | EqualityExpression tGTEQ ConcatExpression
+  127                   | EqualityExpression tLTEQ ConcatExpression
+  128                   | EqualityExpression tIS ConcatExpression
 
-  128 ConcatExpression: AdditiveExpression
-  129                 | ConcatExpression '&' AdditiveExpression
+  129 ConcatExpression: AdditiveExpression
+  130                 | ConcatExpression '&' AdditiveExpression
 
-  130 AdditiveExpression: ModExpression
-  131                   | AdditiveExpression '+' ModExpression
-  132                   | AdditiveExpression '-' ModExpression
+  131 AdditiveExpression: ModExpression
+  132                   | AdditiveExpression '+' ModExpression
+  133                   | AdditiveExpression '-' ModExpression
 
-  133 ModExpression: IntdivExpression
-  134              | ModExpression tMOD IntdivExpression
+  134 ModExpression: IntdivExpression
+  135              | ModExpression tMOD IntdivExpression
 
-  135 IntdivExpression: MultiplicativeExpression
-  136                 | IntdivExpression '\\' MultiplicativeExpression
+  136 IntdivExpression: MultiplicativeExpression
+  137                 | IntdivExpression '\\' MultiplicativeExpression
 
-  137 MultiplicativeExpression: ExpExpression
-  138                         | MultiplicativeExpression '*' ExpExpression
-  139                         | MultiplicativeExpression '/' ExpExpression
+  138 MultiplicativeExpression: ExpExpression
+  139                         | MultiplicativeExpression '*' ExpExpression
+  140                         | MultiplicativeExpression '/' ExpExpression
 
-  140 ExpExpression: SignExpression
-  141              | ExpExpression '^' SignExpression
+  141 ExpExpression: SignExpression
+  142              | ExpExpression '^' SignExpression
 
-  142 SignExpression: UnaryExpression
-  143               | '-' SignExpression
-  144               | '+' SignExpression
+  143 SignExpression: UnaryExpression
+  144               | '-' SignExpression
+  145               | '+' SignExpression
 
-  145 UnaryExpression: LiteralExpression
-  146                | CallExpression
-  147                | tNEW Identifier
+  146 UnaryExpression: LiteralExpression
+  147                | CallExpression
+  148                | tNEW Identifier
 
-  148 CallExpression: PrimaryExpression
-  149               | MemberExpression
-  150               | CallExpression Arguments
+  149 CallExpression: PrimaryExpression
+  150               | MemberExpression
+  151               | CallExpression Arguments
 
-  151 LiteralExpression: tTRUE
-  152                  | tFALSE
-  153                  | tString
-  154                  | tDate
-  155                  | NumericLiteralExpression
-  156                  | tEMPTY
-  157                  | tNULL
-  158                  | tNOTHING
+  152 LiteralExpression: tTRUE
+  153                  | tFALSE
+  154                  | tString
+  155                  | tDate
+  156                  | NumericLiteralExpression
+  157                  | tEMPTY
+  158                  | tNULL
+  159                  | tNOTHING
 
-  159 NumericLiteralExpression: '0'
-  160                         | tInt
-  161                         | tDouble
+  160 NumericLiteralExpression: '0'
+  161                         | tInt
+  162                         | tDouble
 
-  162 IntegerValue: '0'
-  163             | tInt
+  163 IntegerValue: '0'
+  164             | tInt
 
-  164 PrimaryExpression: tEXPRLBRACKET Expression ')'
-  165                  | tME
+  165 PrimaryExpression: tEXPRLBRACKET Expression ')'
+  166                  | tME
 
-  166 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS StSep
+  167 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS StSep
 
-  167 ClassBody: ε
-  168          | FunctionDecl
-  169          | FunctionDecl StSep ClassBody
-  170          | Storage MemberDeclList
-  171          | Storage MemberDeclList StSep ClassBody
-  172          | tDIM DimDeclList
-  173          | tDIM DimDeclList StSep ClassBody
-  174          | PropertyDecl
-  175          | PropertyDecl StSep ClassBody
+  168 ClassBody: ε
+  169          | FunctionDecl
+  170          | FunctionDecl StSep ClassBody
+  171          | Storage MemberDeclList
+  172          | Storage MemberDeclList StSep ClassBody
+  173          | tDIM DimDeclList
+  174          | tDIM DimDeclList StSep ClassBody
+  175          | PropertyDecl
+  176          | PropertyDecl StSep ClassBody
 
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
-  177             | Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-  178             | Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
+  178             | Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  179             | Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
 
-  179 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND tSUB
-  180             | Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
-  181             | Storage_opt tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
-  182             | Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
+  180 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND tSUB
+  181             | Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
+  182             | Storage_opt tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
+  183             | Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
 
-  183 Storage_opt: ε
-  184            | Storage
+  184 Storage_opt: ε
+  185            | Storage
 
-  185 Storage: tPUBLIC tDEFAULT
-  186        | tPUBLIC
-  187        | tPRIVATE
+  186 Storage: tPUBLIC tDEFAULT
+  187        | tPUBLIC
+  188        | tPRIVATE
 
-  188 ArgumentsDecl_opt: ε
-  189                  | ArgumentsDecl
+  189 ArgumentsDecl_opt: ε
+  190                  | ArgumentsDecl
 
-  190 ArgumentsDecl: tEMPTYBRACKETS
-  191              | '(' ArgumentDeclList ')'
+  191 ArgumentsDecl: tEMPTYBRACKETS
+  192              | '(' ArgumentDeclList ')'
 
-  192 ArgumentDeclList: ArgumentDecl
-  193                 | ArgumentDecl ',' ArgumentDeclList
+  193 ArgumentDeclList: ArgumentDecl
+  194                 | ArgumentDecl ',' ArgumentDeclList
 
-  194 ArgumentDecl: Identifier EmptyBrackets_opt
-  195             | tBYREF Identifier EmptyBrackets_opt
-  196             | tBYVAL Identifier EmptyBrackets_opt
+  195 ArgumentDecl: Identifier EmptyBrackets_opt
+  196             | tBYREF Identifier EmptyBrackets_opt
+  197             | tBYVAL Identifier EmptyBrackets_opt
 
-  197 MemberIdentifier: tIdentifier
-  198                 | tERROR
-  199                 | tEXPLICIT
-  200                 | tSTEP
+  198 MemberIdentifier: tIdentifier
+  199                 | tERROR
+  200                 | tEXPLICIT
+  201                 | tSTEP
 
-  201 Identifier: tIdentifier
-  202           | tDEFAULT
-  203           | tERROR
-  204           | tEXPLICIT
-  205           | tPROPERTY
-  206           | tSTEP
+  202 Identifier: tIdentifier
+  203           | tDEFAULT
+  204           | tERROR
+  205           | tEXPLICIT
+  206           | tPROPERTY
+  207           | tSTEP
 
-  207 StSep_opt: ε
-  208          | StSep
+  208 StSep_opt: ε
+  209          | StSep
 
-  209 Nl_opt: ε
-  210       | tNL Nl_opt
+  210 Nl_opt: ε
+  211       | tNL Nl_opt
 
-  211 StSep: tNL
-  212      | ':'
-  213      | tNL StSep
-  214      | ':' StSep
+  212 StSep: tNL
+  213      | ':'
+  214      | tNL StSep
+  215      | ':' StSep
 
 
 Terminals, with rules where they appear
 
     $end (0) 0
-    '&' (38) 129
-    '(' (40) 61 63 69 98 177 178 191
-    ')' (41) 61 63 69 98 164 177 178 191
-    '*' (42) 138
-    '+' (43) 131 144
-    ',' (44) 59 65 67 72 74 102 103 107 193
-    '-' (45) 77 132 143
+    '&' (38) 130
+    '(' (40) 61 63 69 99 178 179 192
+    ')' (41) 61 63 69 99 165 178 179 192
+    '*' (42) 139
+    '+' (43) 132 145
+    ',' (44) 59 65 67 72 74 103 104 108 194
+    '-' (45) 77 133 144
     '.' (46) 54
-    '/' (47) 139
-    '0' (48) 47 159 162
-    ':' (58) 23 24 26 27 212 214
-    '<' (60) 124
-    '=' (61) 30 44 49 75 121
-    '>' (62) 123
-    '\\' (92) 136
-    '^' (94) 141
+    '/' (47) 140
+    '0' (48) 47 160 163
+    ':' (58) 23 24 26 27 213 215
+    '<' (60) 125
+    '=' (61) 30 44 49 75 122
+    '>' (62) 124
+    '\\' (92) 137
+    '^' (94) 142
     error (256)
     tEXPRESSION (258) 2
-    tNL (259) 14 22 82 210 211 213
-    tEMPTYBRACKETS (260) 62 70 97 105 190
-    tEXPRLBRACKET (261) 164
-    tLTEQ (262) 126
-    tGTEQ (263) 125
-    tNEQ (264) 122
+    tNL (259) 14 22 82 211 212 214
+    tEMPTYBRACKETS (260) 62 70 98 106 191
+    tEXPRLBRACKET (261) 165
+    tLTEQ (262) 127
+    tGTEQ (263) 126
+    tNEQ (264) 123
     tSTOP (265) 45
-    tME (266) 165
+    tME (266) 166
     tREM (267)
     tDOT (268) 55
-    tTRUE <string> (269) 151
-    tFALSE <string> (270) 152
-    tNOT <string> (271) 119
-    tAND <string> (272) 117
-    tOR <string> (273) 115
-    tXOR <string> (274) 113
-    tEQV <string> (275) 111
-    tIMP <string> (276) 109
-    tIS <string> (277) 127
-    tMOD <string> (278) 134
+    tTRUE <string> (269) 152
+    tFALSE <string> (270) 153
+    tNOT <string> (271) 120
+    tAND <string> (272) 118
+    tOR <string> (273) 116
+    tXOR <string> (274) 114
+    tEQV <string> (275) 112
+    tIMP <string> (276) 110
+    tIS <string> (277) 128
+    tMOD <string> (278) 135
     tCALL <string> (279) 29
-    tSUB <string> (280) 43 179 180
-    tFUNCTION <string> (281) 41 181 182
-    tGET <string> (282) 176
-    tLET <string> (283) 177
+    tSUB <string> (280) 43 180 181
+    tFUNCTION <string> (281) 41 182 183
+    tGET <string> (282) 177
+    tLET <string> (283) 178
     tCONST <string> (284) 9 10 48
-    tDIM <string> (285) 31 172 173
+    tDIM <string> (285) 31 173 174
     tREDIM <string> (286) 32
     tPRESERVE <string> (287) 57
-    tIF <string> (288) 82 83 84 86
-    tELSE <string> (289) 84 93 95
-    tELSEIF <string> (290) 91
-    tEND <string> (291) 51 52 82 86 166 176 177 178 179 180 181 182
-    tTHEN <string> (292) 82 83 84 91
+    tIF <string> (288) 82 83 84 85 87
+    tELSE <string> (289) 84 85 94 96
+    tELSEIF <string> (290) 92
+    tEND <string> (291) 51 52 82 87 167 177 178 179 180 181 182 183
+    tTHEN <string> (292) 82 83 84 85 92
     tEXIT <string> (293) 39 40 41 42 43
     tWHILE <string> (294) 34 78
     tWEND <string> (295) 34
@@ -369,33 +372,33 @@ Terminals, with rules where they appear
     tEACH <string> (301) 50
     tIN <string> (302) 50
     tSELECT <string> (303) 51
-    tCASE <string> (304) 51 95 96
+    tCASE <string> (304) 51 96 97
     tWITH <string> (305) 52
-    tBYREF <string> (306) 195
-    tBYVAL <string> (307) 196
+    tBYREF <string> (306) 196
+    tBYVAL <string> (307) 197
     tOPTION <string> (308) 4
-    tNOTHING <string> (309) 158
-    tEMPTY <string> (310) 156
-    tNULL <string> (311) 157
-    tCLASS <string> (312) 166
-    tSET <string> (313) 44 178
-    tNEW <string> (314) 147
-    tPUBLIC <string> (315) 10 12 185 186
-    tPRIVATE <string> (316) 9 11 187
+    tNOTHING <string> (309) 159
+    tEMPTY <string> (310) 157
+    tNULL <string> (311) 158
+    tCLASS <string> (312) 167
+    tSET <string> (313) 44 179
+    tNEW <string> (314) 148
+    tPUBLIC <string> (315) 10 12 186 187
+    tPRIVATE <string> (316) 9 11 188
     tNEXT <string> (317) 46 49 50
     tON <string> (318) 46 47
     tRESUME <string> (319) 46
     tGOTO <string> (320) 47
-    tIdentifier <string> (321) 54 55 63 197 201
-    tString <string> (322) 153
-    tDEFAULT <string> (323) 185 202
-    tERROR <string> (324) 46 47 198 203
-    tEXPLICIT <string> (325) 4 199 204
-    tPROPERTY <string> (326) 42 176 177 178 205
-    tSTEP <string> (327) 81 200 206
-    tInt <integer> (328) 160 163
-    tDouble <dbl> (329) 161
-    tDate <date> (330) 154
+    tIdentifier <string> (321) 54 55 63 198 202
+    tString <string> (322) 154
+    tDEFAULT <string> (323) 186 203
+    tERROR <string> (324) 46 47 199 204
+    tEXPLICIT <string> (325) 4 200 205
+    tPROPERTY <string> (326) 42 177 178 179 206
+    tSTEP <string> (327) 81 201 207
+    tInt <integer> (328) 161 164
+    tDouble <dbl> (329) 162
+    tDate <date> (330) 155
 
 
 Nonterminals, with rules where they appear
@@ -419,10 +422,10 @@ Nonterminals, with rules where they appear
         on right: 2
     BodyStatements <statement> (98)
         on left: 15 16 17
-        on right: 17 176 177 178 179 180 181 182
+        on right: 17 177 178 179 180 181 182 183
     StatementsNl_opt <statement> (99)
         on left: 18 19
-        on right: 34 35 36 37 49 50 52 82 91 93 95 96
+        on right: 34 35 36 37 49 50 52 82 92 94 96 97
     StatementsNl <statement> (100)
         on left: 20 21
         on right: 19 21
@@ -431,19 +434,19 @@ Nonterminals, with rules where they appear
         on right: 7 17
     Statement <statement> (102)
         on left: 23 24 25 26 27
-        on right: 16 22 24 26 83 84
+        on right: 16 22 24 26 83 84 85
     SimpleStatement <statement> (103)
         on left: 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52
-        on right: 20 21 25 26 27
+        on right: 20 21 25 26 27 85
     MemberExpression <member> (104)
         on left: 53 54 55
-        on right: 149
+        on right: 150
     Preserve_opt <boolean> (105)
         on left: 56 57
         on right: 32
     MemberDeclList <dim_decl> (106)
         on left: 58 59
-        on right: 59 170 171
+        on right: 59 171 172
     MemberDecl <dim_decl> (107)
         on left: 60 61 62
         on right: 58 59
@@ -455,7 +458,7 @@ Nonterminals, with rules where they appear
         on right: 32 65
     DimDeclList <dim_decl> (110)
         on left: 66 67
-        on right: 11 12 31 67 172 173
+        on right: 11 12 31 67 173 174
     DimDecl <dim_decl> (111)
         on left: 68 69 70
         on right: 66 67
@@ -478,146 +481,146 @@ Nonterminals, with rules where they appear
         on left: 80 81
         on right: 49
     IfStatement <statement> (118)
-        on left: 82 83 84
+        on left: 82 83 84 85
         on right: 33
     EndIf_opt (119)
-        on left: 85 86
-        on right: 83 84
+        on left: 86 87
+        on right: 83 84 85
     ElseIfs_opt <elseif> (120)
-        on left: 87 88
+        on left: 88 89
         on right: 82
     ElseIfs <elseif> (121)
-        on left: 89 90
-        on right: 88 90
+        on left: 90 91
+        on right: 89 91
     ElseIf <elseif> (122)
-        on left: 91
-        on right: 89 90
+        on left: 92
+        on right: 90 91
     Else_opt <statement> (123)
-        on left: 92 93
+        on left: 93 94
         on right: 82
     CaseClausules <case_clausule> (124)
-        on left: 94 95 96
-        on right: 51 96
+        on left: 95 96 97
+        on right: 51 97
     Arguments <expression> (125)
-        on left: 97 98
-        on right: 150
+        on left: 98 99
+        on right: 151
     ArgumentList_opt <expression> (126)
-        on left: 99 100
+        on left: 100 101
         on right: 28
     ArgumentList <expression> (127)
-        on left: 101 102 103
-        on right: 63 98 100 102 103
+        on left: 102 103 104
+        on right: 63 99 101 103 104
     EmptyBrackets_opt (128)
-        on left: 104 105
-        on right: 194 195 196
+        on left: 105 106
+        on right: 195 196 197
     ExpressionList <expression> (129)
-        on left: 106 107
-        on right: 96 107
+        on left: 107 108
+        on right: 97 108
     Expression <expression> (130)
-        on left: 108 109
-        on right: 14 30 34 35 36 44 49 50 51 52 81 82 83 84 91 101 102 106 107 109 164
+        on left: 109 110
+        on right: 14 30 34 35 36 44 49 50 51 52 81 82 83 84 85 92 102 103 107 108 110 165
     EqvExpression <expression> (131)
-        on left: 110 111
-        on right: 108 109 111
+        on left: 111 112
+        on right: 109 110 112
     XorExpression <expression> (132)
-        on left: 112 113
-        on right: 110 111 113
+        on left: 113 114
+        on right: 111 112 114
     OrExpression <expression> (133)
-        on left: 114 115
-        on right: 112 113 115
+        on left: 115 116
+        on right: 113 114 116
     AndExpression <expression> (134)
-        on left: 116 117
-        on right: 114 115 117
+        on left: 117 118
+        on right: 115 116 118
     NotExpression <expression> (135)
-        on left: 118 119
-        on right: 116 117 119
+        on left: 119 120
+        on right: 117 118 120
     EqualityExpression <expression> (136)
-        on left: 120 121 122 123 124 125 126 127
-        on right: 118 121 122 123 124 125 126 127
+        on left: 121 122 123 124 125 126 127 128
+        on right: 119 122 123 124 125 126 127 128
     ConcatExpression <expression> (137)
-        on left: 128 129
-        on right: 120 121 122 123 124 125 126 127 129
+        on left: 129 130
+        on right: 121 122 123 124 125 126 127 128 130
     AdditiveExpression <expression> (138)
-        on left: 130 131 132
-        on right: 128 129 131 132
+        on left: 131 132 133
+        on right: 129 130 132 133
     ModExpression <expression> (139)
-        on left: 133 134
-        on right: 130 131 132 134
+        on left: 134 135
+        on right: 131 132 133 135
     IntdivExpression <expression> (140)
-        on left: 135 136
-        on right: 133 134 136
+        on left: 136 137
+        on right: 134 135 137
     MultiplicativeExpression <expression> (141)
-        on left: 137 138 139
-        on right: 135 136 138 139
+        on left: 138 139 140
+        on right: 136 137 139 140
     ExpExpression <expression> (142)
-        on left: 140 141
-        on right: 137 138 139 141
+        on left: 141 142
+        on right: 138 139 140 142
     SignExpression <expression> (143)
-        on left: 142 143 144
-        on right: 140 141 143 144
+        on left: 143 144 145
+        on right: 141 142 144 145
     UnaryExpression <expression> (144)
-        on left: 145 146 147
-        on right: 29 142
+        on left: 146 147 148
+        on right: 29 143
     CallExpression <expression> (145)
-        on left: 148 149 150
-        on right: 28 30 44 54 146 150
+        on left: 149 150 151
+        on right: 28 30 44 54 147 151
     LiteralExpression <expression> (146)
-        on left: 151 152 153 154 155 156 157 158
-        on right: 76 145
+        on left: 152 153 154 155 156 157 158 159
+        on right: 76 146
     NumericLiteralExpression <expression> (147)
-        on left: 159 160 161
-        on right: 77 155
+        on left: 160 161 162
+        on right: 77 156
     IntegerValue <uint> (148)
-        on left: 162 163
+        on left: 163 164
         on right: 71 72
     PrimaryExpression <expression> (149)
-        on left: 164 165
-        on right: 148
+        on left: 165 166
+        on right: 149
     ClassDeclaration <class_decl> (150)
-        on left: 166
+        on left: 167
         on right: 8
     ClassBody <class_decl> (151)
-        on left: 167 168 169 170 171 172 173 174 175
-        on right: 166 169 171 173 175
+        on left: 168 169 170 171 172 173 174 175 176
+        on right: 167 170 172 174 176
     PropertyDecl <func_decl> (152)
-        on left: 176 177 178
-        on right: 174 175
+        on left: 177 178 179
+        on right: 175 176
     FunctionDecl <func_decl> (153)
-        on left: 179 180 181 182
-        on right: 38 168 169
+        on left: 180 181 182 183
+        on right: 38 169 170
     Storage_opt <uint> (154)
-        on left: 183 184
-        on right: 176 177 178 179 180 181 182
+        on left: 184 185
+        on right: 177 178 179 180 181 182 183
     Storage <uint> (155)
-        on left: 185 186 187
-        on right: 170 171 184
+        on left: 186 187 188
+        on right: 171 172 185
     ArgumentsDecl_opt <arg_decl> (156)
-        on left: 188 189
-        on right: 176
+        on left: 189 190
+        on right: 177
     ArgumentsDecl <arg_decl> (157)
-        on left: 190 191
-        on right: 180 182 189
+        on left: 191 192
+        on right: 181 183 190
     ArgumentDeclList <arg_decl> (158)
-        on left: 192 193
-        on right: 177 178 191 193
+        on left: 193 194
+        on right: 178 179 192 194
     ArgumentDecl <arg_decl> (159)
-        on left: 194 195 196
-        on right: 192 193
+        on left: 195 196 197
+        on right: 193 194
     MemberIdentifier <string> (160)
-        on left: 197 198 199 200
+        on left: 198 199 200 201
         on right: 60 61 62
     Identifier <string> (161)
-        on left: 201 202 203 204 205 206
-        on right: 49 50 53 68 69 70 75 147 166 176 177 178 179 180 181 182 194 195 196
+        on left: 202 203 204 205 206 207
+        on right: 49 50 53 68 69 70 75 148 167 177 178 179 180 181 182 183 195 196 197
     StSep_opt (162)
-        on left: 207 208
-        on right: 91 93 95 96
+        on left: 208 209
+        on right: 92 94 96 97
     Nl_opt (163)
-        on left: 209 210
-        on right: 180 182 210
+        on left: 210 211
+        on right: 181 183 211
     StSep (164)
-        on left: 211 212 213 214
-        on right: 4 6 20 21 34 35 36 37 49 50 51 52 166 169 171 173 175 176 177 178 179 181 208 213 214
+        on left: 212 213 214 215
+        on right: 4 6 20 21 34 35 36 37 49 50 51 52 167 170 172 174 176 177 178 179 180 182 209 214 215
 
 
 State 0
@@ -712,7 +715,7 @@ State 4
 
 State 5
 
-  164 PrimaryExpression: tEXPRLBRACKET • Expression ')'
+  165 PrimaryExpression: tEXPRLBRACKET • Expression ')'
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -763,9 +766,9 @@ State 5
 
 State 6
 
-  165 PrimaryExpression: tME •
+  166 PrimaryExpression: tME •
 
-    $default  reduce using rule 165 (PrimaryExpression)
+    $default  reduce using rule 166 (PrimaryExpression)
 
 
 State 7
@@ -777,21 +780,21 @@ State 7
 
 State 8
 
-  151 LiteralExpression: tTRUE •
-
-    $default  reduce using rule 151 (LiteralExpression)
-
-
-State 9
-
-  152 LiteralExpression: tFALSE •
+  152 LiteralExpression: tTRUE •
 
     $default  reduce using rule 152 (LiteralExpression)
 
 
+State 9
+
+  153 LiteralExpression: tFALSE •
+
+    $default  reduce using rule 153 (LiteralExpression)
+
+
 State 10
 
-  119 NotExpression: tNOT • NotExpression
+  120 NotExpression: tNOT • NotExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -837,28 +840,28 @@ State 10
 
 State 11
 
-  158 LiteralExpression: tNOTHING •
+  159 LiteralExpression: tNOTHING •
 
-    $default  reduce using rule 158 (LiteralExpression)
+    $default  reduce using rule 159 (LiteralExpression)
 
 
 State 12
 
-  156 LiteralExpression: tEMPTY •
-
-    $default  reduce using rule 156 (LiteralExpression)
-
-
-State 13
-
-  157 LiteralExpression: tNULL •
+  157 LiteralExpression: tEMPTY •
 
     $default  reduce using rule 157 (LiteralExpression)
 
 
+State 13
+
+  158 LiteralExpression: tNULL •
+
+    $default  reduce using rule 158 (LiteralExpression)
+
+
 State 14
 
-  147 UnaryExpression: tNEW • Identifier
+  148 UnaryExpression: tNEW • Identifier
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -872,84 +875,84 @@ State 14
 
 State 15
 
-  201 Identifier: tIdentifier •
-
-    $default  reduce using rule 201 (Identifier)
-
-
-State 16
-
-  153 LiteralExpression: tString •
-
-    $default  reduce using rule 153 (LiteralExpression)
-
-
-State 17
-
-  202 Identifier: tDEFAULT •
+  202 Identifier: tIdentifier •
 
     $default  reduce using rule 202 (Identifier)
 
 
-State 18
+State 16
 
-  203 Identifier: tERROR •
-
-    $default  reduce using rule 203 (Identifier)
-
-
-State 19
-
-  204 Identifier: tEXPLICIT •
-
-    $default  reduce using rule 204 (Identifier)
-
-
-State 20
-
-  205 Identifier: tPROPERTY •
-
-    $default  reduce using rule 205 (Identifier)
-
-
-State 21
-
-  206 Identifier: tSTEP •
-
-    $default  reduce using rule 206 (Identifier)
-
-
-State 22
-
-  160 NumericLiteralExpression: tInt •
-
-    $default  reduce using rule 160 (NumericLiteralExpression)
-
-
-State 23
-
-  161 NumericLiteralExpression: tDouble •
-
-    $default  reduce using rule 161 (NumericLiteralExpression)
-
-
-State 24
-
-  154 LiteralExpression: tDate •
+  154 LiteralExpression: tString •
 
     $default  reduce using rule 154 (LiteralExpression)
 
 
+State 17
+
+  203 Identifier: tDEFAULT •
+
+    $default  reduce using rule 203 (Identifier)
+
+
+State 18
+
+  204 Identifier: tERROR •
+
+    $default  reduce using rule 204 (Identifier)
+
+
+State 19
+
+  205 Identifier: tEXPLICIT •
+
+    $default  reduce using rule 205 (Identifier)
+
+
+State 20
+
+  206 Identifier: tPROPERTY •
+
+    $default  reduce using rule 206 (Identifier)
+
+
+State 21
+
+  207 Identifier: tSTEP •
+
+    $default  reduce using rule 207 (Identifier)
+
+
+State 22
+
+  161 NumericLiteralExpression: tInt •
+
+    $default  reduce using rule 161 (NumericLiteralExpression)
+
+
+State 23
+
+  162 NumericLiteralExpression: tDouble •
+
+    $default  reduce using rule 162 (NumericLiteralExpression)
+
+
+State 24
+
+  155 LiteralExpression: tDate •
+
+    $default  reduce using rule 155 (LiteralExpression)
+
+
 State 25
 
-  159 NumericLiteralExpression: '0' •
+  160 NumericLiteralExpression: '0' •
 
-    $default  reduce using rule 159 (NumericLiteralExpression)
+    $default  reduce using rule 160 (NumericLiteralExpression)
 
 
 State 26
 
-  143 SignExpression: '-' • SignExpression
+  144 SignExpression: '-' • SignExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -986,7 +989,7 @@ State 26
 
 State 27
 
-  144 SignExpression: '+' • SignExpression
+  145 SignExpression: '+' • SignExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1030,15 +1033,15 @@ State 28
 
 State 29
 
-  149 CallExpression: MemberExpression •
+  150 CallExpression: MemberExpression •
 
-    $default  reduce using rule 149 (CallExpression)
+    $default  reduce using rule 150 (CallExpression)
 
 
 State 30
 
    14 ExpressionNl_opt: Expression • tNL
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 59
     tIMP  shift, and go to state 60
@@ -1046,61 +1049,61 @@ State 30
 
 State 31
 
-  108 Expression: EqvExpression •
-  111 EqvExpression: EqvExpression • tEQV XorExpression
+  109 Expression: EqvExpression •
+  112 EqvExpression: EqvExpression • tEQV XorExpression
 
     tEQV  shift, and go to state 61
 
-    $default  reduce using rule 108 (Expression)
+    $default  reduce using rule 109 (Expression)
 
 
 State 32
 
-  110 EqvExpression: XorExpression •
-  113 XorExpression: XorExpression • tXOR OrExpression
+  111 EqvExpression: XorExpression •
+  114 XorExpression: XorExpression • tXOR OrExpression
 
     tXOR  shift, and go to state 62
 
-    $default  reduce using rule 110 (EqvExpression)
+    $default  reduce using rule 111 (EqvExpression)
 
 
 State 33
 
-  112 XorExpression: OrExpression •
-  115 OrExpression: OrExpression • tOR AndExpression
+  113 XorExpression: OrExpression •
+  116 OrExpression: OrExpression • tOR AndExpression
 
     tOR  shift, and go to state 63
 
-    $default  reduce using rule 112 (XorExpression)
+    $default  reduce using rule 113 (XorExpression)
 
 
 State 34
 
-  114 OrExpression: AndExpression •
-  117 AndExpression: AndExpression • tAND NotExpression
+  115 OrExpression: AndExpression •
+  118 AndExpression: AndExpression • tAND NotExpression
 
     tAND  shift, and go to state 64
 
-    $default  reduce using rule 114 (OrExpression)
+    $default  reduce using rule 115 (OrExpression)
 
 
 State 35
 
-  116 AndExpression: NotExpression •
+  117 AndExpression: NotExpression •
 
-    $default  reduce using rule 116 (AndExpression)
+    $default  reduce using rule 117 (AndExpression)
 
 
 State 36
 
-  118 NotExpression: EqualityExpression •
-  121 EqualityExpression: EqualityExpression • '=' ConcatExpression
-  122                   | EqualityExpression • tNEQ ConcatExpression
-  123                   | EqualityExpression • '>' ConcatExpression
-  124                   | EqualityExpression • '<' ConcatExpression
-  125                   | EqualityExpression • tGTEQ ConcatExpression
-  126                   | EqualityExpression • tLTEQ ConcatExpression
-  127                   | EqualityExpression • tIS ConcatExpression
+  119 NotExpression: EqualityExpression •
+  122 EqualityExpression: EqualityExpression • '=' ConcatExpression
+  123                   | EqualityExpression • tNEQ ConcatExpression
+  124                   | EqualityExpression • '>' ConcatExpression
+  125                   | EqualityExpression • '<' ConcatExpression
+  126                   | EqualityExpression • tGTEQ ConcatExpression
+  127                   | EqualityExpression • tLTEQ ConcatExpression
+  128                   | EqualityExpression • tIS ConcatExpression
 
     tLTEQ  shift, and go to state 65
     tGTEQ  shift, and go to state 66
@@ -1110,121 +1113,121 @@ State 36
     '>'    shift, and go to state 70
     '<'    shift, and go to state 71
 
-    $default  reduce using rule 118 (NotExpression)
+    $default  reduce using rule 119 (NotExpression)
 
 
 State 37
 
-  120 EqualityExpression: ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+  121 EqualityExpression: ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
 
     '&'  shift, and go to state 72
 
-    $default  reduce using rule 120 (EqualityExpression)
+    $default  reduce using rule 121 (EqualityExpression)
 
 
 State 38
 
-  128 ConcatExpression: AdditiveExpression •
-  131 AdditiveExpression: AdditiveExpression • '+' ModExpression
-  132                   | AdditiveExpression • '-' ModExpression
+  129 ConcatExpression: AdditiveExpression •
+  132 AdditiveExpression: AdditiveExpression • '+' ModExpression
+  133                   | AdditiveExpression • '-' ModExpression
 
     '-'  shift, and go to state 73
     '+'  shift, and go to state 74
 
-    $default  reduce using rule 128 (ConcatExpression)
+    $default  reduce using rule 129 (ConcatExpression)
 
 
 State 39
 
-  130 AdditiveExpression: ModExpression •
-  134 ModExpression: ModExpression • tMOD IntdivExpression
+  131 AdditiveExpression: ModExpression •
+  135 ModExpression: ModExpression • tMOD IntdivExpression
 
     tMOD  shift, and go to state 75
 
-    $default  reduce using rule 130 (AdditiveExpression)
+    $default  reduce using rule 131 (AdditiveExpression)
 
 
 State 40
 
-  133 ModExpression: IntdivExpression •
-  136 IntdivExpression: IntdivExpression • '\\' MultiplicativeExpression
+  134 ModExpression: IntdivExpression •
+  137 IntdivExpression: IntdivExpression • '\\' MultiplicativeExpression
 
     '\\'  shift, and go to state 76
 
-    $default  reduce using rule 133 (ModExpression)
+    $default  reduce using rule 134 (ModExpression)
 
 
 State 41
 
-  135 IntdivExpression: MultiplicativeExpression •
-  138 MultiplicativeExpression: MultiplicativeExpression • '*' ExpExpression
-  139                         | MultiplicativeExpression • '/' ExpExpression
+  136 IntdivExpression: MultiplicativeExpression •
+  139 MultiplicativeExpression: MultiplicativeExpression • '*' ExpExpression
+  140                         | MultiplicativeExpression • '/' ExpExpression
 
     '*'  shift, and go to state 77
     '/'  shift, and go to state 78
 
-    $default  reduce using rule 135 (IntdivExpression)
+    $default  reduce using rule 136 (IntdivExpression)
 
 
 State 42
 
-  137 MultiplicativeExpression: ExpExpression •
-  141 ExpExpression: ExpExpression • '^' SignExpression
+  138 MultiplicativeExpression: ExpExpression •
+  142 ExpExpression: ExpExpression • '^' SignExpression
 
     '^'  shift, and go to state 79
 
-    $default  reduce using rule 137 (MultiplicativeExpression)
+    $default  reduce using rule 138 (MultiplicativeExpression)
 
 
 State 43
 
-  140 ExpExpression: SignExpression •
+  141 ExpExpression: SignExpression •
 
-    $default  reduce using rule 140 (ExpExpression)
+    $default  reduce using rule 141 (ExpExpression)
 
 
 State 44
 
-  142 SignExpression: UnaryExpression •
+  143 SignExpression: UnaryExpression •
 
-    $default  reduce using rule 142 (SignExpression)
+    $default  reduce using rule 143 (SignExpression)
 
 
 State 45
 
    54 MemberExpression: CallExpression • '.' tIdentifier
-  146 UnaryExpression: CallExpression •
-  150 CallExpression: CallExpression • Arguments
+  147 UnaryExpression: CallExpression •
+  151 CallExpression: CallExpression • Arguments
 
     tEMPTYBRACKETS  shift, and go to state 80
     '.'             shift, and go to state 81
     '('             shift, and go to state 82
 
-    $default  reduce using rule 146 (UnaryExpression)
+    $default  reduce using rule 147 (UnaryExpression)
 
     Arguments  go to state 83
 
 
 State 46
 
-  145 UnaryExpression: LiteralExpression •
+  146 UnaryExpression: LiteralExpression •
 
-    $default  reduce using rule 145 (UnaryExpression)
+    $default  reduce using rule 146 (UnaryExpression)
 
 
 State 47
 
-  155 LiteralExpression: NumericLiteralExpression •
+  156 LiteralExpression: NumericLiteralExpression •
 
-    $default  reduce using rule 155 (LiteralExpression)
+    $default  reduce using rule 156 (LiteralExpression)
 
 
 State 48
 
-  148 CallExpression: PrimaryExpression •
+  149 CallExpression: PrimaryExpression •
 
-    $default  reduce using rule 148 (CallExpression)
+    $default  reduce using rule 149 (CallExpression)
 
 
 State 49
@@ -1287,7 +1290,7 @@ State 52
     ':'            shift, and go to state 104
 
     $end      reduce using rule 1 (Program)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
     GlobalDimDeclaration  go to state 105
     StatementNl           go to state 106
@@ -1306,8 +1309,8 @@ State 52
 
 State 53
 
-  109 Expression: Expression • tIMP EqvExpression
-  164 PrimaryExpression: tEXPRLBRACKET Expression • ')'
+  110 Expression: Expression • tIMP EqvExpression
+  165 PrimaryExpression: tEXPRLBRACKET Expression • ')'
 
     tIMP  shift, and go to state 60
     ')'   shift, and go to state 115
@@ -1322,30 +1325,30 @@ State 54
 
 State 55
 
-  119 NotExpression: tNOT NotExpression •
+  120 NotExpression: tNOT NotExpression •
 
-    $default  reduce using rule 119 (NotExpression)
+    $default  reduce using rule 120 (NotExpression)
 
 
 State 56
 
-  147 UnaryExpression: tNEW Identifier •
+  148 UnaryExpression: tNEW Identifier •
 
-    $default  reduce using rule 147 (UnaryExpression)
+    $default  reduce using rule 148 (UnaryExpression)
 
 
 State 57
 
-  143 SignExpression: '-' SignExpression •
+  144 SignExpression: '-' SignExpression •
 
-    $default  reduce using rule 143 (SignExpression)
+    $default  reduce using rule 144 (SignExpression)
 
 
 State 58
 
-  144 SignExpression: '+' SignExpression •
+  145 SignExpression: '+' SignExpression •
 
-    $default  reduce using rule 144 (SignExpression)
+    $default  reduce using rule 145 (SignExpression)
 
 
 State 59
@@ -1357,7 +1360,7 @@ State 59
 
 State 60
 
-  109 Expression: Expression tIMP • EqvExpression
+  110 Expression: Expression tIMP • EqvExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1407,7 +1410,7 @@ State 60
 
 State 61
 
-  111 EqvExpression: EqvExpression tEQV • XorExpression
+  112 EqvExpression: EqvExpression tEQV • XorExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1456,7 +1459,7 @@ State 61
 
 State 62
 
-  113 XorExpression: XorExpression tXOR • OrExpression
+  114 XorExpression: XorExpression tXOR • OrExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1504,7 +1507,7 @@ State 62
 
 State 63
 
-  115 OrExpression: OrExpression tOR • AndExpression
+  116 OrExpression: OrExpression tOR • AndExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1551,7 +1554,7 @@ State 63
 
 State 64
 
-  117 AndExpression: AndExpression tAND • NotExpression
+  118 AndExpression: AndExpression tAND • NotExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1597,7 +1600,7 @@ State 64
 
 State 65
 
-  126 EqualityExpression: EqualityExpression tLTEQ • ConcatExpression
+  127 EqualityExpression: EqualityExpression tLTEQ • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1640,7 +1643,7 @@ State 65
 
 State 66
 
-  125 EqualityExpression: EqualityExpression tGTEQ • ConcatExpression
+  126 EqualityExpression: EqualityExpression tGTEQ • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1683,7 +1686,7 @@ State 66
 
 State 67
 
-  122 EqualityExpression: EqualityExpression tNEQ • ConcatExpression
+  123 EqualityExpression: EqualityExpression tNEQ • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1726,7 +1729,7 @@ State 67
 
 State 68
 
-  127 EqualityExpression: EqualityExpression tIS • ConcatExpression
+  128 EqualityExpression: EqualityExpression tIS • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1769,7 +1772,7 @@ State 68
 
 State 69
 
-  121 EqualityExpression: EqualityExpression '=' • ConcatExpression
+  122 EqualityExpression: EqualityExpression '=' • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1812,7 +1815,7 @@ State 69
 
 State 70
 
-  123 EqualityExpression: EqualityExpression '>' • ConcatExpression
+  124 EqualityExpression: EqualityExpression '>' • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1855,7 +1858,7 @@ State 70
 
 State 71
 
-  124 EqualityExpression: EqualityExpression '<' • ConcatExpression
+  125 EqualityExpression: EqualityExpression '<' • ConcatExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1898,7 +1901,7 @@ State 71
 
 State 72
 
-  129 ConcatExpression: ConcatExpression '&' • AdditiveExpression
+  130 ConcatExpression: ConcatExpression '&' • AdditiveExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1940,7 +1943,7 @@ State 72
 
 State 73
 
-  132 AdditiveExpression: AdditiveExpression '-' • ModExpression
+  133 AdditiveExpression: AdditiveExpression '-' • ModExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -1981,7 +1984,7 @@ State 73
 
 State 74
 
-  131 AdditiveExpression: AdditiveExpression '+' • ModExpression
+  132 AdditiveExpression: AdditiveExpression '+' • ModExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2022,7 +2025,7 @@ State 74
 
 State 75
 
-  134 ModExpression: ModExpression tMOD • IntdivExpression
+  135 ModExpression: ModExpression tMOD • IntdivExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2062,7 +2065,7 @@ State 75
 
 State 76
 
-  136 IntdivExpression: IntdivExpression '\\' • MultiplicativeExpression
+  137 IntdivExpression: IntdivExpression '\\' • MultiplicativeExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2101,7 +2104,7 @@ State 76
 
 State 77
 
-  138 MultiplicativeExpression: MultiplicativeExpression '*' • ExpExpression
+  139 MultiplicativeExpression: MultiplicativeExpression '*' • ExpExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2139,7 +2142,7 @@ State 77
 
 State 78
 
-  139 MultiplicativeExpression: MultiplicativeExpression '/' • ExpExpression
+  140 MultiplicativeExpression: MultiplicativeExpression '/' • ExpExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2177,7 +2180,7 @@ State 78
 
 State 79
 
-  141 ExpExpression: ExpExpression '^' • SignExpression
+  142 ExpExpression: ExpExpression '^' • SignExpression
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2214,9 +2217,9 @@ State 79
 
 State 80
 
-   97 Arguments: tEMPTYBRACKETS •
+   98 Arguments: tEMPTYBRACKETS •
 
-    $default  reduce using rule 97 (Arguments)
+    $default  reduce using rule 98 (Arguments)
 
 
 State 81
@@ -2228,7 +2231,7 @@ State 81
 
 State 82
 
-   98 Arguments: '(' • ArgumentList ')'
+   99 Arguments: '(' • ArgumentList ')'
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2281,35 +2284,35 @@ State 82
 
 State 83
 
-  150 CallExpression: CallExpression Arguments •
+  151 CallExpression: CallExpression Arguments •
 
-    $default  reduce using rule 150 (CallExpression)
+    $default  reduce using rule 151 (CallExpression)
 
 
 State 84
 
-  211 StSep: tNL •
-  213      | tNL • StSep
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    ':'       [reduce using rule 211 (StSep)]
-    $default  reduce using rule 211 (StSep)
-
-    StSep  go to state 140
-
-
-State 85
-
-  212 StSep: ':' •
-  214      | ':' • StSep
+  212 StSep: tNL •
+  214      | tNL • StSep
 
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
 
     ':'       [reduce using rule 212 (StSep)]
     $default  reduce using rule 212 (StSep)
+
+    StSep  go to state 140
+
+
+State 85
+
+  213 StSep: ':' •
+  215      | ':' • StSep
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    ':'       [reduce using rule 213 (StSep)]
+    $default  reduce using rule 213 (StSep)
 
     StSep  go to state 141
 
@@ -2410,6 +2413,7 @@ State 92
    82 IfStatement: tIF • Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt tEND tIF
    83            | tIF • Expression tTHEN Statement EndIf_opt
    84            | tIF • Expression tTHEN Statement tELSE Statement EndIf_opt
+   85            | tIF • Expression tTHEN SimpleStatement tELSE Statement EndIf_opt
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -2615,7 +2619,7 @@ State 98
 
 State 99
 
-  166 ClassDeclaration: tCLASS • Identifier StSep ClassBody tEND tCLASS StSep
+  167 ClassDeclaration: tCLASS • Identifier StSep ClassBody tEND tCLASS StSep
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -2651,8 +2655,8 @@ State 101
 
    10 GlobalDimDeclaration: tPUBLIC • tCONST ConstDeclList
    12                     | tPUBLIC • DimDeclList
-  185 Storage: tPUBLIC • tDEFAULT
-  186        | tPUBLIC •
+  186 Storage: tPUBLIC • tDEFAULT
+  187        | tPUBLIC •
 
     tCONST       shift, and go to state 168
     tIdentifier  shift, and go to state 15
@@ -2662,7 +2666,7 @@ State 101
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    $default  reduce using rule 186 (Storage)
+    $default  reduce using rule 187 (Storage)
 
     DimDeclList  go to state 170
     DimDecl      go to state 147
@@ -2673,7 +2677,7 @@ State 102
 
     9 GlobalDimDeclaration: tPRIVATE • tCONST ConstDeclList
    11                     | tPRIVATE • DimDeclList
-  187 Storage: tPRIVATE •
+  188 Storage: tPRIVATE •
 
     tCONST       shift, and go to state 171
     tIdentifier  shift, and go to state 15
@@ -2683,7 +2687,7 @@ State 102
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    $default  reduce using rule 187 (Storage)
+    $default  reduce using rule 188 (Storage)
 
     DimDeclList  go to state 172
     DimDecl      go to state 147
@@ -2730,8 +2734,8 @@ State 104
     tSTEP          shift, and go to state 21
     ':'            shift, and go to state 104
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     ':'        [reduce using rule 23 (Statement)]
     $default   reduce using rule 23 (Statement)
 
@@ -2795,7 +2799,7 @@ State 110
    28 SimpleStatement: CallExpression • ArgumentList_opt
    30                | CallExpression • '=' Expression
    54 MemberExpression: CallExpression • '.' tIdentifier
-  150 CallExpression: CallExpression • Arguments
+  151 CallExpression: CallExpression • Arguments
 
     tEMPTYBRACKETS  shift, and go to state 80
     tEXPRLBRACKET   shift, and go to state 5
@@ -2826,7 +2830,7 @@ State 110
     '-'             shift, and go to state 26
     '+'             shift, and go to state 27
 
-    $default  reduce using rule 99 (ArgumentList_opt)
+    $default  reduce using rule 100 (ArgumentList_opt)
 
     MemberExpression          go to state 29
     Arguments                 go to state 83
@@ -2870,10 +2874,10 @@ State 112
 
 State 113
 
-  179 FunctionDecl: Storage_opt • tSUB Identifier StSep BodyStatements tEND tSUB
-  180             | Storage_opt • tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
-  181             | Storage_opt • tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
-  182             | Storage_opt • tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
+  180 FunctionDecl: Storage_opt • tSUB Identifier StSep BodyStatements tEND tSUB
+  181             | Storage_opt • tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
+  182             | Storage_opt • tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
+  183             | Storage_opt • tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
 
     tSUB       shift, and go to state 183
     tFUNCTION  shift, and go to state 184
@@ -2881,214 +2885,214 @@ State 113
 
 State 114
 
-  184 Storage_opt: Storage •
+  185 Storage_opt: Storage •
 
-    $default  reduce using rule 184 (Storage_opt)
+    $default  reduce using rule 185 (Storage_opt)
 
 
 State 115
 
-  164 PrimaryExpression: tEXPRLBRACKET Expression ')' •
+  165 PrimaryExpression: tEXPRLBRACKET Expression ')' •
 
-    $default  reduce using rule 164 (PrimaryExpression)
+    $default  reduce using rule 165 (PrimaryExpression)
 
 
 State 116
 
-  109 Expression: Expression tIMP EqvExpression •
-  111 EqvExpression: EqvExpression • tEQV XorExpression
+  110 Expression: Expression tIMP EqvExpression •
+  112 EqvExpression: EqvExpression • tEQV XorExpression
 
     tEQV  shift, and go to state 61
 
-    $default  reduce using rule 109 (Expression)
+    $default  reduce using rule 110 (Expression)
 
 
 State 117
 
-  111 EqvExpression: EqvExpression tEQV XorExpression •
-  113 XorExpression: XorExpression • tXOR OrExpression
+  112 EqvExpression: EqvExpression tEQV XorExpression •
+  114 XorExpression: XorExpression • tXOR OrExpression
 
     tXOR  shift, and go to state 62
 
-    $default  reduce using rule 111 (EqvExpression)
+    $default  reduce using rule 112 (EqvExpression)
 
 
 State 118
 
-  113 XorExpression: XorExpression tXOR OrExpression •
-  115 OrExpression: OrExpression • tOR AndExpression
+  114 XorExpression: XorExpression tXOR OrExpression •
+  116 OrExpression: OrExpression • tOR AndExpression
 
     tOR  shift, and go to state 63
 
-    $default  reduce using rule 113 (XorExpression)
+    $default  reduce using rule 114 (XorExpression)
 
 
 State 119
 
-  115 OrExpression: OrExpression tOR AndExpression •
-  117 AndExpression: AndExpression • tAND NotExpression
+  116 OrExpression: OrExpression tOR AndExpression •
+  118 AndExpression: AndExpression • tAND NotExpression
 
     tAND  shift, and go to state 64
 
-    $default  reduce using rule 115 (OrExpression)
+    $default  reduce using rule 116 (OrExpression)
 
 
 State 120
 
-  117 AndExpression: AndExpression tAND NotExpression •
+  118 AndExpression: AndExpression tAND NotExpression •
 
-    $default  reduce using rule 117 (AndExpression)
+    $default  reduce using rule 118 (AndExpression)
 
 
 State 121
 
-  126 EqualityExpression: EqualityExpression tLTEQ ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
-
-    '&'  shift, and go to state 72
-
-    $default  reduce using rule 126 (EqualityExpression)
-
-
-State 122
-
-  125 EqualityExpression: EqualityExpression tGTEQ ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
-
-    '&'  shift, and go to state 72
-
-    $default  reduce using rule 125 (EqualityExpression)
-
-
-State 123
-
-  122 EqualityExpression: EqualityExpression tNEQ ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
-
-    '&'  shift, and go to state 72
-
-    $default  reduce using rule 122 (EqualityExpression)
-
-
-State 124
-
-  127 EqualityExpression: EqualityExpression tIS ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+  127 EqualityExpression: EqualityExpression tLTEQ ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
 
     '&'  shift, and go to state 72
 
     $default  reduce using rule 127 (EqualityExpression)
 
 
-State 125
+State 122
 
-  121 EqualityExpression: EqualityExpression '=' ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+  126 EqualityExpression: EqualityExpression tGTEQ ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
 
     '&'  shift, and go to state 72
 
-    $default  reduce using rule 121 (EqualityExpression)
+    $default  reduce using rule 126 (EqualityExpression)
 
 
-State 126
+State 123
 
-  123 EqualityExpression: EqualityExpression '>' ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+  123 EqualityExpression: EqualityExpression tNEQ ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
 
     '&'  shift, and go to state 72
 
     $default  reduce using rule 123 (EqualityExpression)
 
 
-State 127
+State 124
 
-  124 EqualityExpression: EqualityExpression '<' ConcatExpression •
-  129 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+  128 EqualityExpression: EqualityExpression tIS ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+
+    '&'  shift, and go to state 72
+
+    $default  reduce using rule 128 (EqualityExpression)
+
+
+State 125
+
+  122 EqualityExpression: EqualityExpression '=' ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+
+    '&'  shift, and go to state 72
+
+    $default  reduce using rule 122 (EqualityExpression)
+
+
+State 126
+
+  124 EqualityExpression: EqualityExpression '>' ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
 
     '&'  shift, and go to state 72
 
     $default  reduce using rule 124 (EqualityExpression)
 
 
+State 127
+
+  125 EqualityExpression: EqualityExpression '<' ConcatExpression •
+  130 ConcatExpression: ConcatExpression • '&' AdditiveExpression
+
+    '&'  shift, and go to state 72
+
+    $default  reduce using rule 125 (EqualityExpression)
+
+
 State 128
 
-  129 ConcatExpression: ConcatExpression '&' AdditiveExpression •
-  131 AdditiveExpression: AdditiveExpression • '+' ModExpression
-  132                   | AdditiveExpression • '-' ModExpression
+  130 ConcatExpression: ConcatExpression '&' AdditiveExpression •
+  132 AdditiveExpression: AdditiveExpression • '+' ModExpression
+  133                   | AdditiveExpression • '-' ModExpression
 
     '-'  shift, and go to state 73
     '+'  shift, and go to state 74
 
-    $default  reduce using rule 129 (ConcatExpression)
+    $default  reduce using rule 130 (ConcatExpression)
 
 
 State 129
 
-  132 AdditiveExpression: AdditiveExpression '-' ModExpression •
-  134 ModExpression: ModExpression • tMOD IntdivExpression
+  133 AdditiveExpression: AdditiveExpression '-' ModExpression •
+  135 ModExpression: ModExpression • tMOD IntdivExpression
+
+    tMOD  shift, and go to state 75
+
+    $default  reduce using rule 133 (AdditiveExpression)
+
+
+State 130
+
+  132 AdditiveExpression: AdditiveExpression '+' ModExpression •
+  135 ModExpression: ModExpression • tMOD IntdivExpression
 
     tMOD  shift, and go to state 75
 
     $default  reduce using rule 132 (AdditiveExpression)
 
 
-State 130
-
-  131 AdditiveExpression: AdditiveExpression '+' ModExpression •
-  134 ModExpression: ModExpression • tMOD IntdivExpression
-
-    tMOD  shift, and go to state 75
-
-    $default  reduce using rule 131 (AdditiveExpression)
-
-
 State 131
 
-  134 ModExpression: ModExpression tMOD IntdivExpression •
-  136 IntdivExpression: IntdivExpression • '\\' MultiplicativeExpression
+  135 ModExpression: ModExpression tMOD IntdivExpression •
+  137 IntdivExpression: IntdivExpression • '\\' MultiplicativeExpression
 
     '\\'  shift, and go to state 76
 
-    $default  reduce using rule 134 (ModExpression)
+    $default  reduce using rule 135 (ModExpression)
 
 
 State 132
 
-  136 IntdivExpression: IntdivExpression '\\' MultiplicativeExpression •
-  138 MultiplicativeExpression: MultiplicativeExpression • '*' ExpExpression
-  139                         | MultiplicativeExpression • '/' ExpExpression
+  137 IntdivExpression: IntdivExpression '\\' MultiplicativeExpression •
+  139 MultiplicativeExpression: MultiplicativeExpression • '*' ExpExpression
+  140                         | MultiplicativeExpression • '/' ExpExpression
 
     '*'  shift, and go to state 77
     '/'  shift, and go to state 78
 
-    $default  reduce using rule 136 (IntdivExpression)
+    $default  reduce using rule 137 (IntdivExpression)
 
 
 State 133
 
-  138 MultiplicativeExpression: MultiplicativeExpression '*' ExpExpression •
-  141 ExpExpression: ExpExpression • '^' SignExpression
-
-    '^'  shift, and go to state 79
-
-    $default  reduce using rule 138 (MultiplicativeExpression)
-
-
-State 134
-
-  139 MultiplicativeExpression: MultiplicativeExpression '/' ExpExpression •
-  141 ExpExpression: ExpExpression • '^' SignExpression
+  139 MultiplicativeExpression: MultiplicativeExpression '*' ExpExpression •
+  142 ExpExpression: ExpExpression • '^' SignExpression
 
     '^'  shift, and go to state 79
 
     $default  reduce using rule 139 (MultiplicativeExpression)
 
 
+State 134
+
+  140 MultiplicativeExpression: MultiplicativeExpression '/' ExpExpression •
+  142 ExpExpression: ExpExpression • '^' SignExpression
+
+    '^'  shift, and go to state 79
+
+    $default  reduce using rule 140 (MultiplicativeExpression)
+
+
 State 135
 
-  141 ExpExpression: ExpExpression '^' SignExpression •
+  142 ExpExpression: ExpExpression '^' SignExpression •
 
-    $default  reduce using rule 141 (ExpExpression)
+    $default  reduce using rule 142 (ExpExpression)
 
 
 State 136
@@ -3100,7 +3104,7 @@ State 136
 
 State 137
 
-  103 ArgumentList: ',' • ArgumentList
+  104 ArgumentList: ',' • ArgumentList
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -3153,35 +3157,35 @@ State 137
 
 State 138
 
-   98 Arguments: '(' ArgumentList • ')'
+   99 Arguments: '(' ArgumentList • ')'
 
     ')'  shift, and go to state 186
 
 
 State 139
 
-  101 ArgumentList: Expression •
-  102             | Expression • ',' ArgumentList
-  109 Expression: Expression • tIMP EqvExpression
+  102 ArgumentList: Expression •
+  103             | Expression • ',' ArgumentList
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP  shift, and go to state 60
     ','   shift, and go to state 187
 
-    $default  reduce using rule 101 (ArgumentList)
+    $default  reduce using rule 102 (ArgumentList)
 
 
 State 140
 
-  213 StSep: tNL StSep •
+  214 StSep: tNL StSep •
 
-    $default  reduce using rule 213 (StSep)
+    $default  reduce using rule 214 (StSep)
 
 
 State 141
 
-  214 StSep: ':' StSep •
+  215 StSep: ':' StSep •
 
-    $default  reduce using rule 214 (StSep)
+    $default  reduce using rule 215 (StSep)
 
 
 State 142
@@ -3266,7 +3270,8 @@ State 151
    82 IfStatement: tIF Expression • tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt tEND tIF
    83            | tIF Expression • tTHEN Statement EndIf_opt
    84            | tIF Expression • tTHEN Statement tELSE Statement EndIf_opt
-  109 Expression: Expression • tIMP EqvExpression
+   85            | tIF Expression • tTHEN SimpleStatement tELSE Statement EndIf_opt
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP   shift, and go to state 60
     tTHEN  shift, and go to state 196
@@ -3310,7 +3315,7 @@ State 156
 State 157
 
    34 SimpleStatement: tWHILE Expression • StSep StatementsNl_opt tWEND
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 84
     tIMP  shift, and go to state 60
@@ -3416,7 +3421,7 @@ State 161
     tSTEP          shift, and go to state 21
 
     tLOOP     reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
     StatementsNl_opt   go to state 199
     StatementsNl       go to state 200
@@ -3506,7 +3511,7 @@ State 164
 State 165
 
    52 SimpleStatement: tWITH Expression • StSep StatementsNl_opt tEND tWITH
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 84
     tIMP  shift, and go to state 60
@@ -3517,7 +3522,7 @@ State 165
 
 State 166
 
-  166 ClassDeclaration: tCLASS Identifier • StSep ClassBody tEND tCLASS StSep
+  167 ClassDeclaration: tCLASS Identifier • StSep ClassBody tEND tCLASS StSep
 
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
@@ -3529,7 +3534,7 @@ State 167
 
    44 SimpleStatement: tSET CallExpression • '=' Expression
    54 MemberExpression: CallExpression • '.' tIdentifier
-  150 CallExpression: CallExpression • Arguments
+  151 CallExpression: CallExpression • Arguments
 
     tEMPTYBRACKETS  shift, and go to state 80
     '='             shift, and go to state 207
@@ -3557,12 +3562,12 @@ State 168
 
 State 169
 
-  185 Storage: tPUBLIC tDEFAULT •
-  202 Identifier: tDEFAULT •
+  186 Storage: tPUBLIC tDEFAULT •
+  203 Identifier: tDEFAULT •
 
-    tSUB       reduce using rule 185 (Storage)
-    tFUNCTION  reduce using rule 185 (Storage)
-    $default   reduce using rule 202 (Identifier)
+    tSUB       reduce using rule 186 (Storage)
+    tFUNCTION  reduce using rule 186 (Storage)
+    $default   reduce using rule 203 (Identifier)
 
 
 State 170
@@ -3606,19 +3611,19 @@ State 173
 
 State 174
 
-  185 Storage: tPUBLIC • tDEFAULT
-  186        | tPUBLIC •
+  186 Storage: tPUBLIC • tDEFAULT
+  187        | tPUBLIC •
 
     tDEFAULT  shift, and go to state 212
 
-    $default  reduce using rule 186 (Storage)
+    $default  reduce using rule 187 (Storage)
 
 
 State 175
 
-  187 Storage: tPRIVATE •
+  188 Storage: tPRIVATE •
 
-    $default  reduce using rule 187 (Storage)
+    $default  reduce using rule 188 (Storage)
 
 
 State 176
@@ -3674,8 +3679,8 @@ State 179
     tSTEP          shift, and go to state 21
     ':'            shift, and go to state 104
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     ':'        [reduce using rule 27 (Statement)]
     $default   reduce using rule 27 (Statement)
 
@@ -3751,15 +3756,15 @@ State 181
 
 State 182
 
-  100 ArgumentList_opt: ArgumentList •
+  101 ArgumentList_opt: ArgumentList •
 
-    $default  reduce using rule 100 (ArgumentList_opt)
+    $default  reduce using rule 101 (ArgumentList_opt)
 
 
 State 183
 
-  179 FunctionDecl: Storage_opt tSUB • Identifier StSep BodyStatements tEND tSUB
-  180             | Storage_opt tSUB • Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
+  180 FunctionDecl: Storage_opt tSUB • Identifier StSep BodyStatements tEND tSUB
+  181             | Storage_opt tSUB • Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -3773,8 +3778,8 @@ State 183
 
 State 184
 
-  181 FunctionDecl: Storage_opt tFUNCTION • Identifier StSep BodyStatements tEND tFUNCTION
-  182             | Storage_opt tFUNCTION • Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
+  182 FunctionDecl: Storage_opt tFUNCTION • Identifier StSep BodyStatements tEND tFUNCTION
+  183             | Storage_opt tFUNCTION • Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -3788,21 +3793,21 @@ State 184
 
 State 185
 
-  103 ArgumentList: ',' ArgumentList •
+  104 ArgumentList: ',' ArgumentList •
 
-    $default  reduce using rule 103 (ArgumentList)
+    $default  reduce using rule 104 (ArgumentList)
 
 
 State 186
 
-   98 Arguments: '(' ArgumentList ')' •
+   99 Arguments: '(' ArgumentList ')' •
 
-    $default  reduce using rule 98 (Arguments)
+    $default  reduce using rule 99 (Arguments)
 
 
 State 187
 
-  102 ArgumentList: Expression ',' • ArgumentList
+  103 ArgumentList: Expression ',' • ArgumentList
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -3953,6 +3958,7 @@ State 196
    82 IfStatement: tIF Expression tTHEN • tNL StatementsNl_opt ElseIfs_opt Else_opt tEND tIF
    83            | tIF Expression tTHEN • Statement EndIf_opt
    84            | tIF Expression tTHEN • Statement tELSE Statement EndIf_opt
+   85            | tIF Expression tTHEN • SimpleStatement tELSE Statement EndIf_opt
 
     tNL            shift, and go to state 229
     tEXPRLBRACKET  shift, and go to state 5
@@ -3982,10 +3988,10 @@ State 196
     tSTEP          shift, and go to state 21
     ':'            shift, and go to state 104
 
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
     Statement          go to state 230
-    SimpleStatement    go to state 108
+    SimpleStatement    go to state 231
     MemberExpression   go to state 29
     IfStatement        go to state 109
     CallExpression     go to state 110
@@ -4027,9 +4033,9 @@ State 197
     tSTEP          shift, and go to state 21
 
     tWEND     reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 231
+    StatementsNl_opt   go to state 232
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -4045,13 +4051,13 @@ State 197
 State 198
 
    35 SimpleStatement: tDO DoType Expression • StSep StatementsNl_opt tLOOP
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 84
     tIMP  shift, and go to state 60
     ':'   shift, and go to state 85
 
-    StSep  go to state 232
+    StSep  go to state 233
 
 
 State 199
@@ -4059,7 +4065,7 @@ State 199
    36 SimpleStatement: tDO StSep StatementsNl_opt • tLOOP DoType Expression
    37                | tDO StSep StatementsNl_opt • tLOOP
 
-    tLOOP  shift, and go to state 233
+    tLOOP  shift, and go to state 234
 
 
 State 200
@@ -4077,14 +4083,14 @@ State 201
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
 
-    StSep  go to state 234
+    StSep  go to state 235
 
 
 State 202
 
    50 SimpleStatement: tFOR tEACH Identifier • tIN Expression StSep StatementsNl_opt tNEXT
 
-    tIN  shift, and go to state 235
+    tIN  shift, and go to state 236
 
 
 State 203
@@ -4116,7 +4122,7 @@ State 203
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 236
+    Expression                go to state 237
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -4141,13 +4147,13 @@ State 203
 State 204
 
    51 SimpleStatement: tSELECT tCASE Expression • StSep CaseClausules tEND tSELECT
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 84
     tIMP  shift, and go to state 60
     ':'   shift, and go to state 85
 
-    StSep  go to state 237
+    StSep  go to state 238
 
 
 State 205
@@ -4181,9 +4187,9 @@ State 205
     tSTEP          shift, and go to state 21
 
     tEND      reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 238
+    StatementsNl_opt   go to state 239
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -4198,20 +4204,20 @@ State 205
 
 State 206
 
-  166 ClassDeclaration: tCLASS Identifier StSep • ClassBody tEND tCLASS StSep
+  167 ClassDeclaration: tCLASS Identifier StSep • ClassBody tEND tCLASS StSep
 
-    tDIM      shift, and go to state 239
+    tDIM      shift, and go to state 240
     tPUBLIC   shift, and go to state 174
     tPRIVATE  shift, and go to state 175
 
-    tEND      reduce using rule 167 (ClassBody)
-    $default  reduce using rule 183 (Storage_opt)
+    tEND      reduce using rule 168 (ClassBody)
+    $default  reduce using rule 184 (Storage_opt)
 
-    ClassBody     go to state 240
-    PropertyDecl  go to state 241
-    FunctionDecl  go to state 242
-    Storage_opt   go to state 243
-    Storage       go to state 244
+    ClassBody     go to state 241
+    PropertyDecl  go to state 242
+    FunctionDecl  go to state 243
+    Storage_opt   go to state 244
+    Storage       go to state 245
 
 
 State 207
@@ -4243,7 +4249,7 @@ State 207
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 245
+    Expression                go to state 246
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -4283,21 +4289,21 @@ State 210
 
    46 SimpleStatement: tON tERROR tRESUME • tNEXT
 
-    tNEXT  shift, and go to state 246
+    tNEXT  shift, and go to state 247
 
 
 State 211
 
    47 SimpleStatement: tON tERROR tGOTO • '0'
 
-    '0'  shift, and go to state 247
+    '0'  shift, and go to state 248
 
 
 State 212
 
-  185 Storage: tPUBLIC tDEFAULT •
+  186 Storage: tPUBLIC tDEFAULT •
 
-    $default  reduce using rule 185 (Storage)
+    $default  reduce using rule 186 (Storage)
 
 
 State 213
@@ -4310,7 +4316,7 @@ State 213
 State 214
 
    30 SimpleStatement: CallExpression '=' Expression •
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP  shift, and go to state 60
 
@@ -4319,37 +4325,37 @@ State 214
 
 State 215
 
-  179 FunctionDecl: Storage_opt tSUB Identifier • StSep BodyStatements tEND tSUB
-  180             | Storage_opt tSUB Identifier • ArgumentsDecl Nl_opt BodyStatements tEND tSUB
+  180 FunctionDecl: Storage_opt tSUB Identifier • StSep BodyStatements tEND tSUB
+  181             | Storage_opt tSUB Identifier • ArgumentsDecl Nl_opt BodyStatements tEND tSUB
 
     tNL             shift, and go to state 84
-    tEMPTYBRACKETS  shift, and go to state 248
+    tEMPTYBRACKETS  shift, and go to state 249
     ':'             shift, and go to state 85
-    '('             shift, and go to state 249
+    '('             shift, and go to state 250
 
-    ArgumentsDecl  go to state 250
-    StSep          go to state 251
+    ArgumentsDecl  go to state 251
+    StSep          go to state 252
 
 
 State 216
 
-  181 FunctionDecl: Storage_opt tFUNCTION Identifier • StSep BodyStatements tEND tFUNCTION
-  182             | Storage_opt tFUNCTION Identifier • ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
+  182 FunctionDecl: Storage_opt tFUNCTION Identifier • StSep BodyStatements tEND tFUNCTION
+  183             | Storage_opt tFUNCTION Identifier • ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
 
     tNL             shift, and go to state 84
-    tEMPTYBRACKETS  shift, and go to state 248
+    tEMPTYBRACKETS  shift, and go to state 249
     ':'             shift, and go to state 85
-    '('             shift, and go to state 249
+    '('             shift, and go to state 250
 
-    ArgumentsDecl  go to state 252
-    StSep          go to state 253
+    ArgumentsDecl  go to state 253
+    StSep          go to state 254
 
 
 State 217
 
-  102 ArgumentList: Expression ',' ArgumentList •
+  103 ArgumentList: Expression ',' ArgumentList •
 
-    $default  reduce using rule 102 (ArgumentList)
+    $default  reduce using rule 103 (ArgumentList)
 
 
 State 218
@@ -4367,7 +4373,7 @@ State 219
     tDouble  shift, and go to state 23
     '0'      shift, and go to state 25
 
-    NumericLiteralExpression  go to state 254
+    NumericLiteralExpression  go to state 255
 
 
 State 220
@@ -4393,23 +4399,23 @@ State 222
 
 State 223
 
-  163 IntegerValue: tInt •
+  164 IntegerValue: tInt •
 
-    $default  reduce using rule 163 (IntegerValue)
+    $default  reduce using rule 164 (IntegerValue)
 
 
 State 224
 
-  162 IntegerValue: '0' •
+  163 IntegerValue: '0' •
 
-    $default  reduce using rule 162 (IntegerValue)
+    $default  reduce using rule 163 (IntegerValue)
 
 
 State 225
 
    69 DimDecl: Identifier '(' DimList • ')'
 
-    ')'  shift, and go to state 255
+    ')'  shift, and go to state 256
 
 
 State 226
@@ -4417,7 +4423,7 @@ State 226
    71 DimList: IntegerValue •
    72        | IntegerValue • ',' DimList
 
-    ','  shift, and go to state 256
+    ','  shift, and go to state 257
 
     $default  reduce using rule 71 (DimList)
 
@@ -4452,7 +4458,7 @@ State 227
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    ArgumentList              go to state 257
+    ArgumentList              go to state 258
     Expression                go to state 139
     EqvExpression             go to state 31
     XorExpression             go to state 32
@@ -4482,7 +4488,7 @@ State 228
     tIdentifier  shift, and go to state 193
 
     ReDimDecl      go to state 194
-    ReDimDeclList  go to state 258
+    ReDimDeclList  go to state 259
 
 
 State 229
@@ -4515,11 +4521,11 @@ State 229
     tPROPERTY      shift, and go to state 20
     tSTEP          shift, and go to state 21
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     $default   reduce using rule 18 (StatementsNl_opt)
 
-    StatementsNl_opt   go to state 259
+    StatementsNl_opt   go to state 260
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -4537,24 +4543,39 @@ State 230
    83 IfStatement: tIF Expression tTHEN Statement • EndIf_opt
    84            | tIF Expression tTHEN Statement • tELSE Statement EndIf_opt
 
-    tELSE  shift, and go to state 260
-    tEND   shift, and go to state 261
+    tELSE  shift, and go to state 261
+    tEND   shift, and go to state 262
 
-    tELSE     [reduce using rule 85 (EndIf_opt)]
-    tEND      [reduce using rule 85 (EndIf_opt)]
-    $default  reduce using rule 85 (EndIf_opt)
+    tELSE     [reduce using rule 86 (EndIf_opt)]
+    tEND      [reduce using rule 86 (EndIf_opt)]
+    $default  reduce using rule 86 (EndIf_opt)
 
-    EndIf_opt  go to state 262
+    EndIf_opt  go to state 263
 
 
 State 231
 
-   34 SimpleStatement: tWHILE Expression StSep StatementsNl_opt • tWEND
+   25 Statement: SimpleStatement •
+   26          | SimpleStatement • ':' Statement
+   27          | SimpleStatement • ':'
+   85 IfStatement: tIF Expression tTHEN SimpleStatement • tELSE Statement EndIf_opt
 
-    tWEND  shift, and go to state 263
+    tELSE  shift, and go to state 264
+    ':'    shift, and go to state 179
+
+    tELSE     [reduce using rule 25 (Statement)]
+    ':'       [reduce using rule 25 (Statement)]
+    $default  reduce using rule 25 (Statement)
 
 
 State 232
+
+   34 SimpleStatement: tWHILE Expression StSep StatementsNl_opt • tWEND
+
+    tWEND  shift, and go to state 265
+
+
+State 233
 
    35 SimpleStatement: tDO DoType Expression StSep • StatementsNl_opt tLOOP
 
@@ -4585,9 +4606,9 @@ State 232
     tSTEP          shift, and go to state 21
 
     tLOOP     reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 264
+    StatementsNl_opt   go to state 266
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -4600,7 +4621,7 @@ State 232
     Identifier         go to state 49
 
 
-State 233
+State 234
 
    36 SimpleStatement: tDO StSep StatementsNl_opt tLOOP • DoType Expression
    37                | tDO StSep StatementsNl_opt tLOOP •
@@ -4610,10 +4631,10 @@ State 233
 
     $default  reduce using rule 37 (SimpleStatement)
 
-    DoType  go to state 265
+    DoType  go to state 267
 
 
-State 234
+State 235
 
    20 StatementsNl: SimpleStatement StSep •
    21             | SimpleStatement StSep • StatementsNl
@@ -4644,11 +4665,11 @@ State 234
     tPROPERTY      shift, and go to state 20
     tSTEP          shift, and go to state 21
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     $default   reduce using rule 20 (StatementsNl)
 
-    StatementsNl       go to state 266
+    StatementsNl       go to state 268
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -4660,7 +4681,7 @@ State 234
     Identifier         go to state 49
 
 
-State 235
+State 236
 
    50 SimpleStatement: tFOR tEACH Identifier tIN • Expression StSep StatementsNl_opt tNEXT
 
@@ -4689,7 +4710,7 @@ State 235
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 267
+    Expression                go to state 269
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -4711,37 +4732,37 @@ State 235
     Identifier                go to state 49
 
 
-State 236
-
-   49 SimpleStatement: tFOR Identifier '=' Expression • tTO Expression Step_opt StSep StatementsNl_opt tNEXT
-  109 Expression: Expression • tIMP EqvExpression
-
-    tIMP  shift, and go to state 60
-    tTO   shift, and go to state 268
-
-
 State 237
 
-   51 SimpleStatement: tSELECT tCASE Expression StSep • CaseClausules tEND tSELECT
+   49 SimpleStatement: tFOR Identifier '=' Expression • tTO Expression Step_opt StSep StatementsNl_opt tNEXT
+  110 Expression: Expression • tIMP EqvExpression
 
-    tCASE  shift, and go to state 269
-
-    $default  reduce using rule 94 (CaseClausules)
-
-    CaseClausules  go to state 270
+    tIMP  shift, and go to state 60
+    tTO   shift, and go to state 270
 
 
 State 238
 
-   52 SimpleStatement: tWITH Expression StSep StatementsNl_opt • tEND tWITH
+   51 SimpleStatement: tSELECT tCASE Expression StSep • CaseClausules tEND tSELECT
 
-    tEND  shift, and go to state 271
+    tCASE  shift, and go to state 271
+
+    $default  reduce using rule 95 (CaseClausules)
+
+    CaseClausules  go to state 272
 
 
 State 239
 
-  172 ClassBody: tDIM • DimDeclList
-  173          | tDIM • DimDeclList StSep ClassBody
+   52 SimpleStatement: tWITH Expression StSep StatementsNl_opt • tEND tWITH
+
+    tEND  shift, and go to state 273
+
+
+State 240
+
+  173 ClassBody: tDIM • DimDeclList
+  174          | tDIM • DimDeclList StSep ClassBody
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -4750,114 +4771,114 @@ State 239
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    DimDeclList  go to state 272
+    DimDeclList  go to state 274
     DimDecl      go to state 147
     Identifier   go to state 148
 
 
-State 240
-
-  166 ClassDeclaration: tCLASS Identifier StSep ClassBody • tEND tCLASS StSep
-
-    tEND  shift, and go to state 273
-
-
 State 241
 
-  174 ClassBody: PropertyDecl •
-  175          | PropertyDecl • StSep ClassBody
+  167 ClassDeclaration: tCLASS Identifier StSep ClassBody • tEND tCLASS StSep
 
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 174 (ClassBody)
-
-    StSep  go to state 274
+    tEND  shift, and go to state 275
 
 
 State 242
 
-  168 ClassBody: FunctionDecl •
-  169          | FunctionDecl • StSep ClassBody
+  175 ClassBody: PropertyDecl •
+  176          | PropertyDecl • StSep ClassBody
 
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
 
-    $default  reduce using rule 168 (ClassBody)
+    $default  reduce using rule 175 (ClassBody)
 
-    StSep  go to state 275
+    StSep  go to state 276
 
 
 State 243
 
-  176 PropertyDecl: Storage_opt • tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
-  177             | Storage_opt • tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-  178             | Storage_opt • tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-  179 FunctionDecl: Storage_opt • tSUB Identifier StSep BodyStatements tEND tSUB
-  180             | Storage_opt • tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
-  181             | Storage_opt • tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
-  182             | Storage_opt • tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
+  169 ClassBody: FunctionDecl •
+  170          | FunctionDecl • StSep ClassBody
 
-    tSUB       shift, and go to state 183
-    tFUNCTION  shift, and go to state 184
-    tPROPERTY  shift, and go to state 276
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 169 (ClassBody)
+
+    StSep  go to state 277
 
 
 State 244
 
-  170 ClassBody: Storage • MemberDeclList
-  171          | Storage • MemberDeclList StSep ClassBody
-  184 Storage_opt: Storage •
+  177 PropertyDecl: Storage_opt • tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
+  178             | Storage_opt • tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  179             | Storage_opt • tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  180 FunctionDecl: Storage_opt • tSUB Identifier StSep BodyStatements tEND tSUB
+  181             | Storage_opt • tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB
+  182             | Storage_opt • tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION
+  183             | Storage_opt • tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION
 
-    tIdentifier  shift, and go to state 277
-    tERROR       shift, and go to state 278
-    tEXPLICIT    shift, and go to state 279
-    tSTEP        shift, and go to state 280
-
-    $default  reduce using rule 184 (Storage_opt)
-
-    MemberDeclList    go to state 281
-    MemberDecl        go to state 282
-    MemberIdentifier  go to state 283
+    tSUB       shift, and go to state 183
+    tFUNCTION  shift, and go to state 184
+    tPROPERTY  shift, and go to state 278
 
 
 State 245
 
+  171 ClassBody: Storage • MemberDeclList
+  172          | Storage • MemberDeclList StSep ClassBody
+  185 Storage_opt: Storage •
+
+    tIdentifier  shift, and go to state 279
+    tERROR       shift, and go to state 280
+    tEXPLICIT    shift, and go to state 281
+    tSTEP        shift, and go to state 282
+
+    $default  reduce using rule 185 (Storage_opt)
+
+    MemberDeclList    go to state 283
+    MemberDecl        go to state 284
+    MemberIdentifier  go to state 285
+
+
+State 246
+
    44 SimpleStatement: tSET CallExpression '=' Expression •
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP  shift, and go to state 60
 
     $default  reduce using rule 44 (SimpleStatement)
 
 
-State 246
+State 247
 
    46 SimpleStatement: tON tERROR tRESUME tNEXT •
 
     $default  reduce using rule 46 (SimpleStatement)
 
 
-State 247
+State 248
 
    47 SimpleStatement: tON tERROR tGOTO '0' •
 
     $default  reduce using rule 47 (SimpleStatement)
 
 
-State 248
-
-  190 ArgumentsDecl: tEMPTYBRACKETS •
-
-    $default  reduce using rule 190 (ArgumentsDecl)
-
-
 State 249
 
-  191 ArgumentsDecl: '(' • ArgumentDeclList ')'
+  191 ArgumentsDecl: tEMPTYBRACKETS •
 
-    tBYREF       shift, and go to state 284
-    tBYVAL       shift, and go to state 285
+    $default  reduce using rule 191 (ArgumentsDecl)
+
+
+State 250
+
+  192 ArgumentsDecl: '(' • ArgumentDeclList ')'
+
+    tBYREF       shift, and go to state 286
+    tBYVAL       shift, and go to state 287
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
     tERROR       shift, and go to state 18
@@ -4865,84 +4886,25 @@ State 249
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    ArgumentDeclList  go to state 286
-    ArgumentDecl      go to state 287
-    Identifier        go to state 288
-
-
-State 250
-
-  180 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl • Nl_opt BodyStatements tEND tSUB
-
-    tNL  shift, and go to state 289
-
-    $default  reduce using rule 209 (Nl_opt)
-
-    Nl_opt  go to state 290
+    ArgumentDeclList  go to state 288
+    ArgumentDecl      go to state 289
+    Identifier        go to state 290
 
 
 State 251
 
-  179 FunctionDecl: Storage_opt tSUB Identifier StSep • BodyStatements tEND tSUB
+  181 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl • Nl_opt BodyStatements tEND tSUB
 
-    tEXPRLBRACKET  shift, and go to state 5
-    tSTOP          shift, and go to state 87
-    tME            shift, and go to state 6
-    tDOT           shift, and go to state 7
-    tCALL          shift, and go to state 88
-    tCONST         shift, and go to state 89
-    tDIM           shift, and go to state 90
-    tREDIM         shift, and go to state 91
-    tIF            shift, and go to state 92
-    tEXIT          shift, and go to state 93
-    tWHILE         shift, and go to state 94
-    tDO            shift, and go to state 95
-    tFOR           shift, and go to state 96
-    tSELECT        shift, and go to state 97
-    tWITH          shift, and go to state 98
-    tSET           shift, and go to state 100
-    tPUBLIC        shift, and go to state 174
-    tPRIVATE       shift, and go to state 175
-    tON            shift, and go to state 103
-    tIdentifier    shift, and go to state 15
-    tDEFAULT       shift, and go to state 17
-    tERROR         shift, and go to state 18
-    tEXPLICIT      shift, and go to state 19
-    tPROPERTY      shift, and go to state 20
-    tSTEP          shift, and go to state 21
-    ':'            shift, and go to state 104
+    tNL  shift, and go to state 291
 
-    tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 210 (Nl_opt)
 
-    BodyStatements     go to state 291
-    StatementNl        go to state 292
-    Statement          go to state 293
-    SimpleStatement    go to state 108
-    MemberExpression   go to state 29
-    IfStatement        go to state 109
-    CallExpression     go to state 110
-    PrimaryExpression  go to state 48
-    FunctionDecl       go to state 112
-    Storage_opt        go to state 113
-    Storage            go to state 114
-    Identifier         go to state 49
+    Nl_opt  go to state 292
 
 
 State 252
 
-  182 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl • Nl_opt BodyStatements tEND tFUNCTION
-
-    tNL  shift, and go to state 289
-
-    $default  reduce using rule 209 (Nl_opt)
-
-    Nl_opt  go to state 294
-
-
-State 253
-
-  181 FunctionDecl: Storage_opt tFUNCTION Identifier StSep • BodyStatements tEND tFUNCTION
+  180 FunctionDecl: Storage_opt tSUB Identifier StSep • BodyStatements tEND tSUB
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -4972,11 +4934,11 @@ State 253
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 295
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 293
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -4988,59 +4950,118 @@ State 253
     Identifier         go to state 49
 
 
+State 253
+
+  183 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl • Nl_opt BodyStatements tEND tFUNCTION
+
+    tNL  shift, and go to state 291
+
+    $default  reduce using rule 210 (Nl_opt)
+
+    Nl_opt  go to state 296
+
+
 State 254
+
+  182 FunctionDecl: Storage_opt tFUNCTION Identifier StSep • BodyStatements tEND tFUNCTION
+
+    tEXPRLBRACKET  shift, and go to state 5
+    tSTOP          shift, and go to state 87
+    tME            shift, and go to state 6
+    tDOT           shift, and go to state 7
+    tCALL          shift, and go to state 88
+    tCONST         shift, and go to state 89
+    tDIM           shift, and go to state 90
+    tREDIM         shift, and go to state 91
+    tIF            shift, and go to state 92
+    tEXIT          shift, and go to state 93
+    tWHILE         shift, and go to state 94
+    tDO            shift, and go to state 95
+    tFOR           shift, and go to state 96
+    tSELECT        shift, and go to state 97
+    tWITH          shift, and go to state 98
+    tSET           shift, and go to state 100
+    tPUBLIC        shift, and go to state 174
+    tPRIVATE       shift, and go to state 175
+    tON            shift, and go to state 103
+    tIdentifier    shift, and go to state 15
+    tDEFAULT       shift, and go to state 17
+    tERROR         shift, and go to state 18
+    tEXPLICIT      shift, and go to state 19
+    tPROPERTY      shift, and go to state 20
+    tSTEP          shift, and go to state 21
+    ':'            shift, and go to state 104
+
+    tEND      reduce using rule 15 (BodyStatements)
+    $default  reduce using rule 184 (Storage_opt)
+
+    BodyStatements     go to state 297
+    StatementNl        go to state 294
+    Statement          go to state 295
+    SimpleStatement    go to state 108
+    MemberExpression   go to state 29
+    IfStatement        go to state 109
+    CallExpression     go to state 110
+    PrimaryExpression  go to state 48
+    FunctionDecl       go to state 112
+    Storage_opt        go to state 113
+    Storage            go to state 114
+    Identifier         go to state 49
+
+
+State 255
 
    77 ConstExpression: '-' NumericLiteralExpression •
 
     $default  reduce using rule 77 (ConstExpression)
 
 
-State 255
+State 256
 
    69 DimDecl: Identifier '(' DimList ')' •
 
     $default  reduce using rule 69 (DimDecl)
 
 
-State 256
+State 257
 
    72 DimList: IntegerValue ',' • DimList
 
     tInt  shift, and go to state 223
     '0'   shift, and go to state 224
 
-    DimList       go to state 296
+    DimList       go to state 298
     IntegerValue  go to state 226
 
 
-State 257
+State 258
 
    63 ReDimDecl: tIdentifier '(' ArgumentList • ')'
 
-    ')'  shift, and go to state 297
+    ')'  shift, and go to state 299
 
 
-State 258
+State 259
 
    65 ReDimDeclList: ReDimDecl ',' ReDimDeclList •
 
     $default  reduce using rule 65 (ReDimDeclList)
 
 
-State 259
+State 260
 
    82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt • ElseIfs_opt Else_opt tEND tIF
 
-    tELSEIF  shift, and go to state 298
+    tELSEIF  shift, and go to state 300
 
-    $default  reduce using rule 87 (ElseIfs_opt)
+    $default  reduce using rule 88 (ElseIfs_opt)
 
-    ElseIfs_opt  go to state 299
-    ElseIfs      go to state 300
-    ElseIf       go to state 301
+    ElseIfs_opt  go to state 301
+    ElseIfs      go to state 302
+    ElseIf       go to state 303
 
 
-State 260
+State 261
 
    84 IfStatement: tIF Expression tTHEN Statement tELSE • Statement EndIf_opt
 
@@ -5071,9 +5092,9 @@ State 260
     tSTEP          shift, and go to state 21
     ':'            shift, and go to state 104
 
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    Statement          go to state 302
+    Statement          go to state 304
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -5085,35 +5106,80 @@ State 260
     Identifier         go to state 49
 
 
-State 261
-
-   86 EndIf_opt: tEND • tIF
-
-    tIF  shift, and go to state 303
-
-
 State 262
+
+   87 EndIf_opt: tEND • tIF
+
+    tIF  shift, and go to state 305
+
+
+State 263
 
    83 IfStatement: tIF Expression tTHEN Statement EndIf_opt •
 
     $default  reduce using rule 83 (IfStatement)
 
 
-State 263
+State 264
+
+   85 IfStatement: tIF Expression tTHEN SimpleStatement tELSE • Statement EndIf_opt
+
+    tEXPRLBRACKET  shift, and go to state 5
+    tSTOP          shift, and go to state 87
+    tME            shift, and go to state 6
+    tDOT           shift, and go to state 7
+    tCALL          shift, and go to state 88
+    tCONST         shift, and go to state 89
+    tDIM           shift, and go to state 90
+    tREDIM         shift, and go to state 91
+    tIF            shift, and go to state 92
+    tEXIT          shift, and go to state 93
+    tWHILE         shift, and go to state 94
+    tDO            shift, and go to state 95
+    tFOR           shift, and go to state 96
+    tSELECT        shift, and go to state 97
+    tWITH          shift, and go to state 98
+    tSET           shift, and go to state 100
+    tPUBLIC        shift, and go to state 174
+    tPRIVATE       shift, and go to state 175
+    tON            shift, and go to state 103
+    tIdentifier    shift, and go to state 15
+    tDEFAULT       shift, and go to state 17
+    tERROR         shift, and go to state 18
+    tEXPLICIT      shift, and go to state 19
+    tPROPERTY      shift, and go to state 20
+    tSTEP          shift, and go to state 21
+    ':'            shift, and go to state 104
+
+    $default  reduce using rule 184 (Storage_opt)
+
+    Statement          go to state 306
+    SimpleStatement    go to state 108
+    MemberExpression   go to state 29
+    IfStatement        go to state 109
+    CallExpression     go to state 110
+    PrimaryExpression  go to state 48
+    FunctionDecl       go to state 112
+    Storage_opt        go to state 113
+    Storage            go to state 114
+    Identifier         go to state 49
+
+
+State 265
 
    34 SimpleStatement: tWHILE Expression StSep StatementsNl_opt tWEND •
 
     $default  reduce using rule 34 (SimpleStatement)
 
 
-State 264
+State 266
 
    35 SimpleStatement: tDO DoType Expression StSep StatementsNl_opt • tLOOP
 
-    tLOOP  shift, and go to state 304
+    tLOOP  shift, and go to state 307
 
 
-State 265
+State 267
 
    36 SimpleStatement: tDO StSep StatementsNl_opt tLOOP DoType • Expression
 
@@ -5142,7 +5208,7 @@ State 265
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 305
+    Expression                go to state 308
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -5164,26 +5230,26 @@ State 265
     Identifier                go to state 49
 
 
-State 266
+State 268
 
    21 StatementsNl: SimpleStatement StSep StatementsNl •
 
     $default  reduce using rule 21 (StatementsNl)
 
 
-State 267
+State 269
 
    50 SimpleStatement: tFOR tEACH Identifier tIN Expression • StSep StatementsNl_opt tNEXT
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tNL   shift, and go to state 84
     tIMP  shift, and go to state 60
     ':'   shift, and go to state 85
 
-    StSep  go to state 306
+    StSep  go to state 309
 
 
-State 268
+State 270
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO • Expression Step_opt StSep StatementsNl_opt tNEXT
 
@@ -5212,60 +5278,6 @@ State 268
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 307
-    EqvExpression             go to state 31
-    XorExpression             go to state 32
-    OrExpression              go to state 33
-    AndExpression             go to state 34
-    NotExpression             go to state 35
-    EqualityExpression        go to state 36
-    ConcatExpression          go to state 37
-    AdditiveExpression        go to state 38
-    ModExpression             go to state 39
-    IntdivExpression          go to state 40
-    MultiplicativeExpression  go to state 41
-    ExpExpression             go to state 42
-    SignExpression            go to state 43
-    UnaryExpression           go to state 44
-    CallExpression            go to state 45
-    LiteralExpression         go to state 46
-    NumericLiteralExpression  go to state 47
-    PrimaryExpression         go to state 48
-    Identifier                go to state 49
-
-
-State 269
-
-   95 CaseClausules: tCASE • tELSE StSep_opt StatementsNl_opt
-   96              | tCASE • ExpressionList StSep_opt StatementsNl_opt CaseClausules
-
-    tEXPRLBRACKET  shift, and go to state 5
-    tME            shift, and go to state 6
-    tDOT           shift, and go to state 7
-    tTRUE          shift, and go to state 8
-    tFALSE         shift, and go to state 9
-    tNOT           shift, and go to state 10
-    tELSE          shift, and go to state 308
-    tNOTHING       shift, and go to state 11
-    tEMPTY         shift, and go to state 12
-    tNULL          shift, and go to state 13
-    tNEW           shift, and go to state 14
-    tIdentifier    shift, and go to state 15
-    tString        shift, and go to state 16
-    tDEFAULT       shift, and go to state 17
-    tERROR         shift, and go to state 18
-    tEXPLICIT      shift, and go to state 19
-    tPROPERTY      shift, and go to state 20
-    tSTEP          shift, and go to state 21
-    tInt           shift, and go to state 22
-    tDouble        shift, and go to state 23
-    tDate          shift, and go to state 24
-    '0'            shift, and go to state 25
-    '-'            shift, and go to state 26
-    '+'            shift, and go to state 27
-
-    MemberExpression          go to state 29
-    ExpressionList            go to state 309
     Expression                go to state 310
     EqvExpression             go to state 31
     XorExpression             go to state 32
@@ -5288,220 +5300,274 @@ State 269
     Identifier                go to state 49
 
 
-State 270
-
-   51 SimpleStatement: tSELECT tCASE Expression StSep CaseClausules • tEND tSELECT
-
-    tEND  shift, and go to state 311
-
-
 State 271
 
-   52 SimpleStatement: tWITH Expression StSep StatementsNl_opt tEND • tWITH
+   96 CaseClausules: tCASE • tELSE StSep_opt StatementsNl_opt
+   97              | tCASE • ExpressionList StSep_opt StatementsNl_opt CaseClausules
 
-    tWITH  shift, and go to state 312
+    tEXPRLBRACKET  shift, and go to state 5
+    tME            shift, and go to state 6
+    tDOT           shift, and go to state 7
+    tTRUE          shift, and go to state 8
+    tFALSE         shift, and go to state 9
+    tNOT           shift, and go to state 10
+    tELSE          shift, and go to state 311
+    tNOTHING       shift, and go to state 11
+    tEMPTY         shift, and go to state 12
+    tNULL          shift, and go to state 13
+    tNEW           shift, and go to state 14
+    tIdentifier    shift, and go to state 15
+    tString        shift, and go to state 16
+    tDEFAULT       shift, and go to state 17
+    tERROR         shift, and go to state 18
+    tEXPLICIT      shift, and go to state 19
+    tPROPERTY      shift, and go to state 20
+    tSTEP          shift, and go to state 21
+    tInt           shift, and go to state 22
+    tDouble        shift, and go to state 23
+    tDate          shift, and go to state 24
+    '0'            shift, and go to state 25
+    '-'            shift, and go to state 26
+    '+'            shift, and go to state 27
+
+    MemberExpression          go to state 29
+    ExpressionList            go to state 312
+    Expression                go to state 313
+    EqvExpression             go to state 31
+    XorExpression             go to state 32
+    OrExpression              go to state 33
+    AndExpression             go to state 34
+    NotExpression             go to state 35
+    EqualityExpression        go to state 36
+    ConcatExpression          go to state 37
+    AdditiveExpression        go to state 38
+    ModExpression             go to state 39
+    IntdivExpression          go to state 40
+    MultiplicativeExpression  go to state 41
+    ExpExpression             go to state 42
+    SignExpression            go to state 43
+    UnaryExpression           go to state 44
+    CallExpression            go to state 45
+    LiteralExpression         go to state 46
+    NumericLiteralExpression  go to state 47
+    PrimaryExpression         go to state 48
+    Identifier                go to state 49
 
 
 State 272
 
-  172 ClassBody: tDIM DimDeclList •
-  173          | tDIM DimDeclList • StSep ClassBody
+   51 SimpleStatement: tSELECT tCASE Expression StSep CaseClausules • tEND tSELECT
 
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 172 (ClassBody)
-
-    StSep  go to state 313
+    tEND  shift, and go to state 314
 
 
 State 273
 
-  166 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND • tCLASS StSep
+   52 SimpleStatement: tWITH Expression StSep StatementsNl_opt tEND • tWITH
 
-    tCLASS  shift, and go to state 314
+    tWITH  shift, and go to state 315
 
 
 State 274
 
-  175 ClassBody: PropertyDecl StSep • ClassBody
-
-    tDIM      shift, and go to state 239
-    tPUBLIC   shift, and go to state 174
-    tPRIVATE  shift, and go to state 175
-
-    tEND      reduce using rule 167 (ClassBody)
-    $default  reduce using rule 183 (Storage_opt)
-
-    ClassBody     go to state 315
-    PropertyDecl  go to state 241
-    FunctionDecl  go to state 242
-    Storage_opt   go to state 243
-    Storage       go to state 244
-
-
-State 275
-
-  169 ClassBody: FunctionDecl StSep • ClassBody
-
-    tDIM      shift, and go to state 239
-    tPUBLIC   shift, and go to state 174
-    tPRIVATE  shift, and go to state 175
-
-    tEND      reduce using rule 167 (ClassBody)
-    $default  reduce using rule 183 (Storage_opt)
-
-    ClassBody     go to state 316
-    PropertyDecl  go to state 241
-    FunctionDecl  go to state 242
-    Storage_opt   go to state 243
-    Storage       go to state 244
-
-
-State 276
-
-  176 PropertyDecl: Storage_opt tPROPERTY • tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
-  177             | Storage_opt tPROPERTY • tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-  178             | Storage_opt tPROPERTY • tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-
-    tGET  shift, and go to state 317
-    tLET  shift, and go to state 318
-    tSET  shift, and go to state 319
-
-
-State 277
-
-  197 MemberIdentifier: tIdentifier •
-
-    $default  reduce using rule 197 (MemberIdentifier)
-
-
-State 278
-
-  198 MemberIdentifier: tERROR •
-
-    $default  reduce using rule 198 (MemberIdentifier)
-
-
-State 279
-
-  199 MemberIdentifier: tEXPLICIT •
-
-    $default  reduce using rule 199 (MemberIdentifier)
-
-
-State 280
-
-  200 MemberIdentifier: tSTEP •
-
-    $default  reduce using rule 200 (MemberIdentifier)
-
-
-State 281
-
-  170 ClassBody: Storage MemberDeclList •
-  171          | Storage MemberDeclList • StSep ClassBody
+  173 ClassBody: tDIM DimDeclList •
+  174          | tDIM DimDeclList • StSep ClassBody
 
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
 
-    $default  reduce using rule 170 (ClassBody)
+    $default  reduce using rule 173 (ClassBody)
 
-    StSep  go to state 320
+    StSep  go to state 316
+
+
+State 275
+
+  167 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND • tCLASS StSep
+
+    tCLASS  shift, and go to state 317
+
+
+State 276
+
+  176 ClassBody: PropertyDecl StSep • ClassBody
+
+    tDIM      shift, and go to state 240
+    tPUBLIC   shift, and go to state 174
+    tPRIVATE  shift, and go to state 175
+
+    tEND      reduce using rule 168 (ClassBody)
+    $default  reduce using rule 184 (Storage_opt)
+
+    ClassBody     go to state 318
+    PropertyDecl  go to state 242
+    FunctionDecl  go to state 243
+    Storage_opt   go to state 244
+    Storage       go to state 245
+
+
+State 277
+
+  170 ClassBody: FunctionDecl StSep • ClassBody
+
+    tDIM      shift, and go to state 240
+    tPUBLIC   shift, and go to state 174
+    tPRIVATE  shift, and go to state 175
+
+    tEND      reduce using rule 168 (ClassBody)
+    $default  reduce using rule 184 (Storage_opt)
+
+    ClassBody     go to state 319
+    PropertyDecl  go to state 242
+    FunctionDecl  go to state 243
+    Storage_opt   go to state 244
+    Storage       go to state 245
+
+
+State 278
+
+  177 PropertyDecl: Storage_opt tPROPERTY • tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
+  178             | Storage_opt tPROPERTY • tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  179             | Storage_opt tPROPERTY • tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    tGET  shift, and go to state 320
+    tLET  shift, and go to state 321
+    tSET  shift, and go to state 322
+
+
+State 279
+
+  198 MemberIdentifier: tIdentifier •
+
+    $default  reduce using rule 198 (MemberIdentifier)
+
+
+State 280
+
+  199 MemberIdentifier: tERROR •
+
+    $default  reduce using rule 199 (MemberIdentifier)
+
+
+State 281
+
+  200 MemberIdentifier: tEXPLICIT •
+
+    $default  reduce using rule 200 (MemberIdentifier)
 
 
 State 282
 
+  201 MemberIdentifier: tSTEP •
+
+    $default  reduce using rule 201 (MemberIdentifier)
+
+
+State 283
+
+  171 ClassBody: Storage MemberDeclList •
+  172          | Storage MemberDeclList • StSep ClassBody
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 171 (ClassBody)
+
+    StSep  go to state 323
+
+
+State 284
+
    58 MemberDeclList: MemberDecl •
    59               | MemberDecl • ',' MemberDeclList
 
-    ','  shift, and go to state 321
+    ','  shift, and go to state 324
 
     $default  reduce using rule 58 (MemberDeclList)
 
 
-State 283
+State 285
 
    60 MemberDecl: MemberIdentifier •
    61           | MemberIdentifier • '(' DimList ')'
    62           | MemberIdentifier • tEMPTYBRACKETS
 
-    tEMPTYBRACKETS  shift, and go to state 322
-    '('             shift, and go to state 323
+    tEMPTYBRACKETS  shift, and go to state 325
+    '('             shift, and go to state 326
 
     $default  reduce using rule 60 (MemberDecl)
 
 
-State 284
-
-  195 ArgumentDecl: tBYREF • Identifier EmptyBrackets_opt
-
-    tIdentifier  shift, and go to state 15
-    tDEFAULT     shift, and go to state 17
-    tERROR       shift, and go to state 18
-    tEXPLICIT    shift, and go to state 19
-    tPROPERTY    shift, and go to state 20
-    tSTEP        shift, and go to state 21
-
-    Identifier  go to state 324
-
-
-State 285
-
-  196 ArgumentDecl: tBYVAL • Identifier EmptyBrackets_opt
-
-    tIdentifier  shift, and go to state 15
-    tDEFAULT     shift, and go to state 17
-    tERROR       shift, and go to state 18
-    tEXPLICIT    shift, and go to state 19
-    tPROPERTY    shift, and go to state 20
-    tSTEP        shift, and go to state 21
-
-    Identifier  go to state 325
-
-
 State 286
 
-  191 ArgumentsDecl: '(' ArgumentDeclList • ')'
+  196 ArgumentDecl: tBYREF • Identifier EmptyBrackets_opt
 
-    ')'  shift, and go to state 326
+    tIdentifier  shift, and go to state 15
+    tDEFAULT     shift, and go to state 17
+    tERROR       shift, and go to state 18
+    tEXPLICIT    shift, and go to state 19
+    tPROPERTY    shift, and go to state 20
+    tSTEP        shift, and go to state 21
+
+    Identifier  go to state 327
 
 
 State 287
 
-  192 ArgumentDeclList: ArgumentDecl •
-  193                 | ArgumentDecl • ',' ArgumentDeclList
+  197 ArgumentDecl: tBYVAL • Identifier EmptyBrackets_opt
 
-    ','  shift, and go to state 327
+    tIdentifier  shift, and go to state 15
+    tDEFAULT     shift, and go to state 17
+    tERROR       shift, and go to state 18
+    tEXPLICIT    shift, and go to state 19
+    tPROPERTY    shift, and go to state 20
+    tSTEP        shift, and go to state 21
 
-    $default  reduce using rule 192 (ArgumentDeclList)
+    Identifier  go to state 328
 
 
 State 288
 
-  194 ArgumentDecl: Identifier • EmptyBrackets_opt
+  192 ArgumentsDecl: '(' ArgumentDeclList • ')'
 
-    tEMPTYBRACKETS  shift, and go to state 328
-
-    $default  reduce using rule 104 (EmptyBrackets_opt)
-
-    EmptyBrackets_opt  go to state 329
+    ')'  shift, and go to state 329
 
 
 State 289
 
-  210 Nl_opt: tNL • Nl_opt
+  193 ArgumentDeclList: ArgumentDecl •
+  194                 | ArgumentDecl • ',' ArgumentDeclList
 
-    tNL  shift, and go to state 289
+    ','  shift, and go to state 330
 
-    $default  reduce using rule 209 (Nl_opt)
-
-    Nl_opt  go to state 330
+    $default  reduce using rule 193 (ArgumentDeclList)
 
 
 State 290
 
-  180 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt • BodyStatements tEND tSUB
+  195 ArgumentDecl: Identifier • EmptyBrackets_opt
+
+    tEMPTYBRACKETS  shift, and go to state 331
+
+    $default  reduce using rule 105 (EmptyBrackets_opt)
+
+    EmptyBrackets_opt  go to state 332
+
+
+State 291
+
+  211 Nl_opt: tNL • Nl_opt
+
+    tNL  shift, and go to state 291
+
+    $default  reduce using rule 210 (Nl_opt)
+
+    Nl_opt  go to state 333
+
+
+State 292
+
+  181 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt • BodyStatements tEND tSUB
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -5531,11 +5597,11 @@ State 290
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 331
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 334
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -5547,14 +5613,14 @@ State 290
     Identifier         go to state 49
 
 
-State 291
+State 293
 
-  179 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements • tEND tSUB
+  180 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements • tEND tSUB
 
-    tEND  shift, and go to state 332
+    tEND  shift, and go to state 335
 
 
-State 292
+State 294
 
    17 BodyStatements: StatementNl • BodyStatements
 
@@ -5586,11 +5652,11 @@ State 292
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 333
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 336
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -5602,7 +5668,7 @@ State 292
     Identifier         go to state 49
 
 
-State 293
+State 295
 
    16 BodyStatements: Statement •
    22 StatementNl: Statement • tNL
@@ -5612,9 +5678,9 @@ State 293
     $default  reduce using rule 16 (BodyStatements)
 
 
-State 294
+State 296
 
-  182 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt • BodyStatements tEND tFUNCTION
+  183 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt • BodyStatements tEND tFUNCTION
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -5644,11 +5710,11 @@ State 294
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 334
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 337
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -5660,30 +5726,30 @@ State 294
     Identifier         go to state 49
 
 
-State 295
+State 297
 
-  181 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements • tEND tFUNCTION
+  182 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements • tEND tFUNCTION
 
-    tEND  shift, and go to state 335
+    tEND  shift, and go to state 338
 
 
-State 296
+State 298
 
    72 DimList: IntegerValue ',' DimList •
 
     $default  reduce using rule 72 (DimList)
 
 
-State 297
+State 299
 
    63 ReDimDecl: tIdentifier '(' ArgumentList ')' •
 
     $default  reduce using rule 63 (ReDimDecl)
 
 
-State 298
+State 300
 
-   91 ElseIf: tELSEIF • Expression tTHEN StSep_opt StatementsNl_opt
+   92 ElseIf: tELSEIF • Expression tTHEN StSep_opt StatementsNl_opt
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -5710,7 +5776,7 @@ State 298
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 336
+    Expression                go to state 339
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -5732,74 +5798,86 @@ State 298
     Identifier                go to state 49
 
 
-State 299
+State 301
 
    82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt • Else_opt tEND tIF
 
-    tELSE  shift, and go to state 337
+    tELSE  shift, and go to state 340
 
-    $default  reduce using rule 92 (Else_opt)
+    $default  reduce using rule 93 (Else_opt)
 
-    Else_opt  go to state 338
-
-
-State 300
-
-   88 ElseIfs_opt: ElseIfs •
-
-    $default  reduce using rule 88 (ElseIfs_opt)
-
-
-State 301
-
-   89 ElseIfs: ElseIf •
-   90        | ElseIf • ElseIfs
-
-    tELSEIF  shift, and go to state 298
-
-    $default  reduce using rule 89 (ElseIfs)
-
-    ElseIfs  go to state 339
-    ElseIf   go to state 301
+    Else_opt  go to state 341
 
 
 State 302
 
-   84 IfStatement: tIF Expression tTHEN Statement tELSE Statement • EndIf_opt
+   89 ElseIfs_opt: ElseIfs •
 
-    tEND  shift, and go to state 261
-
-    tEND      [reduce using rule 85 (EndIf_opt)]
-    $default  reduce using rule 85 (EndIf_opt)
-
-    EndIf_opt  go to state 340
+    $default  reduce using rule 89 (ElseIfs_opt)
 
 
 State 303
 
-   86 EndIf_opt: tEND tIF •
+   90 ElseIfs: ElseIf •
+   91        | ElseIf • ElseIfs
 
-    $default  reduce using rule 86 (EndIf_opt)
+    tELSEIF  shift, and go to state 300
+
+    $default  reduce using rule 90 (ElseIfs)
+
+    ElseIfs  go to state 342
+    ElseIf   go to state 303
 
 
 State 304
+
+   84 IfStatement: tIF Expression tTHEN Statement tELSE Statement • EndIf_opt
+
+    tEND  shift, and go to state 262
+
+    tEND      [reduce using rule 86 (EndIf_opt)]
+    $default  reduce using rule 86 (EndIf_opt)
+
+    EndIf_opt  go to state 343
+
+
+State 305
+
+   87 EndIf_opt: tEND tIF •
+
+    $default  reduce using rule 87 (EndIf_opt)
+
+
+State 306
+
+   85 IfStatement: tIF Expression tTHEN SimpleStatement tELSE Statement • EndIf_opt
+
+    tEND  shift, and go to state 262
+
+    tEND      [reduce using rule 86 (EndIf_opt)]
+    $default  reduce using rule 86 (EndIf_opt)
+
+    EndIf_opt  go to state 344
+
+
+State 307
 
    35 SimpleStatement: tDO DoType Expression StSep StatementsNl_opt tLOOP •
 
     $default  reduce using rule 35 (SimpleStatement)
 
 
-State 305
+State 308
 
    36 SimpleStatement: tDO StSep StatementsNl_opt tLOOP DoType Expression •
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP  shift, and go to state 60
 
     $default  reduce using rule 36 (SimpleStatement)
 
 
-State 306
+State 309
 
    50 SimpleStatement: tFOR tEACH Identifier tIN Expression StSep • StatementsNl_opt tNEXT
 
@@ -5830,9 +5908,9 @@ State 306
     tSTEP          shift, and go to state 21
 
     tNEXT     reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 341
+    StatementsNl_opt   go to state 345
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -5845,144 +5923,116 @@ State 306
     Identifier         go to state 49
 
 
-State 307
+State 310
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO Expression • Step_opt StSep StatementsNl_opt tNEXT
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP   shift, and go to state 60
-    tSTEP  shift, and go to state 342
+    tSTEP  shift, and go to state 346
 
     $default  reduce using rule 80 (Step_opt)
 
-    Step_opt  go to state 343
-
-
-State 308
-
-   95 CaseClausules: tCASE tELSE • StSep_opt StatementsNl_opt
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 207 (StSep_opt)
-
-    StSep_opt  go to state 344
-    StSep      go to state 345
-
-
-State 309
-
-   96 CaseClausules: tCASE ExpressionList • StSep_opt StatementsNl_opt CaseClausules
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 207 (StSep_opt)
-
-    StSep_opt  go to state 346
-    StSep      go to state 345
-
-
-State 310
-
-  106 ExpressionList: Expression •
-  107               | Expression • ',' ExpressionList
-  109 Expression: Expression • tIMP EqvExpression
-
-    tIMP  shift, and go to state 60
-    ','   shift, and go to state 347
-
-    $default  reduce using rule 106 (ExpressionList)
+    Step_opt  go to state 347
 
 
 State 311
 
-   51 SimpleStatement: tSELECT tCASE Expression StSep CaseClausules tEND • tSELECT
+   96 CaseClausules: tCASE tELSE • StSep_opt StatementsNl_opt
 
-    tSELECT  shift, and go to state 348
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 208 (StSep_opt)
+
+    StSep_opt  go to state 348
+    StSep      go to state 349
 
 
 State 312
+
+   97 CaseClausules: tCASE ExpressionList • StSep_opt StatementsNl_opt CaseClausules
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 208 (StSep_opt)
+
+    StSep_opt  go to state 350
+    StSep      go to state 349
+
+
+State 313
+
+  107 ExpressionList: Expression •
+  108               | Expression • ',' ExpressionList
+  110 Expression: Expression • tIMP EqvExpression
+
+    tIMP  shift, and go to state 60
+    ','   shift, and go to state 351
+
+    $default  reduce using rule 107 (ExpressionList)
+
+
+State 314
+
+   51 SimpleStatement: tSELECT tCASE Expression StSep CaseClausules tEND • tSELECT
+
+    tSELECT  shift, and go to state 352
+
+
+State 315
 
    52 SimpleStatement: tWITH Expression StSep StatementsNl_opt tEND tWITH •
 
     $default  reduce using rule 52 (SimpleStatement)
 
 
-State 313
+State 316
 
-  173 ClassBody: tDIM DimDeclList StSep • ClassBody
+  174 ClassBody: tDIM DimDeclList StSep • ClassBody
 
-    tDIM      shift, and go to state 239
+    tDIM      shift, and go to state 240
     tPUBLIC   shift, and go to state 174
     tPRIVATE  shift, and go to state 175
 
-    tEND      reduce using rule 167 (ClassBody)
-    $default  reduce using rule 183 (Storage_opt)
+    tEND      reduce using rule 168 (ClassBody)
+    $default  reduce using rule 184 (Storage_opt)
 
-    ClassBody     go to state 349
-    PropertyDecl  go to state 241
-    FunctionDecl  go to state 242
-    Storage_opt   go to state 243
-    Storage       go to state 244
-
-
-State 314
-
-  166 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS • StSep
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    StSep  go to state 350
-
-
-State 315
-
-  175 ClassBody: PropertyDecl StSep ClassBody •
-
-    $default  reduce using rule 175 (ClassBody)
-
-
-State 316
-
-  169 ClassBody: FunctionDecl StSep ClassBody •
-
-    $default  reduce using rule 169 (ClassBody)
+    ClassBody     go to state 353
+    PropertyDecl  go to state 242
+    FunctionDecl  go to state 243
+    Storage_opt   go to state 244
+    Storage       go to state 245
 
 
 State 317
 
-  176 PropertyDecl: Storage_opt tPROPERTY tGET • Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
+  167 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS • StSep
 
-    tIdentifier  shift, and go to state 15
-    tDEFAULT     shift, and go to state 17
-    tERROR       shift, and go to state 18
-    tEXPLICIT    shift, and go to state 19
-    tPROPERTY    shift, and go to state 20
-    tSTEP        shift, and go to state 21
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
 
-    Identifier  go to state 351
+    StSep  go to state 354
 
 
 State 318
 
-  177 PropertyDecl: Storage_opt tPROPERTY tLET • Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  176 ClassBody: PropertyDecl StSep ClassBody •
 
-    tIdentifier  shift, and go to state 15
-    tDEFAULT     shift, and go to state 17
-    tERROR       shift, and go to state 18
-    tEXPLICIT    shift, and go to state 19
-    tPROPERTY    shift, and go to state 20
-    tSTEP        shift, and go to state 21
-
-    Identifier  go to state 352
+    $default  reduce using rule 176 (ClassBody)
 
 
 State 319
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET • Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  170 ClassBody: FunctionDecl StSep ClassBody •
+
+    $default  reduce using rule 170 (ClassBody)
+
+
+State 320
+
+  177 PropertyDecl: Storage_opt tPROPERTY tGET • Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
 
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
@@ -5991,94 +6041,122 @@ State 319
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    Identifier  go to state 353
-
-
-State 320
-
-  171 ClassBody: Storage MemberDeclList StSep • ClassBody
-
-    tDIM      shift, and go to state 239
-    tPUBLIC   shift, and go to state 174
-    tPRIVATE  shift, and go to state 175
-
-    tEND      reduce using rule 167 (ClassBody)
-    $default  reduce using rule 183 (Storage_opt)
-
-    ClassBody     go to state 354
-    PropertyDecl  go to state 241
-    FunctionDecl  go to state 242
-    Storage_opt   go to state 243
-    Storage       go to state 244
+    Identifier  go to state 355
 
 
 State 321
 
-   59 MemberDeclList: MemberDecl ',' • MemberDeclList
+  178 PropertyDecl: Storage_opt tPROPERTY tLET • Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
 
-    tIdentifier  shift, and go to state 277
-    tERROR       shift, and go to state 278
-    tEXPLICIT    shift, and go to state 279
-    tSTEP        shift, and go to state 280
+    tIdentifier  shift, and go to state 15
+    tDEFAULT     shift, and go to state 17
+    tERROR       shift, and go to state 18
+    tEXPLICIT    shift, and go to state 19
+    tPROPERTY    shift, and go to state 20
+    tSTEP        shift, and go to state 21
 
-    MemberDeclList    go to state 355
-    MemberDecl        go to state 282
-    MemberIdentifier  go to state 283
+    Identifier  go to state 356
 
 
 State 322
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET • Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    tIdentifier  shift, and go to state 15
+    tDEFAULT     shift, and go to state 17
+    tERROR       shift, and go to state 18
+    tEXPLICIT    shift, and go to state 19
+    tPROPERTY    shift, and go to state 20
+    tSTEP        shift, and go to state 21
+
+    Identifier  go to state 357
+
+
+State 323
+
+  172 ClassBody: Storage MemberDeclList StSep • ClassBody
+
+    tDIM      shift, and go to state 240
+    tPUBLIC   shift, and go to state 174
+    tPRIVATE  shift, and go to state 175
+
+    tEND      reduce using rule 168 (ClassBody)
+    $default  reduce using rule 184 (Storage_opt)
+
+    ClassBody     go to state 358
+    PropertyDecl  go to state 242
+    FunctionDecl  go to state 243
+    Storage_opt   go to state 244
+    Storage       go to state 245
+
+
+State 324
+
+   59 MemberDeclList: MemberDecl ',' • MemberDeclList
+
+    tIdentifier  shift, and go to state 279
+    tERROR       shift, and go to state 280
+    tEXPLICIT    shift, and go to state 281
+    tSTEP        shift, and go to state 282
+
+    MemberDeclList    go to state 359
+    MemberDecl        go to state 284
+    MemberIdentifier  go to state 285
+
+
+State 325
 
    62 MemberDecl: MemberIdentifier tEMPTYBRACKETS •
 
     $default  reduce using rule 62 (MemberDecl)
 
 
-State 323
+State 326
 
    61 MemberDecl: MemberIdentifier '(' • DimList ')'
 
     tInt  shift, and go to state 223
     '0'   shift, and go to state 224
 
-    DimList       go to state 356
+    DimList       go to state 360
     IntegerValue  go to state 226
-
-
-State 324
-
-  195 ArgumentDecl: tBYREF Identifier • EmptyBrackets_opt
-
-    tEMPTYBRACKETS  shift, and go to state 328
-
-    $default  reduce using rule 104 (EmptyBrackets_opt)
-
-    EmptyBrackets_opt  go to state 357
-
-
-State 325
-
-  196 ArgumentDecl: tBYVAL Identifier • EmptyBrackets_opt
-
-    tEMPTYBRACKETS  shift, and go to state 328
-
-    $default  reduce using rule 104 (EmptyBrackets_opt)
-
-    EmptyBrackets_opt  go to state 358
-
-
-State 326
-
-  191 ArgumentsDecl: '(' ArgumentDeclList ')' •
-
-    $default  reduce using rule 191 (ArgumentsDecl)
 
 
 State 327
 
-  193 ArgumentDeclList: ArgumentDecl ',' • ArgumentDeclList
+  196 ArgumentDecl: tBYREF Identifier • EmptyBrackets_opt
 
-    tBYREF       shift, and go to state 284
-    tBYVAL       shift, and go to state 285
+    tEMPTYBRACKETS  shift, and go to state 331
+
+    $default  reduce using rule 105 (EmptyBrackets_opt)
+
+    EmptyBrackets_opt  go to state 361
+
+
+State 328
+
+  197 ArgumentDecl: tBYVAL Identifier • EmptyBrackets_opt
+
+    tEMPTYBRACKETS  shift, and go to state 331
+
+    $default  reduce using rule 105 (EmptyBrackets_opt)
+
+    EmptyBrackets_opt  go to state 362
+
+
+State 329
+
+  192 ArgumentsDecl: '(' ArgumentDeclList ')' •
+
+    $default  reduce using rule 192 (ArgumentsDecl)
+
+
+State 330
+
+  194 ArgumentDeclList: ArgumentDecl ',' • ArgumentDeclList
+
+    tBYREF       shift, and go to state 286
+    tBYVAL       shift, and go to state 287
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
     tERROR       shift, and go to state 18
@@ -6086,118 +6164,125 @@ State 327
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    ArgumentDeclList  go to state 359
-    ArgumentDecl      go to state 287
-    Identifier        go to state 288
-
-
-State 328
-
-  105 EmptyBrackets_opt: tEMPTYBRACKETS •
-
-    $default  reduce using rule 105 (EmptyBrackets_opt)
-
-
-State 329
-
-  194 ArgumentDecl: Identifier EmptyBrackets_opt •
-
-    $default  reduce using rule 194 (ArgumentDecl)
-
-
-State 330
-
-  210 Nl_opt: tNL Nl_opt •
-
-    $default  reduce using rule 210 (Nl_opt)
+    ArgumentDeclList  go to state 363
+    ArgumentDecl      go to state 289
+    Identifier        go to state 290
 
 
 State 331
 
-  180 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements • tEND tSUB
+  106 EmptyBrackets_opt: tEMPTYBRACKETS •
 
-    tEND  shift, and go to state 360
+    $default  reduce using rule 106 (EmptyBrackets_opt)
 
 
 State 332
 
-  179 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND • tSUB
+  195 ArgumentDecl: Identifier EmptyBrackets_opt •
 
-    tSUB  shift, and go to state 361
+    $default  reduce using rule 195 (ArgumentDecl)
 
 
 State 333
+
+  211 Nl_opt: tNL Nl_opt •
+
+    $default  reduce using rule 211 (Nl_opt)
+
+
+State 334
+
+  181 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements • tEND tSUB
+
+    tEND  shift, and go to state 364
+
+
+State 335
+
+  180 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND • tSUB
+
+    tSUB  shift, and go to state 365
+
+
+State 336
 
    17 BodyStatements: StatementNl BodyStatements •
 
     $default  reduce using rule 17 (BodyStatements)
 
 
-State 334
-
-  182 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements • tEND tFUNCTION
-
-    tEND  shift, and go to state 362
-
-
-State 335
-
-  181 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements tEND • tFUNCTION
-
-    tFUNCTION  shift, and go to state 363
-
-
-State 336
-
-   91 ElseIf: tELSEIF Expression • tTHEN StSep_opt StatementsNl_opt
-  109 Expression: Expression • tIMP EqvExpression
-
-    tIMP   shift, and go to state 60
-    tTHEN  shift, and go to state 364
-
-
 State 337
 
-   93 Else_opt: tELSE • StSep_opt StatementsNl_opt
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 207 (StSep_opt)
-
-    StSep_opt  go to state 365
-    StSep      go to state 345
-
-
-State 338
-
-   82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt • tEND tIF
+  183 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements • tEND tFUNCTION
 
     tEND  shift, and go to state 366
 
 
+State 338
+
+  182 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements tEND • tFUNCTION
+
+    tFUNCTION  shift, and go to state 367
+
+
 State 339
 
-   90 ElseIfs: ElseIf ElseIfs •
+   92 ElseIf: tELSEIF Expression • tTHEN StSep_opt StatementsNl_opt
+  110 Expression: Expression • tIMP EqvExpression
 
-    $default  reduce using rule 90 (ElseIfs)
+    tIMP   shift, and go to state 60
+    tTHEN  shift, and go to state 368
 
 
 State 340
+
+   94 Else_opt: tELSE • StSep_opt StatementsNl_opt
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 208 (StSep_opt)
+
+    StSep_opt  go to state 369
+    StSep      go to state 349
+
+
+State 341
+
+   82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt • tEND tIF
+
+    tEND  shift, and go to state 370
+
+
+State 342
+
+   91 ElseIfs: ElseIf ElseIfs •
+
+    $default  reduce using rule 91 (ElseIfs)
+
+
+State 343
 
    84 IfStatement: tIF Expression tTHEN Statement tELSE Statement EndIf_opt •
 
     $default  reduce using rule 84 (IfStatement)
 
 
-State 341
+State 344
+
+   85 IfStatement: tIF Expression tTHEN SimpleStatement tELSE Statement EndIf_opt •
+
+    $default  reduce using rule 85 (IfStatement)
+
+
+State 345
 
    50 SimpleStatement: tFOR tEACH Identifier tIN Expression StSep StatementsNl_opt • tNEXT
 
-    tNEXT  shift, and go to state 367
+    tNEXT  shift, and go to state 371
 
 
-State 342
+State 346
 
    81 Step_opt: tSTEP • Expression
 
@@ -6226,7 +6311,7 @@ State 342
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    Expression                go to state 368
+    Expression                go to state 372
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -6248,19 +6333,19 @@ State 342
     Identifier                go to state 49
 
 
-State 343
+State 347
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO Expression Step_opt • StSep StatementsNl_opt tNEXT
 
     tNL  shift, and go to state 84
     ':'  shift, and go to state 85
 
-    StSep  go to state 369
+    StSep  go to state 373
 
 
-State 344
+State 348
 
-   95 CaseClausules: tCASE tELSE StSep_opt • StatementsNl_opt
+   96 CaseClausules: tCASE tELSE StSep_opt • StatementsNl_opt
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -6289,9 +6374,9 @@ State 344
     tSTEP          shift, and go to state 21
 
     tEND      reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 370
+    StatementsNl_opt   go to state 374
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -6304,16 +6389,16 @@ State 344
     Identifier         go to state 49
 
 
-State 345
+State 349
 
-  208 StSep_opt: StSep •
+  209 StSep_opt: StSep •
 
-    $default  reduce using rule 208 (StSep_opt)
+    $default  reduce using rule 209 (StSep_opt)
 
 
-State 346
+State 350
 
-   96 CaseClausules: tCASE ExpressionList StSep_opt • StatementsNl_opt CaseClausules
+   97 CaseClausules: tCASE ExpressionList StSep_opt • StatementsNl_opt CaseClausules
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -6341,11 +6426,11 @@ State 346
     tPROPERTY      shift, and go to state 20
     tSTEP          shift, and go to state 21
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     $default   reduce using rule 18 (StatementsNl_opt)
 
-    StatementsNl_opt   go to state 371
+    StatementsNl_opt   go to state 375
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -6358,9 +6443,9 @@ State 346
     Identifier         go to state 49
 
 
-State 347
+State 351
 
-  107 ExpressionList: Expression ',' • ExpressionList
+  108 ExpressionList: Expression ',' • ExpressionList
 
     tEXPRLBRACKET  shift, and go to state 5
     tME            shift, and go to state 6
@@ -6387,8 +6472,8 @@ State 347
     '+'            shift, and go to state 27
 
     MemberExpression          go to state 29
-    ExpressionList            go to state 372
-    Expression                go to state 310
+    ExpressionList            go to state 376
+    Expression                go to state 313
     EqvExpression             go to state 31
     XorExpression             go to state 32
     OrExpression              go to state 33
@@ -6410,140 +6495,140 @@ State 347
     Identifier                go to state 49
 
 
-State 348
+State 352
 
    51 SimpleStatement: tSELECT tCASE Expression StSep CaseClausules tEND tSELECT •
 
     $default  reduce using rule 51 (SimpleStatement)
 
 
-State 349
-
-  173 ClassBody: tDIM DimDeclList StSep ClassBody •
-
-    $default  reduce using rule 173 (ClassBody)
-
-
-State 350
-
-  166 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS StSep •
-
-    $default  reduce using rule 166 (ClassDeclaration)
-
-
-State 351
-
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier • ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
-
-    tEMPTYBRACKETS  shift, and go to state 248
-    '('             shift, and go to state 249
-
-    $default  reduce using rule 188 (ArgumentsDecl_opt)
-
-    ArgumentsDecl_opt  go to state 373
-    ArgumentsDecl      go to state 374
-
-
-State 352
-
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier • '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
-
-    '('  shift, and go to state 375
-
-
 State 353
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier • '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  174 ClassBody: tDIM DimDeclList StSep ClassBody •
 
-    '('  shift, and go to state 376
+    $default  reduce using rule 174 (ClassBody)
 
 
 State 354
 
-  171 ClassBody: Storage MemberDeclList StSep ClassBody •
+  167 ClassDeclaration: tCLASS Identifier StSep ClassBody tEND tCLASS StSep •
 
-    $default  reduce using rule 171 (ClassBody)
+    $default  reduce using rule 167 (ClassDeclaration)
 
 
 State 355
+
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier • ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY
+
+    tEMPTYBRACKETS  shift, and go to state 249
+    '('             shift, and go to state 250
+
+    $default  reduce using rule 189 (ArgumentsDecl_opt)
+
+    ArgumentsDecl_opt  go to state 377
+    ArgumentsDecl      go to state 378
+
+
+State 356
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier • '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    '('  shift, and go to state 379
+
+
+State 357
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier • '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    '('  shift, and go to state 380
+
+
+State 358
+
+  172 ClassBody: Storage MemberDeclList StSep ClassBody •
+
+    $default  reduce using rule 172 (ClassBody)
+
+
+State 359
 
    59 MemberDeclList: MemberDecl ',' MemberDeclList •
 
     $default  reduce using rule 59 (MemberDeclList)
 
 
-State 356
+State 360
 
    61 MemberDecl: MemberIdentifier '(' DimList • ')'
 
-    ')'  shift, and go to state 377
-
-
-State 357
-
-  195 ArgumentDecl: tBYREF Identifier EmptyBrackets_opt •
-
-    $default  reduce using rule 195 (ArgumentDecl)
-
-
-State 358
-
-  196 ArgumentDecl: tBYVAL Identifier EmptyBrackets_opt •
-
-    $default  reduce using rule 196 (ArgumentDecl)
-
-
-State 359
-
-  193 ArgumentDeclList: ArgumentDecl ',' ArgumentDeclList •
-
-    $default  reduce using rule 193 (ArgumentDeclList)
-
-
-State 360
-
-  180 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND • tSUB
-
-    tSUB  shift, and go to state 378
+    ')'  shift, and go to state 381
 
 
 State 361
 
-  179 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND tSUB •
+  196 ArgumentDecl: tBYREF Identifier EmptyBrackets_opt •
 
-    $default  reduce using rule 179 (FunctionDecl)
+    $default  reduce using rule 196 (ArgumentDecl)
 
 
 State 362
 
-  182 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND • tFUNCTION
+  197 ArgumentDecl: tBYVAL Identifier EmptyBrackets_opt •
 
-    tFUNCTION  shift, and go to state 379
+    $default  reduce using rule 197 (ArgumentDecl)
 
 
 State 363
 
-  181 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION •
+  194 ArgumentDeclList: ArgumentDecl ',' ArgumentDeclList •
 
-    $default  reduce using rule 181 (FunctionDecl)
+    $default  reduce using rule 194 (ArgumentDeclList)
 
 
 State 364
 
-   91 ElseIf: tELSEIF Expression tTHEN • StSep_opt StatementsNl_opt
+  181 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND • tSUB
 
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    $default  reduce using rule 207 (StSep_opt)
-
-    StSep_opt  go to state 380
-    StSep      go to state 345
+    tSUB  shift, and go to state 382
 
 
 State 365
 
-   93 Else_opt: tELSE StSep_opt • StatementsNl_opt
+  180 FunctionDecl: Storage_opt tSUB Identifier StSep BodyStatements tEND tSUB •
+
+    $default  reduce using rule 180 (FunctionDecl)
+
+
+State 366
+
+  183 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND • tFUNCTION
+
+    tFUNCTION  shift, and go to state 383
+
+
+State 367
+
+  182 FunctionDecl: Storage_opt tFUNCTION Identifier StSep BodyStatements tEND tFUNCTION •
+
+    $default  reduce using rule 182 (FunctionDecl)
+
+
+State 368
+
+   92 ElseIf: tELSEIF Expression tTHEN • StSep_opt StatementsNl_opt
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    $default  reduce using rule 208 (StSep_opt)
+
+    StSep_opt  go to state 384
+    StSep      go to state 349
+
+
+State 369
+
+   94 Else_opt: tELSE StSep_opt • StatementsNl_opt
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -6572,9 +6657,9 @@ State 365
     tSTEP          shift, and go to state 21
 
     tEND      reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 381
+    StatementsNl_opt   go to state 385
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -6587,31 +6672,31 @@ State 365
     Identifier         go to state 49
 
 
-State 366
+State 370
 
    82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt tEND • tIF
 
-    tIF  shift, and go to state 382
+    tIF  shift, and go to state 386
 
 
-State 367
+State 371
 
    50 SimpleStatement: tFOR tEACH Identifier tIN Expression StSep StatementsNl_opt tNEXT •
 
     $default  reduce using rule 50 (SimpleStatement)
 
 
-State 368
+State 372
 
    81 Step_opt: tSTEP Expression •
-  109 Expression: Expression • tIMP EqvExpression
+  110 Expression: Expression • tIMP EqvExpression
 
     tIMP  shift, and go to state 60
 
     $default  reduce using rule 81 (Step_opt)
 
 
-State 369
+State 373
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO Expression Step_opt StSep • StatementsNl_opt tNEXT
 
@@ -6642,9 +6727,9 @@ State 369
     tSTEP          shift, and go to state 21
 
     tNEXT     reduce using rule 18 (StatementsNl_opt)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    StatementsNl_opt   go to state 383
+    StatementsNl_opt   go to state 387
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -6657,72 +6742,54 @@ State 369
     Identifier         go to state 49
 
 
-State 370
-
-   95 CaseClausules: tCASE tELSE StSep_opt StatementsNl_opt •
-
-    $default  reduce using rule 95 (CaseClausules)
-
-
-State 371
-
-   96 CaseClausules: tCASE ExpressionList StSep_opt StatementsNl_opt • CaseClausules
-
-    tCASE  shift, and go to state 269
-
-    $default  reduce using rule 94 (CaseClausules)
-
-    CaseClausules  go to state 384
-
-
-State 372
-
-  107 ExpressionList: Expression ',' ExpressionList •
-
-    $default  reduce using rule 107 (ExpressionList)
-
-
-State 373
-
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt • StSep BodyStatements tEND tPROPERTY
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    StSep  go to state 385
-
-
 State 374
 
-  189 ArgumentsDecl_opt: ArgumentsDecl •
+   96 CaseClausules: tCASE tELSE StSep_opt StatementsNl_opt •
 
-    $default  reduce using rule 189 (ArgumentsDecl_opt)
+    $default  reduce using rule 96 (CaseClausules)
 
 
 State 375
 
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' • ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+   97 CaseClausules: tCASE ExpressionList StSep_opt StatementsNl_opt • CaseClausules
 
-    tBYREF       shift, and go to state 284
-    tBYVAL       shift, and go to state 285
-    tIdentifier  shift, and go to state 15
-    tDEFAULT     shift, and go to state 17
-    tERROR       shift, and go to state 18
-    tEXPLICIT    shift, and go to state 19
-    tPROPERTY    shift, and go to state 20
-    tSTEP        shift, and go to state 21
+    tCASE  shift, and go to state 271
 
-    ArgumentDeclList  go to state 386
-    ArgumentDecl      go to state 287
-    Identifier        go to state 288
+    $default  reduce using rule 95 (CaseClausules)
+
+    CaseClausules  go to state 388
 
 
 State 376
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' • ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+  108 ExpressionList: Expression ',' ExpressionList •
 
-    tBYREF       shift, and go to state 284
-    tBYVAL       shift, and go to state 285
+    $default  reduce using rule 108 (ExpressionList)
+
+
+State 377
+
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt • StSep BodyStatements tEND tPROPERTY
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    StSep  go to state 389
+
+
+State 378
+
+  190 ArgumentsDecl_opt: ArgumentsDecl •
+
+    $default  reduce using rule 190 (ArgumentsDecl_opt)
+
+
+State 379
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' • ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    tBYREF       shift, and go to state 286
+    tBYVAL       shift, and go to state 287
     tIdentifier  shift, and go to state 15
     tDEFAULT     shift, and go to state 17
     tERROR       shift, and go to state 18
@@ -6730,35 +6797,53 @@ State 376
     tPROPERTY    shift, and go to state 20
     tSTEP        shift, and go to state 21
 
-    ArgumentDeclList  go to state 387
-    ArgumentDecl      go to state 287
-    Identifier        go to state 288
+    ArgumentDeclList  go to state 390
+    ArgumentDecl      go to state 289
+    Identifier        go to state 290
 
 
-State 377
+State 380
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' • ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY
+
+    tBYREF       shift, and go to state 286
+    tBYVAL       shift, and go to state 287
+    tIdentifier  shift, and go to state 15
+    tDEFAULT     shift, and go to state 17
+    tERROR       shift, and go to state 18
+    tEXPLICIT    shift, and go to state 19
+    tPROPERTY    shift, and go to state 20
+    tSTEP        shift, and go to state 21
+
+    ArgumentDeclList  go to state 391
+    ArgumentDecl      go to state 289
+    Identifier        go to state 290
+
+
+State 381
 
    61 MemberDecl: MemberIdentifier '(' DimList ')' •
 
     $default  reduce using rule 61 (MemberDecl)
 
 
-State 378
+State 382
 
-  180 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB •
+  181 FunctionDecl: Storage_opt tSUB Identifier ArgumentsDecl Nl_opt BodyStatements tEND tSUB •
 
-    $default  reduce using rule 180 (FunctionDecl)
-
-
-State 379
-
-  182 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION •
-
-    $default  reduce using rule 182 (FunctionDecl)
+    $default  reduce using rule 181 (FunctionDecl)
 
 
-State 380
+State 383
 
-   91 ElseIf: tELSEIF Expression tTHEN StSep_opt • StatementsNl_opt
+  183 FunctionDecl: Storage_opt tFUNCTION Identifier ArgumentsDecl Nl_opt BodyStatements tEND tFUNCTION •
+
+    $default  reduce using rule 183 (FunctionDecl)
+
+
+State 384
+
+   92 ElseIf: tELSEIF Expression tTHEN StSep_opt • StatementsNl_opt
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -6786,11 +6871,11 @@ State 380
     tPROPERTY      shift, and go to state 20
     tSTEP          shift, and go to state 21
 
-    tSUB       reduce using rule 183 (Storage_opt)
-    tFUNCTION  reduce using rule 183 (Storage_opt)
+    tSUB       reduce using rule 184 (Storage_opt)
+    tFUNCTION  reduce using rule 184 (Storage_opt)
     $default   reduce using rule 18 (StatementsNl_opt)
 
-    StatementsNl_opt   go to state 388
+    StatementsNl_opt   go to state 392
     StatementsNl       go to state 200
     SimpleStatement    go to state 201
     MemberExpression   go to state 29
@@ -6803,37 +6888,37 @@ State 380
     Identifier         go to state 49
 
 
-State 381
+State 385
 
-   93 Else_opt: tELSE StSep_opt StatementsNl_opt •
+   94 Else_opt: tELSE StSep_opt StatementsNl_opt •
 
-    $default  reduce using rule 93 (Else_opt)
+    $default  reduce using rule 94 (Else_opt)
 
 
-State 382
+State 386
 
    82 IfStatement: tIF Expression tTHEN tNL StatementsNl_opt ElseIfs_opt Else_opt tEND tIF •
 
     $default  reduce using rule 82 (IfStatement)
 
 
-State 383
+State 387
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO Expression Step_opt StSep StatementsNl_opt • tNEXT
 
-    tNEXT  shift, and go to state 389
+    tNEXT  shift, and go to state 393
 
 
-State 384
+State 388
 
-   96 CaseClausules: tCASE ExpressionList StSep_opt StatementsNl_opt CaseClausules •
+   97 CaseClausules: tCASE ExpressionList StSep_opt StatementsNl_opt CaseClausules •
 
-    $default  reduce using rule 96 (CaseClausules)
+    $default  reduce using rule 97 (CaseClausules)
 
 
-State 385
+State 389
 
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep • BodyStatements tEND tPROPERTY
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep • BodyStatements tEND tPROPERTY
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -6863,11 +6948,11 @@ State 385
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 390
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 394
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -6879,119 +6964,71 @@ State 385
     Identifier         go to state 49
 
 
-State 386
+State 390
 
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList • ')' StSep BodyStatements tEND tPROPERTY
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList • ')' StSep BodyStatements tEND tPROPERTY
 
-    ')'  shift, and go to state 391
-
-
-State 387
-
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList • ')' StSep BodyStatements tEND tPROPERTY
-
-    ')'  shift, and go to state 392
+    ')'  shift, and go to state 395
 
 
-State 388
+State 391
 
-   91 ElseIf: tELSEIF Expression tTHEN StSep_opt StatementsNl_opt •
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList • ')' StSep BodyStatements tEND tPROPERTY
 
-    $default  reduce using rule 91 (ElseIf)
+    ')'  shift, and go to state 396
 
 
-State 389
+State 392
+
+   92 ElseIf: tELSEIF Expression tTHEN StSep_opt StatementsNl_opt •
+
+    $default  reduce using rule 92 (ElseIf)
+
+
+State 393
 
    49 SimpleStatement: tFOR Identifier '=' Expression tTO Expression Step_opt StSep StatementsNl_opt tNEXT •
 
     $default  reduce using rule 49 (SimpleStatement)
 
 
-State 390
-
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements • tEND tPROPERTY
-
-    tEND  shift, and go to state 393
-
-
-State 391
-
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' • StSep BodyStatements tEND tPROPERTY
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    StSep  go to state 394
-
-
-State 392
-
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' • StSep BodyStatements tEND tPROPERTY
-
-    tNL  shift, and go to state 84
-    ':'  shift, and go to state 85
-
-    StSep  go to state 395
-
-
-State 393
-
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND • tPROPERTY
-
-    tPROPERTY  shift, and go to state 396
-
-
 State 394
 
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep • BodyStatements tEND tPROPERTY
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements • tEND tPROPERTY
 
-    tEXPRLBRACKET  shift, and go to state 5
-    tSTOP          shift, and go to state 87
-    tME            shift, and go to state 6
-    tDOT           shift, and go to state 7
-    tCALL          shift, and go to state 88
-    tCONST         shift, and go to state 89
-    tDIM           shift, and go to state 90
-    tREDIM         shift, and go to state 91
-    tIF            shift, and go to state 92
-    tEXIT          shift, and go to state 93
-    tWHILE         shift, and go to state 94
-    tDO            shift, and go to state 95
-    tFOR           shift, and go to state 96
-    tSELECT        shift, and go to state 97
-    tWITH          shift, and go to state 98
-    tSET           shift, and go to state 100
-    tPUBLIC        shift, and go to state 174
-    tPRIVATE       shift, and go to state 175
-    tON            shift, and go to state 103
-    tIdentifier    shift, and go to state 15
-    tDEFAULT       shift, and go to state 17
-    tERROR         shift, and go to state 18
-    tEXPLICIT      shift, and go to state 19
-    tPROPERTY      shift, and go to state 20
-    tSTEP          shift, and go to state 21
-    ':'            shift, and go to state 104
-
-    tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
-
-    BodyStatements     go to state 397
-    StatementNl        go to state 292
-    Statement          go to state 293
-    SimpleStatement    go to state 108
-    MemberExpression   go to state 29
-    IfStatement        go to state 109
-    CallExpression     go to state 110
-    PrimaryExpression  go to state 48
-    FunctionDecl       go to state 112
-    Storage_opt        go to state 113
-    Storage            go to state 114
-    Identifier         go to state 49
+    tEND  shift, and go to state 397
 
 
 State 395
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep • BodyStatements tEND tPROPERTY
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' • StSep BodyStatements tEND tPROPERTY
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    StSep  go to state 398
+
+
+State 396
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' • StSep BodyStatements tEND tPROPERTY
+
+    tNL  shift, and go to state 84
+    ':'  shift, and go to state 85
+
+    StSep  go to state 399
+
+
+State 397
+
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND • tPROPERTY
+
+    tPROPERTY  shift, and go to state 400
+
+
+State 398
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep • BodyStatements tEND tPROPERTY
 
     tEXPRLBRACKET  shift, and go to state 5
     tSTOP          shift, and go to state 87
@@ -7021,11 +7058,11 @@ State 395
     ':'            shift, and go to state 104
 
     tEND      reduce using rule 15 (BodyStatements)
-    $default  reduce using rule 183 (Storage_opt)
+    $default  reduce using rule 184 (Storage_opt)
 
-    BodyStatements     go to state 398
-    StatementNl        go to state 292
-    Statement          go to state 293
+    BodyStatements     go to state 401
+    StatementNl        go to state 294
+    Statement          go to state 295
     SimpleStatement    go to state 108
     MemberExpression   go to state 29
     IfStatement        go to state 109
@@ -7037,50 +7074,98 @@ State 395
     Identifier         go to state 49
 
 
-State 396
-
-  176 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY •
-
-    $default  reduce using rule 176 (PropertyDecl)
-
-
-State 397
-
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements • tEND tPROPERTY
-
-    tEND  shift, and go to state 399
-
-
-State 398
-
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements • tEND tPROPERTY
-
-    tEND  shift, and go to state 400
-
-
 State 399
 
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND • tPROPERTY
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep • BodyStatements tEND tPROPERTY
 
-    tPROPERTY  shift, and go to state 401
+    tEXPRLBRACKET  shift, and go to state 5
+    tSTOP          shift, and go to state 87
+    tME            shift, and go to state 6
+    tDOT           shift, and go to state 7
+    tCALL          shift, and go to state 88
+    tCONST         shift, and go to state 89
+    tDIM           shift, and go to state 90
+    tREDIM         shift, and go to state 91
+    tIF            shift, and go to state 92
+    tEXIT          shift, and go to state 93
+    tWHILE         shift, and go to state 94
+    tDO            shift, and go to state 95
+    tFOR           shift, and go to state 96
+    tSELECT        shift, and go to state 97
+    tWITH          shift, and go to state 98
+    tSET           shift, and go to state 100
+    tPUBLIC        shift, and go to state 174
+    tPRIVATE       shift, and go to state 175
+    tON            shift, and go to state 103
+    tIdentifier    shift, and go to state 15
+    tDEFAULT       shift, and go to state 17
+    tERROR         shift, and go to state 18
+    tEXPLICIT      shift, and go to state 19
+    tPROPERTY      shift, and go to state 20
+    tSTEP          shift, and go to state 21
+    ':'            shift, and go to state 104
+
+    tEND      reduce using rule 15 (BodyStatements)
+    $default  reduce using rule 184 (Storage_opt)
+
+    BodyStatements     go to state 402
+    StatementNl        go to state 294
+    Statement          go to state 295
+    SimpleStatement    go to state 108
+    MemberExpression   go to state 29
+    IfStatement        go to state 109
+    CallExpression     go to state 110
+    PrimaryExpression  go to state 48
+    FunctionDecl       go to state 112
+    Storage_opt        go to state 113
+    Storage            go to state 114
+    Identifier         go to state 49
 
 
 State 400
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND • tPROPERTY
-
-    tPROPERTY  shift, and go to state 402
-
-
-State 401
-
-  177 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY •
+  177 PropertyDecl: Storage_opt tPROPERTY tGET Identifier ArgumentsDecl_opt StSep BodyStatements tEND tPROPERTY •
 
     $default  reduce using rule 177 (PropertyDecl)
 
 
+State 401
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements • tEND tPROPERTY
+
+    tEND  shift, and go to state 403
+
+
 State 402
 
-  178 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY •
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements • tEND tPROPERTY
+
+    tEND  shift, and go to state 404
+
+
+State 403
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND • tPROPERTY
+
+    tPROPERTY  shift, and go to state 405
+
+
+State 404
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND • tPROPERTY
+
+    tPROPERTY  shift, and go to state 406
+
+
+State 405
+
+  178 PropertyDecl: Storage_opt tPROPERTY tLET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY •
 
     $default  reduce using rule 178 (PropertyDecl)
+
+
+State 406
+
+  179 PropertyDecl: Storage_opt tPROPERTY tSET Identifier '(' ArgumentDeclList ')' StSep BodyStatements tEND tPROPERTY •
+
+    $default  reduce using rule 179 (PropertyDecl)

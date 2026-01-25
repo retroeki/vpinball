@@ -455,8 +455,15 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
 
     switch(c) {
     case '\n':
+        ctx->ptr++;
+        return tNL;
     case '\r':
         ctx->ptr++;
+        /* Handle \r\r\n and \r\n as single line ending - skip all consecutive \r */
+        while(ctx->ptr < ctx->end && *ctx->ptr == '\r')
+            ctx->ptr++;
+        if(ctx->ptr < ctx->end && *ctx->ptr == '\n')
+            ctx->ptr++;
         return tNL;
     case '\'':
         return comment_line(ctx);

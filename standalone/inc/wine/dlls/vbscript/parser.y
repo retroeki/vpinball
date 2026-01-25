@@ -22,6 +22,12 @@
 #include "parse.h"
 
 #include "wine/debug.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#define PARSER_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptParser", __VA_ARGS__)
+#else
+#define PARSER_LOG(...) fprintf(stderr, __VA_ARGS__)
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
@@ -91,6 +97,7 @@ static statement_t *link_statements(statement_t*,statement_t*);
 %parse-param { parser_ctx_t *ctx }
 %define api.prefix {parser_}
 %define api.pure
+%define parse.error verbose
 %start Program
 
 %union {
@@ -563,6 +570,8 @@ static int parser_error(unsigned *loc, parser_ctx_t *ctx, const char *str)
         ctx->error_loc = *loc;
     if(ctx->hres == S_OK) {
         FIXME("%s: %s\n", debugstr_w(ctx->code + *loc), debugstr_a(str));
+        /* Log parser error details for debugging */
+        PARSER_LOG("PARSER ERROR at loc %u: %s\n", *loc, str ? str : "(null)");
         ctx->hres = E_FAIL;
     }else {
         WARN("%s: %08lx\n", debugstr_w(ctx->code + *loc), ctx->hres);

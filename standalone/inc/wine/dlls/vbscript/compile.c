@@ -24,6 +24,13 @@
 
 #include "wine/debug.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define COMPILE_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
+#else
+#define COMPILE_LOG(...) fprintf(stderr, __VA_ARGS__)
+#endif
+
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 WINE_DECLARE_DEBUG_CHANNEL(vbscript_disas);
 
@@ -395,6 +402,7 @@ static inline BOOL emit_catch(compile_ctx_t *ctx, unsigned off)
 
 static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT error)
 {
+    COMPILE_LOG("compile_error called: error=0x%08lx, loc=%d\n", (unsigned long)error, compiler->loc);
     if(error == SCRIPT_E_REPORTED)
         return error;
 
@@ -402,6 +410,8 @@ static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT
     ctx->ei.scode = error;
     ctx->ei.bstrSource = get_vbscript_string(VBS_COMPILE_ERROR);
     map_vbs_exception(&ctx->ei);
+    COMPILE_LOG("compile_error: after map_vbs_exception, bstrDescription=%s\n",
+                ctx->ei.bstrDescription ? "SET" : "NULL");
     return report_script_error(ctx, compiler->code, compiler->loc);
 }
 
@@ -1157,6 +1167,7 @@ static HRESULT compile_dim_statement(compile_ctx_t *ctx, dim_statement_t *stat)
         if(lookup_dim_decls(ctx, dim_decl->name) || lookup_args_name(ctx, dim_decl->name)
            || lookup_const_decls(ctx, dim_decl->name, FALSE)) {
             FIXME("dim %s name redefined\n", debugstr_w(dim_decl->name));
+            COMPILE_LOG("COMPILE FAIL: Dim '%ls' redefined\n", dim_decl->name);
             return E_FAIL;
         }
 
@@ -1250,6 +1261,7 @@ static HRESULT compile_function_statement(compile_ctx_t *ctx, function_statement
 {
     if(ctx->func != &ctx->code->main_code) {
         FIXME("Function is not in the global code\n");
+        COMPILE_LOG("COMPILE FAIL: Function not in global code\n");
         return E_FAIL;
     }
 
@@ -1270,6 +1282,7 @@ static HRESULT compile_exitdo_statement(compile_ctx_t *ctx)
     }
     if(!iter) {
         FIXME("Exit Do outside Do Loop\n");
+        COMPILE_LOG("COMPILE FAIL: Exit Do outside Do Loop\n");
         return E_FAIL;
     }
 
@@ -1296,6 +1309,7 @@ static HRESULT compile_exitfor_statement(compile_ctx_t *ctx)
     }
     if(!iter) {
         FIXME("Exit For outside For loop\n");
+        COMPILE_LOG("COMPILE FAIL: Exit For outside For loop\n");
         return E_FAIL;
     }
 
@@ -1329,6 +1343,7 @@ static HRESULT compile_exitsub_statement(compile_ctx_t *ctx)
 {
     if(!ctx->sub_end_label) {
         FIXME("Exit Sub outside Sub?\n");
+        COMPILE_LOG("COMPILE FAIL: Exit Sub outside Sub\n");
         return E_FAIL;
     }
 
@@ -1339,6 +1354,7 @@ static HRESULT compile_exitfunc_statement(compile_ctx_t *ctx)
 {
     if(!ctx->func_end_label) {
         FIXME("Exit Function outside Function?\n");
+        COMPILE_LOG("COMPILE FAIL: Exit Function outside Function\n");
         return E_FAIL;
     }
 
@@ -1349,6 +1365,7 @@ static HRESULT compile_exitprop_statement(compile_ctx_t *ctx)
 {
     if(!ctx->prop_end_label) {
         FIXME("Exit Property outside Property?\n");
+        COMPILE_LOG("COMPILE FAIL: Exit Property outside Property\n");
         return E_FAIL;
     }
 
@@ -1462,8 +1479,11 @@ static HRESULT compile_statement(compile_ctx_t *ctx, statement_ctx_t *stat_ctx, 
             hres = E_NOTIMPL;
         }
 
-        if(FAILED(hres))
+        if(FAILED(hres)) {
+            COMPILE_LOG("COMPILE FAIL: statement type=%d, loc=%u, hres=0x%08lx\n",
+                        stat->type, stat->loc, (unsigned long)hres);
             return hres;
+        }
         stat = stat->next;
     }
 
@@ -1549,8 +1569,10 @@ static HRESULT compile_func(compile_ctx_t *ctx, statement_t *stat, function_t *f
     ctx->const_decls = NULL;
     hres = compile_statement(ctx, NULL, stat);
     ctx->func = NULL;
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+        COMPILE_LOG("compile_statement failed: hres=0x%08lx\n", (unsigned long)hres);
         return hres;
+    }
 
     if(ctx->sub_end_label)
         label_set_addr(ctx, ctx->sub_end_label);
@@ -1622,6 +1644,7 @@ static HRESULT create_function(compile_ctx_t *ctx, function_decl_t *decl, functi
 
     if(lookup_dim_decls(ctx, decl->name) || lookup_const_decls(ctx, decl->name, FALSE)) {
         FIXME("%s: redefinition\n", debugstr_w(decl->name));
+        COMPILE_LOG("COMPILE FAIL: Function/Sub '%ls' redefined\n", decl->name);
         return E_FAIL;
     }
 
@@ -1663,8 +1686,10 @@ static HRESULT create_function(compile_ctx_t *ctx, function_decl_t *decl, functi
     }
 
     hres = compile_func(ctx, decl->body, func);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+        COMPILE_LOG("COMPILE FAIL: compile_func failed for '%ls', hres=0x%08lx\n", decl->name, (unsigned long)hres);
         return hres;
+    }
 
     *ret = func;
     return S_OK;
@@ -1745,6 +1770,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
     if(lookup_dim_decls(ctx, class_decl->name) || lookup_funcs_name(ctx, class_decl->name)
             || lookup_const_decls(ctx, class_decl->name, FALSE) || lookup_class_name(ctx, class_decl->name)) {
         FIXME("%s: redefinition\n", debugstr_w(class_decl->name));
+        COMPILE_LOG("COMPILE FAIL: Class '%ls' redefined\n", class_decl->name);
         return E_FAIL;
     }
 
@@ -1764,6 +1790,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
             if(func_prop_decl->is_default) {
                 if(have_default) {
                     FIXME("multiple default getters or methods\n");
+                    COMPILE_LOG("COMPILE FAIL: Multiple default getters/methods in class\n");
                     return E_FAIL;
                 }
                 is_default = have_default = TRUE;
@@ -1790,6 +1817,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
         if(!wcsicmp(L"class_initialize", func_decl->name)) {
             if(func_decl->type != FUNC_SUB) {
                 FIXME("class initializer is not sub\n");
+                COMPILE_LOG("COMPILE FAIL: Class_Initialize is not Sub\n");
                 return E_FAIL;
             }
 
@@ -1797,6 +1825,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
         }else  if(!wcsicmp(L"class_terminate", func_decl->name)) {
             if(func_decl->type != FUNC_SUB) {
                 FIXME("class terminator is not sub\n");
+                COMPILE_LOG("COMPILE FAIL: Class_Terminate is not Sub\n");
                 return E_FAIL;
             }
 
@@ -1818,6 +1847,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
     for(prop_decl = class_decl->props, i=0; prop_decl; prop_decl = prop_decl->next, i++) {
         if(lookup_class_funcs(class_desc, prop_decl->name)) {
             FIXME("Property %s redefined\n", debugstr_w(prop_decl->name));
+            COMPILE_LOG("COMPILE FAIL: Property '%ls' redefined\n", prop_decl->name);
             return E_FAIL;
         }
 
@@ -2039,10 +2069,13 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
     }
 
     ctx.parser.lcid = script->lcid;
+    COMPILE_LOG("Starting parse_script...\n");
     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
+    COMPILE_LOG("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
     if(FAILED(hres)) {
         if(ctx.parser.error_loc != -1)
             ctx.loc = ctx.parser.error_loc;
+        COMPILE_LOG("Calling compile_error with loc=%d\n", ctx.loc);
         hres = compile_error(script, &ctx, hres);
         release_vbscode(code);
         return hres;

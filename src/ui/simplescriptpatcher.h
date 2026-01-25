@@ -120,6 +120,8 @@ private:
     // Pattern: Select Case Array(x) -> temp variable approach
     static std::string PatchSelectCaseArrayAccess(const std::string& script);
 
+    // REMOVED: Fixed in Wine VBScript parser.y
+
     // Enable FlexDMD Virtual Segment DMD by default for GLF tables
     static std::string PatchEnableFlexDMDByDefault(const std::string& script);
 
