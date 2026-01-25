@@ -447,7 +447,7 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
     std::string r = script;
     int totalCount = 0;
 
-    // Step 1: Convert DT variable Array() initialization to class instantiation
+    // Step 1a: Convert DT variable Array() initialization to class instantiation
     // Pattern: DT1 = Array(primary, secondary, prim, sw, animate)
     // To: Set DT1 = (new DropTarget)(primary, secondary, prim, sw, animate)
     // Wine compiler fix in compile.c handles (new ClassName)(args) by calling Init explicitly
@@ -457,6 +457,40 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         return m[1] + "Set " + m[2] + " = (new DropTarget)(" + m[3] + ")";
+    });
+
+    // Step 1b: Convert inline Array() calls inside DTArray = Array(...) initialization
+    // Some tables initialize DTArray directly with inline Array() instead of named DT variables:
+    //   DTArray = Array(Array(dt1,dt1a,dt1p,1,0), Array(dt2,dt2a,dt2p,2,0), ...)
+    // Convert to:
+    //   DTArray = Array((new DropTarget)(dt1,dt1a,dt1p,1,0), (new DropTarget)(dt2,dt2a,dt2p,2,0), ...)
+    // IMPORTANT: Only convert Array() calls that are inside DTArray = Array(...) to avoid breaking other code
+    static const RE2 dtArrayInit(R"((?im)(^[ \t]*DTArray\s*=\s*Array\s*\()([^;'\r\n]+)(\)\s*$))");
+    r = RE2ReplaceWithCallback(r, dtArrayInit, [&totalCount](const RE2Match& m) -> std::string {
+        std::string prefix = m[1];  // "DTArray = Array("
+        std::string contents = m[2]; // inner contents
+        std::string suffix = m[3];  // ")"
+
+        // Convert Array(...) to (new DropTarget)(...) within the contents
+        static const RE2 innerArray(R"(Array\s*\(([^()]+)\))");
+        std::string converted = RE2ReplaceWithCallback(contents, innerArray, [&totalCount](const RE2Match& inner) -> std::string {
+            std::string args = inner[1];
+            int commaCount = 0;
+            for (char c : args) {
+                if (c == ',') commaCount++;
+            }
+            // DT elements have 5-6 args (primary, secondary, prim, sw, animate[, isDropped])
+            if (commaCount >= 4 && commaCount <= 5) {
+                totalCount++;
+                return "(new DropTarget)(" + args + ")";
+            }
+            return std::string(inner[0]);
+        });
+
+        if (converted != contents) {
+            PLOGI.printf("SimpleScriptPatcher: Converted inline Array() in DTArray initialization");
+        }
+        return prefix + converted + suffix;
     });
 
     // Step 2: Convert DTArray(i)(n) to DTArray(i).property
@@ -536,15 +570,63 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
     std::string r = script;
     int totalCount = 0;
 
-    // Step 1: Convert ST variable Array() initialization to class instantiation
-    // Pattern: ST12 = Array(primary, prim, sw, animate, id)
-    // To: Set ST12 = (new StandupTarget)(primary, prim, sw, animate, id)
+    // Step 1a: Convert ST variable Array() initialization to class instantiation
+    // Pattern: ST12 = Array(primary, prim, sw, animate[, id])
+    // 4-arg: Set ST12 = (new StandupTarget)(args) - uses default init()
+    // 5-arg: Set ST12 = (new StandupTarget)().Init5(args) - uses Init5()
     // Match ST followed by digits and optional letters (ST12, ST18a, ST18b) - NOT STArray!
-    // ST\d+\w* matches ST18, ST18a, ST18b but not STArray (which has no digit after ST)
     static const RE2 arrayInit(R"((?im)(^[ \t]*)(ST\d+\w*)\s*=\s*Array\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
-        return m[1] + "Set " + m[2] + " = (new StandupTarget)(" + m[3] + ")";
+        std::string args = m[3];
+        // Count commas to determine if 4 or 5 args
+        int commaCount = 0;
+        for (char c : args) {
+            if (c == ',') commaCount++;
+        }
+        if (commaCount >= 4) {
+            // 5+ args - use Init5
+            return m[1] + "Set " + m[2] + " = (new StandupTarget)().Init5(" + args + ")";
+        }
+        // 4 args (3 commas) - use default init via (new Class)(args)
+        return m[1] + "Set " + m[2] + " = (new StandupTarget)(" + args + ")";
+    });
+
+    // Step 1b: Convert inline Array() calls inside STArray = Array(...) initialization
+    // Some tables initialize STArray directly with inline Array() instead of named ST variables:
+    //   STArray = Array(Array(sw18,sw18p,18,0), Array(sw19,sw19p,19,0), ...)
+    // Convert to:
+    //   STArray = Array((new StandupTarget)(sw18,sw18p,18,0), (new StandupTarget)(sw19,sw19p,19,0), ...)
+    // IMPORTANT: Only convert Array() calls that are inside STArray = Array(...) to avoid breaking other code
+    static const RE2 stArrayInit(R"((?im)(^[ \t]*STArray\s*=\s*Array\s*\()([^;'\r\n]+)(\)\s*$))");
+    r = RE2ReplaceWithCallback(r, stArrayInit, [&totalCount](const RE2Match& m) -> std::string {
+        std::string prefix = m[1];  // "STArray = Array("
+        std::string contents = m[2]; // inner contents
+        std::string suffix = m[3];  // ")"
+
+        // Convert Array(...) to (new StandupTarget)(...) within the contents
+        static const RE2 innerArray(R"(Array\s*\(([^()]+)\))");
+        std::string converted = RE2ReplaceWithCallback(contents, innerArray, [&totalCount](const RE2Match& inner) -> std::string {
+            std::string args = inner[1];
+            int commaCount = 0;
+            for (char c : args) {
+                if (c == ',') commaCount++;
+            }
+            // ST elements have 4 args (3 commas) or 5 args (4 commas)
+            if (commaCount == 3) {
+                totalCount++;
+                return "(new StandupTarget)(" + args + ")";
+            } else if (commaCount == 4) {
+                totalCount++;
+                return "(new StandupTarget)().Init5(" + args + ")";
+            }
+            return std::string(inner[0]);
+        });
+
+        if (converted != contents) {
+            PLOGI.printf("SimpleScriptPatcher: Converted inline Array() in STArray initialization");
+        }
+        return prefix + converted + suffix;
     });
 
     // Step 2: Convert STArray(i)(n) to STArray(i).property
@@ -578,7 +660,7 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
         return "STArray(" + m[1] + ").animate";
     });
 
-    // STArray(i)(4) -> STArray(i).id
+    // STArray(i)(4) -> STArray(i).id (for 5-element arrays)
     static const RE2 idx4(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*4\s*\))");
     r = RE2ReplaceWithCallback(r, idx4, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
@@ -950,7 +1032,7 @@ End Class
         helpers += R"(
 ' StandupTarget class - Wine VBScript cannot handle Array(x)(y) syntax
 ' This class converts STArray indexed access to property access
-' Array format: Array(primary, prim, sw, animate, identifier)
+' Supports both 4-element Array(primary, prim, sw, animate) and 5-element with id
 Class StandupTarget
   Private m_primary, m_prim, m_sw, m_animate, m_id
 
@@ -969,13 +1051,24 @@ Class StandupTarget
   Public Property Get Id(): Id = m_id: End Property
   Public Property Let Id(input): m_id = input: End Property
 
-  Public default Function init(primary, prim, sw, animate, id)
+  ' 4-arg version for tables with Array(primary, prim, sw, animate)
+  Public default Function init(primary, prim, sw, animate)
+    Set m_primary = primary
+    Set m_prim = prim
+    m_sw = sw
+    m_animate = animate
+    m_id = Empty
+    Set Init = Me
+  End Function
+
+  ' 5-arg version called via Init5 for tables with id field
+  Public Function Init5(primary, prim, sw, animate, id)
     Set m_primary = primary
     Set m_prim = prim
     m_sw = sw
     m_animate = animate
     m_id = id
-    Set Init = Me
+    Set Init5 = Me
   End Function
 End Class
 
