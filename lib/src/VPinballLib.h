@@ -93,6 +93,12 @@ public:
    float GetBloomStrength();
    VPINBALL_STATUS SetEmissionScale(float scale);
    float GetEmissionScale();
+   VPINBALL_STATUS SetFOV(float fov);
+   float GetFOV();
+   VPINBALL_STATUS SetLookAt(float lookAt);
+   float GetLookAt();
+   VPINBALL_STATUS SetLayback(float layback);
+   float GetLayback();
    VPINBALL_VIEW_MODE GetViewMode();
    VPINBALL_STATUS SetViewMode(VPINBALL_VIEW_MODE mode);
    VPINBALL_STATUS CycleViewMode();

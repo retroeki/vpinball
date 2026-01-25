@@ -308,6 +308,36 @@ JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetEmissi
    return VPinballGetEmissionScale();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetFOV(JNIEnv* env, jobject obj, jfloat fov)
+{
+   return VPinballSetFOV(fov);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetFOV(JNIEnv* env, jobject obj)
+{
+   return VPinballGetFOV();
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetLookAt(JNIEnv* env, jobject obj, jfloat lookAt)
+{
+   return VPinballSetLookAt(lookAt);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetLookAt(JNIEnv* env, jobject obj)
+{
+   return VPinballGetLookAt();
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetLayback(JNIEnv* env, jobject obj, jfloat layback)
+{
+   return VPinballSetLayback(layback);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetLayback(JNIEnv* env, jobject obj)
+{
+   return VPinballGetLayback();
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewMode(JNIEnv* env, jobject obj)
 {
    return VPinballGetViewMode();
@@ -488,6 +518,36 @@ JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_V
 JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetEmissionScale(JNIEnv* env, jobject obj)
 {
    return VPinballGetEmissionScale();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetFOV(JNIEnv* env, jobject obj, jfloat fov)
+{
+   return VPinballSetFOV(fov);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetFOV(JNIEnv* env, jobject obj)
+{
+   return VPinballGetFOV();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetLookAt(JNIEnv* env, jobject obj, jfloat lookAt)
+{
+   return VPinballSetLookAt(lookAt);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetLookAt(JNIEnv* env, jobject obj)
+{
+   return VPinballGetLookAt();
+}
+
+JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetLayback(JNIEnv* env, jobject obj, jfloat layback)
+{
+   return VPinballSetLayback(layback);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetLayback(JNIEnv* env, jobject obj)
+{
+   return VPinballGetLayback();
 }
 
 }

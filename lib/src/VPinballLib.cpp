@@ -602,11 +602,15 @@ float VPinballLib::LoadValueFloat(const string& sectionName, const string& key, 
 
 void VPinballLib::SaveValueFloat(const string& sectionName, const string& key, float value)
 {
+   // Use table settings when a table is loaded, otherwise use global settings
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
-      g_pvp->m_settings.Set(existingId.value(), value, false);
+      settings.Set(existingId.value(), value, asTableOverride);
    else
-      g_pvp->m_settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, FLT_MIN, FLT_MAX, 0.f, value)), value, false);
-   g_pvp->m_settings.Save();
+      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, FLT_MIN, FLT_MAX, 0.f, value)), value, asTableOverride);
+   settings.Save();
 }
 
 string VPinballLib::LoadValueString(const string& sectionName, const string& key, const string& defaultValue)
@@ -627,11 +631,15 @@ string VPinballLib::LoadValueString(const string& sectionName, const string& key
 
 void VPinballLib::SaveValueString(const string& sectionName, const string& key, const string& value)
 {
+   // Use table settings when a table is loaded, otherwise use global settings
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
-      g_pvp->m_settings.Set(existingId.value(), value, false);
+      settings.Set(existingId.value(), value, asTableOverride);
    else
-      g_pvp->m_settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>(sectionName, key, ""s, ""s, true, value)), value, false);
-   g_pvp->m_settings.Save();
+      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>(sectionName, key, ""s, ""s, true, value)), value, asTableOverride);
+   settings.Save();
 }
 
 bool VPinballLib::LoadValueBool(const string& sectionName, const string& key, bool defaultValue)
@@ -652,11 +660,15 @@ bool VPinballLib::LoadValueBool(const string& sectionName, const string& key, bo
 
 void VPinballLib::SaveValueBool(const string& sectionName, const string& key, bool value)
 {
+   // Use table settings when a table is loaded, otherwise use global settings
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
-      g_pvp->m_settings.Set(existingId.value(), value, false);
+      settings.Set(existingId.value(), value, asTableOverride);
    else
-      g_pvp->m_settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>(sectionName, key, ""s, ""s, true, value)), value, false);
-   g_pvp->m_settings.Save();
+      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>(sectionName, key, ""s, ""s, true, value)), value, asTableOverride);
+   settings.Save();
 }
 
 VPINBALL_STATUS VPinballLib::ResetIni()
@@ -904,6 +916,94 @@ float VPinballLib::GetEmissionScale()
       return g_pplayer->m_renderer->m_sceneLighting.GetGlobalEmissionScale();
 
    return g_pplayer->m_ptable->m_globalEmissionScale;
+}
+
+VPINBALL_STATUS VPinballLib::SetFOV(float fov)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Clamp FOV to reasonable range (10-90 degrees)
+   fov = clamp(fov, 10.0f, 90.0f);
+
+   // Update the view setup FOV
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mFOV = fov;
+
+   // Disable static pre-pass for live preview (like the in-game UI does)
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   // Trigger renderer update to apply changes live
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetFOV()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 45.0f;  // Default 45 degrees
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return viewSetup.mFOV;
+}
+
+VPINBALL_STATUS VPinballLib::SetLookAt(float lookAt)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   // LookAt is a percentage (0-100) - where on table camera looks
+   // 0 = bottom (flippers), 100 = top
+   lookAt = clamp(lookAt, 0.0f, 100.0f);
+
+   // Update the view setup LookAt
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mLookAt = lookAt;
+
+   // Disable static pre-pass for live preview (like the in-game UI does)
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   // Trigger renderer update to apply changes live
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetLookAt()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 25.0f;  // Default ~25%
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return viewSetup.mLookAt;
+}
+
+VPINBALL_STATUS VPinballLib::SetLayback(float layback)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Layback is -90 to 90 degrees (fake visual stretch for depth effect)
+   layback = clamp(layback, -90.0f, 90.0f);
+
+   // Update the view setup Layback
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mLayback = layback;
+
+   // Disable static pre-pass for live preview (like the in-game UI does)
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   // Trigger renderer update to apply changes live
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetLayback()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 0.0f;  // Default 0 degrees
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return viewSetup.mLayback;
 }
 
 VPINBALL_VIEW_MODE VPinballLib::GetViewMode()

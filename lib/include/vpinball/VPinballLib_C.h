@@ -98,6 +98,12 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);
 VPINBALLAPI float VPinballGetBloomStrength();
 VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale);
 VPINBALLAPI float VPinballGetEmissionScale();
+VPINBALLAPI VPINBALL_STATUS VPinballSetFOV(float fov);  // Field of View (10-90 degrees, default 45)
+VPINBALLAPI float VPinballGetFOV();
+VPINBALLAPI VPINBALL_STATUS VPinballSetLookAt(float lookAt);  // Where camera looks on table (0-100%, 0=flippers, 100=top)
+VPINBALLAPI float VPinballGetLookAt();
+VPINBALLAPI VPINBALL_STATUS VPinballSetLayback(float layback);  // Layback distortion (-90 to 90 degrees, default 0)
+VPINBALLAPI float VPinballGetLayback();
 
 // View Mode
 
