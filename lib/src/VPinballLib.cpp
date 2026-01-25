@@ -1006,6 +1006,22 @@ float VPinballLib::GetLayback()
    return viewSetup.mLayback;
 }
 
+string VPinballLib::GetTableName()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return "";
+
+   return g_pplayer->m_ptable->m_tableName;
+}
+
+string VPinballLib::GetTableVersion()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return "";
+
+   return g_pplayer->m_ptable->m_version;
+}
+
 VPINBALL_VIEW_MODE VPinballLib::GetViewMode()
 {
    // Use player's table if playing, otherwise use editor's table

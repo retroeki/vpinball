@@ -99,6 +99,8 @@ public:
    float GetLookAt();
    VPINBALL_STATUS SetLayback(float layback);
    float GetLayback();
+   string GetTableName();
+   string GetTableVersion();
    VPINBALL_VIEW_MODE GetViewMode();
    VPINBALL_STATUS SetViewMode(VPINBALL_VIEW_MODE mode);
    VPINBALL_STATUS CycleViewMode();

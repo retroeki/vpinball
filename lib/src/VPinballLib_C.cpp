@@ -320,3 +320,17 @@ VPINBALLAPI int VPinballGetSoundVolume()
    return g_pplayer->m_SoundVolume;
 }
 
+VPINBALLAPI const char* VPinballGetTableName()
+{
+   thread_local string tableName;
+   tableName = VPinballLib::VPinballLib::Instance().GetTableName();
+   return tableName.c_str();
+}
+
+VPINBALLAPI const char* VPinballGetTableVersion()
+{
+   thread_local string tableVersion;
+   tableVersion = VPinballLib::VPinballLib::Instance().GetTableVersion();
+   return tableVersion.c_str();
+}
+

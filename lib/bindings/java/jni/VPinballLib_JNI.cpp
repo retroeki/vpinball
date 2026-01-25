@@ -398,6 +398,16 @@ JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetInternal
    env->ReleaseStringUTFChars(path, pPath);
 }
 
+JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetTableName(JNIEnv* env, jobject obj)
+{
+   return env->NewStringUTF(VPinballGetTableName());
+}
+
+JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetTableVersion(JNIEnv* env, jobject obj)
+{
+   return env->NewStringUTF(VPinballGetTableVersion());
+}
+
 #ifdef ENABLE_XR
 JNIEXPORT jboolean JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInitOpenXR(JNIEnv* env, jobject obj, jobject activity)
 {
@@ -421,133 +431,5 @@ JNIEXPORT jboolean JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInitOpe
    return false;
 }
 #endif
-
-// RetroEki app package bindings
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetViewMode(JNIEnv* env, jobject obj)
-{
-   return VPinballGetViewMode();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetViewMode(JNIEnv* env, jobject obj, jint mode)
-{
-   return VPinballSetViewMode(static_cast<VPINBALL_VIEW_MODE>(mode));
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballCycleViewMode(JNIEnv* env, jobject obj)
-{
-   return VPinballCycleViewMode();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballToggleScoreView(JNIEnv* env, jobject obj, jboolean enable, jint x, jint y, jint width, jint height)
-{
-   return VPinballToggleScoreView(enable, x, y, width, height);
-}
-
-JNIEXPORT jintArray JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetScoreViewSourceSize(JNIEnv* env, jobject obj)
-{
-   int width = 0, height = 0;
-   VPinballGetScoreViewSourceSize(&width, &height);
-   jintArray result = env->NewIntArray(2);
-   jint values[2] = { width, height };
-   env->SetIntArrayRegion(result, 0, 2, values);
-   return result;
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetMusicVolume(JNIEnv* env, jobject obj, jint volume)
-{
-   return VPinballSetMusicVolume(volume);
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetSoundVolume(JNIEnv* env, jobject obj, jint volume)
-{
-   return VPinballSetSoundVolume(volume);
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetMusicVolume(JNIEnv* env, jobject obj)
-{
-   return VPinballGetMusicVolume();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetSoundVolume(JNIEnv* env, jobject obj)
-{
-   return VPinballGetSoundVolume();
-}
-
-JNIEXPORT void JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetInternalPath(JNIEnv* env, jobject obj, jstring path)
-{
-   const char* pPath = env->GetStringUTFChars(path, nullptr);
-   VPinballSetInternalPath(pPath);
-   env->ReleaseStringUTFChars(path, pPath);
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballPause(JNIEnv* env, jobject obj)
-{
-   return VPinballPause();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballResume(JNIEnv* env, jobject obj)
-{
-   return VPinballResume();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSoftPause(JNIEnv* env, jobject obj)
-{
-   return VPinballSoftPause();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSoftResume(JNIEnv* env, jobject obj)
-{
-   return VPinballSoftResume();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetBloomStrength(JNIEnv* env, jobject obj, jfloat strength)
-{
-   return VPinballSetBloomStrength(strength);
-}
-
-JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetBloomStrength(JNIEnv* env, jobject obj)
-{
-   return VPinballGetBloomStrength();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetEmissionScale(JNIEnv* env, jobject obj, jfloat scale)
-{
-   return VPinballSetEmissionScale(scale);
-}
-
-JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetEmissionScale(JNIEnv* env, jobject obj)
-{
-   return VPinballGetEmissionScale();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetFOV(JNIEnv* env, jobject obj, jfloat fov)
-{
-   return VPinballSetFOV(fov);
-}
-
-JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetFOV(JNIEnv* env, jobject obj)
-{
-   return VPinballGetFOV();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetLookAt(JNIEnv* env, jobject obj, jfloat lookAt)
-{
-   return VPinballSetLookAt(lookAt);
-}
-
-JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetLookAt(JNIEnv* env, jobject obj)
-{
-   return VPinballGetLookAt();
-}
-
-JNIEXPORT jint JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballSetLayback(JNIEnv* env, jobject obj, jfloat layback)
-{
-   return VPinballSetLayback(layback);
-}
-
-JNIEXPORT jfloat JNICALL Java_com_retroeki_app_ui_visualpinballx_jni_VPinballJNI_VPinballGetLayback(JNIEnv* env, jobject obj)
-{
-   return VPinballGetLayback();
-}
 
 }

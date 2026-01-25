@@ -105,6 +105,11 @@ VPINBALLAPI float VPinballGetLookAt();
 VPINBALLAPI VPINBALL_STATUS VPinballSetLayback(float layback);  // Layback distortion (-90 to 90 degrees, default 0)
 VPINBALLAPI float VPinballGetLayback();
 
+// Table Info
+
+VPINBALLAPI const char* VPinballGetTableName();
+VPINBALLAPI const char* VPinballGetTableVersion();
+
 // View Mode
 
 VPINBALLAPI VPINBALL_VIEW_MODE VPinballGetViewMode();
