@@ -1,6 +1,6 @@
 /**
  * @file simplescriptpatcher.cpp
- * @brief Simplified Wine VBScript compatibility patches
+ * @brief Simplified Wine VBScript compatibility patches for Android/Wine
  *
  * A minimal script patcher that addresses ONLY confirmed Wine VBScript bugs
  * without the complexity of full class emulation.
@@ -9,6 +9,71 @@
  * - Less transformation = less breakage
  * - Only patch what Wine actually fails on
  * - Reuse existing helper wrappers (VPX_SafeUBound, etc.)
+ *
+ * =============================================================================
+ * LESSONS LEARNED FROM DEBUGGING SESSIONS (January 2026)
+ * =============================================================================
+ *
+ * 1. FOR EACH CONVERSION (PatchSingleLineForEach)
+ *    - Wine VBScript does NOT support single-line For Each syntax
+ *    - Initial fix: Convert For Each to indexed For loop
+ *    - PROBLEM: Using `var = array(i)` fails for COM objects - needs `Set var = array(i)`
+ *    - PROBLEM: Wrapping with `On Error Resume Next` caused INFINITE LOOPS/ANR
+ *      when UBound() failed on undefined arrays. VBScript behavior under error
+ *      suppression with For loops is unpredictable.
+ *    - SOLUTION: Use `If IsArray(collection) Then` guard instead of error handling.
+ *      This cleanly skips undefined arrays without risk of infinite loops.
+ *
+ * 2. RENDERINGMODE AND TESTVRONDT (PatchRenderingMode, PatchTestVRonDT)
+ *    - These are VR-related variables that may not be defined on Android
+ *    - Initial fix for RenderingMode: Check if already defined via `Dim` or `Const`
+ *    - PROBLEM: Pattern `RenderingMode\s*=` matched comparisons like `If RenderingMode = 2`
+ *      causing the patcher to think it was already defined as an assignment
+ *    - SOLUTION: Only check for `Dim` or `Const` declarations, not assignments
+ *
+ *    - TestVRonDT had a different issue: Script had `Const TestVRonDT = false`
+ *      declared AFTER its first use (invalid VBScript, but scripts do this)
+ *    - SOLUTION: Remove the Const declaration entirely and replace all usages with False
+ *
+ * 3. B2SSETDATA ERROR HANDLING (PatchControllerChangedLamps patterns 3a/3b/3c)
+ *    - Controller.B2SSetData is a B2S (Backglass Server) method that may fail on Android
+ *    - PROBLEM: B2SSetData appears in multiple contexts:
+ *      a) Start of line: `    Controller.B2SSetData 179,0`
+ *      b) After colon: `sw73.IsDropped = 0:Controller.B2SSetData 179,0`
+ *      c) After Then: `If bFlag=0 Then Controller.B2SSetData bg_id,1`
+ *    - Initial fix only handled (a), causing crashes for (b) and (c)
+ *    - SOLUTION: Three separate patterns to catch all cases, each wrapping with
+ *      `On Error Resume Next : <call> : On Error Goto 0`
+ *
+ * 4. GENERAL REGEX GOTCHAS
+ *    - Always anchor patterns with `^` when matching line starts, or you'll match
+ *      commented lines (e.g., `' For Each` would match without anchor)
+ *    - Use `(?im)` for case-insensitive multiline, `(?ims)` adds single-line (. matches \n)
+ *    - VBScript uses both `:` (statement separator) and newlines - handle both
+ *    - Wine expects CRLF line endings - always normalize at the end
+ *
+ * 5. TESTING STRATEGY
+ *    - Always pull patched_script.vbs from device to verify transformations
+ *    - Script errors show line numbers in PATCHED script, not original
+ *    - ANR (Application Not Responding) often means infinite loop from bad patch
+ *    - "Description unavailable" errors usually mean undefined object/method
+ *
+ * 6. DTARRAY/STARRAY INITIALIZATION TIMING (PatchDTArray, PatchSTArray)
+ *    - Some tables call DoDTAnim/DoSTAnim (via timers) BEFORE initializing DTArray/STArray
+ *    - Example: Star Wars table calls DoSTAnim at line 3902 but STArray = Array(...)
+ *      isn't defined until line 4148
+ *    - Error manifests as "Description unavailable" at line where STArray(i).animate is accessed
+ *    - SOLUTION: Add `If Not IsArray(DTArray/STArray) Then Exit Sub` guard at start of
+ *      DoDTAnim/DoSTAnim functions. This safely exits if array isn't initialized yet.
+ *    - This is safe for other tables because IsArray() returns True once array is defined.
+ *
+ * Tables fixed in this session:
+ * - Rollercoaster Tycoon (Stern 2002) - For Each, RenderingMode, TestVRonDT
+ * - WoZ (Original 2018) - B2SSetData in multiple contexts
+ * - Led Zeppelin Pinball 2.5 - WshShell
+ * - Beavis and Butt-head Pinballed - vpmKeyDown (controller.vbs issue)
+ * - Star Wars (Data East 1992) - DoSTAnim called before STArray initialization
+ * =============================================================================
  */
 
 #include "stdafx.h"
@@ -211,22 +276,60 @@ std::string SimpleScriptPatcher::PatchAlwaysOnTop(const std::string& script) {
 
 // =============================================================================
 // WScript.Shell: Windows-only COM object
-// Comment out the CreateObject line to avoid runtime errors on Android
+// Stub out entire subs that use WScript.Shell since they can't work on Android
 // =============================================================================
 std::string SimpleScriptPatcher::PatchWScriptShell(const std::string& script) {
     std::string r = script;
     int count = 0;
 
-    // Match: Set variable = CreateObject("WScript.Shell")
+    // First, stub the entire Delay sub that uses WScript.Shell for delays
+    // This pattern is common in VPX tables for timing: Sub Delay(seconds) ... wshShell ... End Sub
+    static const RE2 delayPattern(R"((?is)(Sub\s+Delay\s*\(\s*\w+\s*\))[^\r\n]*.*?End\s+Sub)");
+    r = RE2ReplaceWithCallback(r, delayPattern, [&count](const RE2Match& m) -> std::string {
+        // Check if this sub uses wshShell
+        std::string body = m[0];
+        if (body.find("wshShell") != std::string::npos || body.find("WshShell") != std::string::npos ||
+            body.find("WSHELL") != std::string::npos || body.find("WScript.Shell") != std::string::npos) {
+            count++;
+            PLOGI.printf("PatchWScriptShell: Stubbing Delay sub that uses WScript.Shell");
+            // Return a stub that does nothing - Delay can't work on Android
+            return std::string(m[1]) + "\r\n\t' Stubbed for Android - WScript.Shell delay not available\r\nEnd Sub";
+        }
+        return std::string(m[0]);
+    });
+
+    // Stub any sub that uses WshShell.RegWrite (common for UltraDMD settings)
+    // Pattern: Sub XxxSettings... WshShell.RegWrite... End Sub
+    static const RE2 regWriteSubPattern(R"((?is)(Sub\s+\w*(?:Settings|UltraDMD|DMD)\w*\s*(?:\([^)]*\))?)[^\r\n]*.*?End\s+Sub)");
+    r = RE2ReplaceWithCallback(r, regWriteSubPattern, [&count](const RE2Match& m) -> std::string {
+        std::string body = m[0];
+        // Only stub if it uses WshShell for registry operations
+        if ((body.find("WshShell") != std::string::npos || body.find("wshShell") != std::string::npos) &&
+            body.find("RegWrite") != std::string::npos) {
+            count++;
+            PLOGI.printf("PatchWScriptShell: Stubbing sub with WshShell.RegWrite");
+            return std::string(m[1]) + "\r\n\t' Stubbed for Android - WScript.Shell registry access not available\r\nEnd Sub";
+        }
+        return std::string(m[0]);
+    });
+
+    // Comment out standalone CreateObject("WScript.Shell") lines
     static const RE2 p(R"((?i)(Set\s+\w+\s*=\s*CreateObject\s*\(\s*"WScript\.Shell"\s*\)))");
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         count++;
-        // Comment out the line - WScript.Shell not available on Android
         return "' DISABLED ON ANDROID: " + std::string(m[1]);
     });
 
+    // Comment out remaining wshShell method calls that weren't in stubbed subs
+    // This catches any stray calls outside of recognized sub patterns
+    static const RE2 wshCallPattern(R"((?i)(^[ \t]*)((?:wsh|WSH)Shell\.\w+[^\r\n]*))");
+    r = RE2ReplaceWithCallback(r, wshCallPattern, [&count](const RE2Match& m) -> std::string {
+        count++;
+        return std::string(m[1]) + "' DISABLED ON ANDROID: " + std::string(m[2]);
+    });
+
     if (count > 0) {
-        LogPatch("Disabled Windows-only WScript.Shell creation", count);
+        LogPatch("Stubbed/disabled Windows-only WScript.Shell usage", count);
     }
     return r;
 }
@@ -541,6 +644,16 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
     if (totalCount > 0) {
         LogPatch("DTArray: Converted to DropTarget class pattern", totalCount);
         s_needsDropTargetClass = true;
+
+        // Add IsArray guard to DoDTAnim function
+        // This prevents crash when DoDTAnim is called before DTArray is initialized
+        // Pattern: Sub DoDTAnim() -> Sub DoDTAnim() : If Not IsArray(DTArray) Then Exit Sub
+        static const RE2 doDTAnimPattern(R"((?im)(Sub\s+DoDTAnim\s*\(\s*\))(\s*\r?\n))");
+        std::string before = r;
+        r = RE2Replace(r, doDTAnimPattern, "\\1\\2\tIf Not IsArray(DTArray) Then Exit Sub\\2");
+        if (r != before) {
+            LogPatch("Added IsArray guard to DoDTAnim", 1);
+        }
     }
 
     return r;
@@ -573,7 +686,7 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
     // Step 1a: Convert ST variable Array() initialization to class instantiation
     // Pattern: ST12 = Array(primary, prim, sw, animate[, id])
     // 4-arg: Set ST12 = (new StandupTarget)(args) - uses default init()
-    // 5-arg: Set ST12 = (new StandupTarget)().Init5(args) - uses Init5()
+    // 5-arg: Set ST12 = (New StandupTarget).Init5(args) - uses Init5() (no empty parens!)
     // Match ST followed by digits and optional letters (ST12, ST18a, ST18b) - NOT STArray!
     static const RE2 arrayInit(R"((?im)(^[ \t]*)(ST\d+\w*)\s*=\s*Array\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
@@ -585,8 +698,8 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
             if (c == ',') commaCount++;
         }
         if (commaCount >= 4) {
-            // 5+ args - use Init5
-            return m[1] + "Set " + m[2] + " = (new StandupTarget)().Init5(" + args + ")";
+            // 5+ args - use Init5 (no empty parens - that would call default init with 0 args!)
+            return m[1] + "Set " + m[2] + " = (New StandupTarget).Init5(" + args + ")";
         }
         // 4 args (3 commas) - use default init via (new Class)(args)
         return m[1] + "Set " + m[2] + " = (new StandupTarget)(" + args + ")";
@@ -618,7 +731,8 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
                 return "(new StandupTarget)(" + args + ")";
             } else if (commaCount == 4) {
                 totalCount++;
-                return "(new StandupTarget)().Init5(" + args + ")";
+                // No empty parens - that would call default init with 0 args!
+                return "(New StandupTarget).Init5(" + args + ")";
             }
             return std::string(inner[0]);
         });
@@ -670,6 +784,17 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
     if (totalCount > 0) {
         LogPatch("STArray: Converted to StandupTarget class pattern", totalCount);
         s_needsStandupTargetClass = true;
+
+        // Add IsArray guard to DoSTAnim function
+        // This prevents crash when DoSTAnim is called before STArray is initialized
+        // (e.g., Star Wars table calls DoSTAnim at line 3902 before STArray = Array(...) at line 4148)
+        // Pattern: Sub DoSTAnim() -> Sub DoSTAnim() : If Not IsArray(STArray) Then Exit Sub
+        static const RE2 doSTAnimPattern(R"((?im)(Sub\s+DoSTAnim\s*\(\s*\))(\s*\r?\n))");
+        std::string before = r;
+        r = RE2Replace(r, doSTAnimPattern, "\\1\\2\tIf Not IsArray(STArray) Then Exit Sub\\2");
+        if (r != before) {
+            LogPatch("Added IsArray guard to DoSTAnim", 1);
+        }
     }
 
     return r;
@@ -968,6 +1093,460 @@ std::string SimpleScriptPatcher::PatchFlexDMDSegments(const std::string& script)
 }
 
 // =============================================================================
+// Single-line For Each - Wine VBScript has issues with For Each over arrays
+// Convert For Each to regular For loop using UBound
+// Pattern: For Each var In collection : statement : Next
+// Convert to: For temp_i = 0 To UBound(collection) : var = collection(temp_i) : statement : Next
+// =============================================================================
+// Static counter for unique temp variable names
+static int s_forEachTempVarCounter = 0;
+
+// =============================================================================
+// Single-line For Each - Wine VBScript does NOT support this syntax
+// =============================================================================
+// CRITICAL LESSONS LEARNED:
+// 1. Must use `Set var = array(i)` not `var = array(i)` for COM objects
+//    Otherwise: VBSE_ACTION_NOT_SUPPORTED error
+// 2. Do NOT use `On Error Resume Next` wrapper around the For loop!
+//    When UBound() fails under error suppression, VBScript behavior is undefined
+//    and can cause infinite loops / ANR (Application Not Responding)
+// 3. SAFE APPROACH: Use `If IsArray(collection) Then` to guard the loop
+//    This cleanly skips undefined arrays without any risk of hangs
+// =============================================================================
+std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Pattern 1: Dim var : For Each var In collection : statement : Next
+    static const RE2 p1(R"((?im)^([ \t]*)(Dim\s+(\w+)\s*:\s*)(For\s+Each\s+\3\s+[Ii]n\s+(\w+)\s*:\s*)([^:\r\n]+)(\s*:\s*[Nn]ext))");
+    r = RE2ReplaceWithCallback(r, p1, [&count](const RE2Match& m) -> std::string {
+        std::string indent = m[1];
+        std::string varName = m[3];
+        std::string collection = m[5];
+        std::string statement = m[6];
+        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
+        count++;
+        PLOGI.printf("PatchSingleLineForEach: Converting Dim + For Each to For loop");
+        // Convert to For loop - use Set for object assignment, guard with IsArray check
+        return indent + "Dim " + varName + ", " + tempIdx + "\r\n" +
+               indent + "If IsArray(" + collection + ") Then\r\n" +
+               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
+               indent + "\t\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
+               indent + "\t\t" + std::string(statement) + "\r\n" +
+               indent + "\tNext\r\n" +
+               indent + "End If";
+    });
+
+    // Pattern 2: Simple For Each var In collection : statement : Next
+    static const RE2 p2(R"((?im)^([ \t]*)(For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+)\s*:\s*)([^:\r\n]+)(\s*:\s*[Nn]ext))");
+    r = RE2ReplaceWithCallback(r, p2, [&count](const RE2Match& m) -> std::string {
+        std::string indent = m[1];
+        std::string varName = m[3];
+        std::string collection = m[4];
+        std::string statement = m[5];
+        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
+        count++;
+        PLOGI.printf("PatchSingleLineForEach: Converting single-line For Each to For loop");
+        // Convert to For loop - need to declare temp var, use Set for object assignment, guard with IsArray check
+        return indent + "Dim " + tempIdx + "\r\n" +
+               indent + "If IsArray(" + collection + ") Then\r\n" +
+               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
+               indent + "\t\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
+               indent + "\t\t" + std::string(statement) + "\r\n" +
+               indent + "\tNext\r\n" +
+               indent + "End If";
+    });
+
+    // Pattern 3: Multi-line For Each (already expanded or written multi-line)
+    // For Each var In collection
+    //     statements
+    // Next
+    static const RE2 p3(R"((?ims)^([ \t]*)(For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+)\s*\r?\n)((?:(?!Next\b)[^\r\n]*\r?\n)*?)([ \t]*)(Next\b))");
+    r = RE2ReplaceWithCallback(r, p3, [&count](const RE2Match& m) -> std::string {
+        std::string indent = m[1];
+        std::string varName = m[3];
+        std::string collection = m[4];
+        std::string body = m[5];
+        std::string nextIndent = m[6];
+        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
+        count++;
+        PLOGI.printf("PatchSingleLineForEach: Converting multi-line For Each to For loop");
+        // Convert to For loop - use Set for object assignment, guard with IsArray check
+        return indent + "Dim " + tempIdx + " : If IsArray(" + collection + ") Then : For " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
+               indent + "\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
+               body +
+               nextIndent + "Next : End If";
+    });
+
+    if (count > 0) {
+        LogPatch("Converted For Each to For loop for Wine compatibility", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// System.Collections.ArrayList - .NET class not available on Android/Wine
+// Replace CreateObject("System.Collections.ArrayList") with VBScript class
+// =============================================================================
+std::string SimpleScriptPatcher::PatchArrayList(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Check if script uses ArrayList
+    static const RE2 checkPattern(R"((?i)CreateObject\s*\(\s*"System\.Collections\.ArrayList"\s*\))");
+    if (!RE2::PartialMatch(script, checkPattern)) {
+        return r;  // No ArrayList usage, skip
+    }
+
+    // Replace CreateObject("System.Collections.ArrayList") with (new VBSArrayList)
+    static const RE2 p(R"((?i)CreateObject\s*\(\s*"System\.Collections\.ArrayList"\s*\))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        count++;
+        PLOGI.printf("PatchArrayList: Replacing System.Collections.ArrayList with VBSArrayList");
+        return "(new VBSArrayList)";
+    });
+
+    // Inject the VBSArrayList class at the start of the script (after any Option Explicit)
+    if (count > 0) {
+        std::string arrayListClass = R"(
+' ============================================================================
+' VBSArrayList - Wine/Android replacement for System.Collections.ArrayList
+' ============================================================================
+Class VBSArrayList
+    Private m_items()
+    Private m_count
+
+    Private Sub Class_Initialize()
+        m_count = 0
+        ReDim m_items(-1)
+    End Sub
+
+    Public Sub Add(item)
+        ReDim Preserve m_items(m_count)
+        m_items(m_count) = item
+        m_count = m_count + 1
+    End Sub
+
+    Public Property Get Count()
+        Count = m_count
+    End Property
+
+    Public Property Get Item(index)
+        If index >= 0 And index < m_count Then
+            Item = m_items(index)
+        End If
+    End Property
+
+    Public Default Property Get ItemDefault(index)
+        ItemDefault = Item(index)
+    End Property
+
+    Public Sub Remove(item)
+        Dim i, j, found
+        found = False
+        For i = 0 To m_count - 1
+            If m_items(i) = item Then
+                found = True
+                Exit For
+            End If
+        Next
+        If found Then
+            For j = i To m_count - 2
+                m_items(j) = m_items(j + 1)
+            Next
+            m_count = m_count - 1
+            If m_count > 0 Then
+                ReDim Preserve m_items(m_count - 1)
+            Else
+                ReDim m_items(-1)
+            End If
+        End If
+    End Sub
+
+    Public Sub RemoveAt(index)
+        If index >= 0 And index < m_count Then
+            Dim j
+            For j = index To m_count - 2
+                m_items(j) = m_items(j + 1)
+            Next
+            m_count = m_count - 1
+            If m_count > 0 Then
+                ReDim Preserve m_items(m_count - 1)
+            Else
+                ReDim m_items(-1)
+            End If
+        End If
+    End Sub
+
+    Public Sub Clear()
+        m_count = 0
+        ReDim m_items(-1)
+    End Sub
+
+    Public Function Contains(item)
+        Dim i
+        Contains = False
+        For i = 0 To m_count - 1
+            If m_items(i) = item Then
+                Contains = True
+                Exit Function
+            End If
+        Next
+    End Function
+
+    Public Function IndexOf(item)
+        Dim i
+        IndexOf = -1
+        For i = 0 To m_count - 1
+            If m_items(i) = item Then
+                IndexOf = i
+                Exit Function
+            End If
+        Next
+    End Function
+End Class
+
+)";
+        // Insert after Option Explicit if present, otherwise at start
+        static const RE2 optionExplicit(R"((?i)(Option\s+Explicit[^\r\n]*\r?\n))");
+        std::string before = r;
+        r = RE2Replace(r, optionExplicit, "\\1" + arrayListClass);
+        if (r == before) {
+            // No Option Explicit, insert at very beginning
+            r = arrayListClass + r;
+        }
+
+        LogPatch("Replaced System.Collections.ArrayList with VBSArrayList class", count);
+    }
+
+    return r;
+}
+
+// =============================================================================
+// RenderingMode - VPX global that may not be defined on Android
+// Some tables check RenderingMode for VR detection (0=Desktop, 2=VR)
+// =============================================================================
+// LESSON LEARNED:
+// - Initial pattern checked for `RenderingMode\s*=` to detect if already defined
+// - PROBLEM: This matched comparisons like `If RenderingMode = 2` thinking it was
+//   an assignment, causing the patcher to skip replacement
+// - SOLUTION: Only check for explicit `Dim RenderingMode` or `Const RenderingMode`
+//   declarations, not assignment patterns
+// =============================================================================
+std::string SimpleScriptPatcher::PatchRenderingMode(const std::string& script) {
+    std::string r = script;
+
+    // Check if script uses RenderingMode
+    static const RE2 checkPattern(R"((?i)\bRenderingMode\b)");
+    if (!RE2::PartialMatch(script, checkPattern)) {
+        return r;  // No RenderingMode usage, skip
+    }
+
+    // Check if RenderingMode is already defined (Dim or Const declaration ONLY)
+    // IMPORTANT: Do NOT check for assignment pattern (RenderingMode = X) as this
+    // incorrectly matches comparisons like `If RenderingMode = 2`
+    static const RE2 definedPattern(R"((?i)(?:Dim|Const)\s+RenderingMode\b)");
+    if (RE2::PartialMatch(script, definedPattern)) {
+        return r;  // Already defined, skip
+    }
+
+    // Wrap RenderingMode usage in a function that returns 0 if not defined
+    // This is safer than injecting a Const which might conflict
+    // Replace: If RenderingMode = X  with  If GetRenderingMode() = X
+    static const RE2 usagePattern(R"((?i)\bRenderingMode\b)");
+    int count = 0;
+    r = RE2ReplaceWithCallback(r, usagePattern, [&count](const RE2Match& m) -> std::string {
+        count++;
+        return "0"; // Just replace RenderingMode with 0 (Desktop mode)
+    });
+
+    if (count > 0) {
+        LogPatch("Replaced undefined RenderingMode with 0 (Desktop mode)", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// TestVRonDT - VR testing variable that may not be defined
+// Replace undefined TestVRonDT with False (not testing VR on Desktop/Android)
+// =============================================================================
+// LESSON LEARNED:
+// - Some scripts define `Const TestVRonDT = false` AFTER its first use
+// - This is invalid VBScript (constants must be declared before use) but scripts do it
+// - If we just check for Const existence and skip, the first use still fails
+// - SOLUTION: Remove the Const declaration entirely and replace ALL usages with False
+//   This handles the forward-reference bug in the original scripts
+// =============================================================================
+std::string SimpleScriptPatcher::PatchTestVRonDT(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Check if script uses TestVRonDT
+    static const RE2 checkPattern(R"((?i)\bTestVRonDT\b)");
+    if (!RE2::PartialMatch(script, checkPattern)) {
+        return r;  // No TestVRonDT usage, skip
+    }
+
+    // First, REMOVE any Const TestVRonDT declaration
+    // This handles scripts that declare Const AFTER first use (invalid but common)
+    static const RE2 constPattern(R"((?im)^[ \t]*Const\s+TestVRonDT\s*=\s*[^\r\n]*\r?\n)");
+    r = RE2ReplaceWithCallback(r, constPattern, [&count](const RE2Match& m) -> std::string {
+        count++;
+        PLOGI.printf("PatchTestVRonDT: Removing Const TestVRonDT declaration");
+        return ""; // Remove the Const line
+    });
+
+    // Replace all TestVRonDT usages with False
+    static const RE2 usagePattern(R"((?i)\bTestVRonDT\b)");
+    r = RE2ReplaceWithCallback(r, usagePattern, [&count](const RE2Match& m) -> std::string {
+        count++;
+        return "False"; // Replace with False (not testing VR on Desktop)
+    });
+
+    if (count > 0) {
+        LogPatch("Replaced TestVRonDT with False", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// Orphaned Next after commented For Each - table script bug fix
+// Pattern: '  For Each ... \n  statement \n  Next  (For Each commented but body/Next not)
+// Fix by commenting out the orphaned lines
+// =============================================================================
+std::string SimpleScriptPatcher::PatchOrphanedNext(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Pattern: commented For Each, followed by uncommented statement(s), then uncommented Next
+    // '    For Each X In Y
+    //      statement
+    //  Next
+    static const RE2 p(R"((?im)(^[ \t]*'[ \t]*For\s+Each\s+\w+\s+[Ii]n\s+\w+[^\r\n]*\r?\n)((?:[ \t]+[^'\r\n][^\r\n]*\r?\n)*?)([ \t]*)(Next\b))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        std::string commentedForEach = m[1];
+        std::string body = m[2];
+        std::string indent = m[3];
+        std::string next = m[4];
+
+        // Check if body lines are not already commented
+        if (body.length() > 0 && body.find_first_not_of(" \t\r\n") != std::string::npos) {
+            // Comment out the body lines
+            std::string commentedBody;
+            std::istringstream iss(body);
+            std::string line;
+            while (std::getline(iss, line)) {
+                if (!line.empty() && line.find_first_not_of(" \t\r\n") != std::string::npos) {
+                    // Find leading whitespace
+                    size_t firstNonSpace = line.find_first_not_of(" \t");
+                    if (firstNonSpace != std::string::npos && line[firstNonSpace] != '\'') {
+                        commentedBody += line.substr(0, firstNonSpace) + "' " + line.substr(firstNonSpace) + "\r\n";
+                    } else {
+                        commentedBody += line + "\r\n";
+                    }
+                } else {
+                    commentedBody += line + "\r\n";
+                }
+            }
+            count++;
+            PLOGI.printf("PatchOrphanedNext: Commenting out orphaned body and Next after commented For Each");
+            return commentedForEach + commentedBody + indent + "' " + next;
+        }
+        return std::string(m[0]);
+    });
+
+    if (count > 0) {
+        LogPatch("Fixed orphaned Next statements after commented For Each", count);
+    }
+    return r;
+}
+
+// =============================================================================
+// Controller methods that may fail on Android - wrap with error handling
+// Includes: ChangedLamps, B2SSetData, and other Controller methods
+// =============================================================================
+std::string SimpleScriptPatcher::PatchControllerChangedLamps(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Pattern 1: Sub containing Controller.ChangedLamps
+    static const RE2 p(R"((?is)(Sub\s+\w*(?:Lamp|Timer)\w*_timer\s*(?:\([^)]*\))?[^\r\n]*\r?\n)([\t ]*)(Dim\s+[^\r\n]*\r?\n)([\t ]*)(\w+\s*=\s*Controller\.ChangedLamps))");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Adding error handling to sub with Controller.ChangedLamps");
+        return std::string(m[1]) +
+               std::string(m[2]) + "On Error Resume Next ' Android: Controller methods may fail\r\n" +
+               std::string(m[2]) + std::string(m[3]) +
+               std::string(m[4]) + std::string(m[5]);
+    });
+
+    // Pattern 2: Direct assignment without Dim
+    static const RE2 p2(R"((?is)(Sub\s+\w*(?:Lamp|Timer)\w*_timer\s*(?:\([^)]*\))?[^\r\n]*\r?\n)([\t ]*)(\w+\s*=\s*Controller\.ChangedLamps))");
+    r = RE2ReplaceWithCallback(r, p2, [&count](const RE2Match& m) -> std::string {
+        std::string subLine = m[1];
+        if (subLine.find("On Error Resume Next") != std::string::npos) {
+            return std::string(m[0]);
+        }
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Adding error handling (pattern 2)");
+        return std::string(m[1]) +
+               std::string(m[2]) + "On Error Resume Next ' Android: Controller methods may fail\r\n" +
+               std::string(m[2]) + std::string(m[3]);
+    });
+
+    // =========================================================================
+    // B2SSetData - Backglass Server method that may fail on Android
+    // =========================================================================
+    // LESSON LEARNED:
+    // B2SSetData appears in THREE different contexts in VBScript:
+    //   a) Start of line:     `    Controller.B2SSetData 179,0`
+    //   b) After colon:       `sw73.IsDropped = 0:Controller.B2SSetData 179,0`
+    //   c) After Then:        `If bFlag=0 Then Controller.B2SSetData bg_id,1`
+    //
+    // Initial fix only handled (a), causing WoZ crashes during gameplay
+    // when patterns (b) and (c) were hit. Had to add patterns for all cases.
+    // Each wraps the call with inline error handling.
+    // =========================================================================
+
+    // Pattern 3a: B2SSetData at start of line
+    static const RE2 p3a(R"((?im)^([ \t]*)(Controller\.B2SSetData\s+[^:\r\n]*))");
+    r = RE2ReplaceWithCallback(r, p3a, [&count](const RE2Match& m) -> std::string {
+        std::string indent = m[1];
+        std::string call = m[2];
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (start of line)");
+        return indent + "On Error Resume Next : " + call + " : On Error Goto 0";
+    });
+
+    // Pattern 3b: B2SSetData after colon (inline statement separator)
+    // Example: sw73.IsDropped = 0:Controller.B2SSetData 179,0
+    static const RE2 p3b(R"((?i)(:\s*)(Controller\.B2SSetData\s+[^:\r\n]*))");
+    r = RE2ReplaceWithCallback(r, p3b, [&count](const RE2Match& m) -> std::string {
+        std::string colon = m[1];
+        std::string call = m[2];
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (after colon)");
+        return colon + "On Error Resume Next : " + call + " : On Error Goto 0";
+    });
+
+    // Pattern 3c: B2SSetData after Then (single-line If statement)
+    // Example: If bTwisterFlag=0 Then Controller.B2SSetData bg_id,1
+    static const RE2 p3c(R"((?i)(Then\s+)(Controller\.B2SSetData\s+[^:\r\n]*))");
+    r = RE2ReplaceWithCallback(r, p3c, [&count](const RE2Match& m) -> std::string {
+        std::string thenKeyword = m[1];
+        std::string call = m[2];
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (after Then)");
+        return thenKeyword + "On Error Resume Next : " + call + " : On Error Goto 0";
+    });
+
+    if (count > 0) {
+        LogPatch("Added error handling for Controller methods (ChangedLamps, B2SSetData)", count);
+    }
+    return r;
+}
+
+// =============================================================================
 // Helper function injection
 // =============================================================================
 std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
@@ -991,15 +1570,18 @@ Dim vpx_ssc_tmp
 Class DropTarget
   Private m_primary, m_secondary, m_prim, m_sw, m_animate, m_isDropped
 
+  ' Primary, Secondary, Prim are OBJECTS - must use Property Set, not Property Let
+  ' Using Property Let with Set inside causes "Description unavailable" errors in Wine
   Public Property Get Primary(): Set Primary = m_primary: End Property
-  Public Property Let Primary(input): Set m_primary = input: End Property
+  Public Property Set Primary(input): Set m_primary = input: End Property
 
   Public Property Get Secondary(): Set Secondary = m_secondary: End Property
-  Public Property Let Secondary(input): Set m_secondary = input: End Property
+  Public Property Set Secondary(input): Set m_secondary = input: End Property
 
   Public Property Get Prim(): Set Prim = m_prim: End Property
-  Public Property Let Prim(input): Set m_prim = input: End Property
+  Public Property Set Prim(input): Set m_prim = input: End Property
 
+  ' Sw, Animate, IsDropped are VALUES - use Property Let (no Set)
   Public Property Get Sw(): Sw = m_sw: End Property
   Public Property Let Sw(input): m_sw = input: End Property
 
@@ -1036,12 +1618,15 @@ End Class
 Class StandupTarget
   Private m_primary, m_prim, m_sw, m_animate, m_id
 
+  ' Primary and Prim are OBJECTS - must use Property Set, not Property Let
+  ' Using Property Let with Set inside causes "Description unavailable" errors in Wine
   Public Property Get Primary(): Set Primary = m_primary: End Property
-  Public Property Let Primary(input): Set m_primary = input: End Property
+  Public Property Set Primary(input): Set m_primary = input: End Property
 
   Public Property Get Prim(): Set Prim = m_prim: End Property
-  Public Property Let Prim(input): Set m_prim = input: End Property
+  Public Property Set Prim(input): Set m_prim = input: End Property
 
+  ' Sw, Animate, Id are VALUES - use Property Let (no Set)
   Public Property Get Sw(): Sw = m_sw: End Property
   Public Property Let Sw(input): m_sw = input: End Property
 
@@ -1135,6 +1720,11 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchForwardConstantReference(result); // cGameName forward reference issue
     result = PatchSolCallbackBlock(result);         // SolCallback VPM constants not defined
     result = PatchSelectCaseArrayAccess(result);    // Select Case Array(x) Wine limitation
+    result = PatchSingleLineForEach(result);        // For Each...Next on single line Wine limitation
+    result = PatchControllerChangedLamps(result);   // Controller.ChangedLamps may fail on Android
+    result = PatchArrayList(result);               // System.Collections.ArrayList not available on Android
+    result = PatchRenderingMode(result);           // RenderingMode global may not be defined
+    result = PatchTestVRonDT(result);              // TestVRonDT VR testing variable may not be defined
     // DISABLED: FlexDMD Virtual Segment DMD hides the light-based segments, but FlexDMD can't render overlays on Android
     // result = PatchEnableFlexDMDByDefault(result);   // Enable FlexDMD segment display for GLF tables
     // result = PatchFlexDMDSegments(result);          // Convert .Segments array to string method for Wine

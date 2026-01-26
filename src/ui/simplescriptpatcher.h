@@ -128,6 +128,28 @@ private:
     // Convert FlexDMD .Segments array assignment to string method for Wine compatibility
     static std::string PatchFlexDMDSegments(const std::string& script);
 
+    // Single-line For Each - Wine VBScript doesn't support For Each ... : ... : Next on one line
+    static std::string PatchSingleLineForEach(const std::string& script);
+
+    // Orphaned Next after commented For Each - fix table script bugs
+    static std::string PatchOrphanedNext(const std::string& script);
+
+    // System.Collections.ArrayList - .NET class not available on Android
+    // Replace with VBScript-based implementation
+    static std::string PatchArrayList(const std::string& script);
+
+    // RenderingMode - VPX global that may not be defined in some contexts
+    // Define it with a default value (0 = Desktop, 2 = VR)
+    static std::string PatchRenderingMode(const std::string& script);
+
+    // TestVRonDT - VR testing variable that may not be defined
+    // Replace with False (not testing VR on Desktop)
+    static std::string PatchTestVRonDT(const std::string& script);
+
+    // Controller.ChangedLamps - VPM property that may not be available on Android
+    // Wrap LampTimer subs with error handling to prevent crashes
+    static std::string PatchControllerChangedLamps(const std::string& script);
+
     // Inject helper functions
     static std::string InjectHelpers(const std::string& script);
 
