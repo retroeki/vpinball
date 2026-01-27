@@ -19,6 +19,7 @@
 #endif
 
 #include "serial.h"
+#include <algorithm>
 static serial Serial;
 
 
@@ -338,7 +339,13 @@ bool ScriptGlobalTable::GetTextFileFromDirectory(const string &filename, const s
    // else: use current directory
    szPath += filename;
    #ifdef __STANDALONE__
+   PLOGI << "GetTextFileFromDirectory: searching for '" << szPath << "'";
    szPath = find_case_insensitive_file_path(szPath);
+   if (szPath.empty()) {
+      PLOGW << "GetTextFileFromDirectory: case-insensitive search returned empty for original path";
+   } else {
+      PLOGI << "GetTextFileFromDirectory: found at '" << szPath << "'";
+   }
    #endif
    if (!szPath.empty()) {
       std::ifstream scriptFile;
@@ -347,7 +354,10 @@ bool ScriptGlobalTable::GetTextFileFromDirectory(const string &filename, const s
          std::stringstream buffer;
          buffer << scriptFile.rdbuf();
          string content = buffer.str();
-         if (filename.ends_with(".vbs"))
+         // Case-insensitive check for .vbs extension
+         string lowerFilename = filename;
+         std::transform(lowerFilename.begin(), lowerFilename.end(), lowerFilename.begin(), ::tolower);
+         if (lowerFilename.ends_with(".vbs"))
             content = VPXPluginAPIImpl::GetInstance().ApplyScriptCOMObjectOverrides(content);
          *pContents = MakeWideBSTR(content);
          return true;
@@ -396,6 +406,28 @@ STDMETHODIMP ScriptGlobalTable::GetTextFile(BSTR FileName, BSTR *pContents)
    for(size_t i = 0; i < std::size(defaultFileNameSearch); ++i)
       if(GetTextFileFromDirectory(defaultFileNameSearch[i] + szFileName, defaultPathSearch[i], pContents))
          return S_OK;
+
+   // Also search relative to the current table path (important for external storage on Android)
+   if (!m_vpinball->m_currentTablePath.empty()) {
+      // Search in table directory
+      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + szFileName, string(), pContents))
+         return S_OK;
+      // Search in scripts subfolder relative to table
+      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents))
+         return S_OK;
+      // Search in parent's scripts folder (e.g., /storage/.../VisualPinballX/scripts/)
+      string parentPath = m_vpinball->m_currentTablePath;
+      // Remove trailing separator if present
+      if (!parentPath.empty() && (parentPath.back() == '/' || parentPath.back() == '\\'))
+         parentPath.pop_back();
+      // Go up one level from tables folder
+      size_t lastSep = parentPath.find_last_of("/\\");
+      if (lastSep != string::npos) {
+         string vpxRoot = parentPath.substr(0, lastSep + 1);
+         if (GetTextFileFromDirectory(vpxRoot + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents))
+            return S_OK;
+      }
+   }
 
    PLOGE << "Unable to load file: " << szFileName;
 
