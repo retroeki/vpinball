@@ -683,6 +683,31 @@ VPINBALL_STATUS VPinballLib::ResetIni()
    return VPINBALL_STATUS_SUCCESS;
 }
 
+VPINBALL_STATUS VPinballLib::ResetTableIni()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Get the table INI file path and delete it
+   const string iniFilePath = g_pplayer->m_ptable->GetSettingsFileName();
+   if (!iniFilePath.empty())
+      std::filesystem::remove(iniFilePath);
+
+   // Reset in-memory table settings (clears all overrides, falls back to global defaults)
+   g_pplayer->m_ptable->m_settings.Reset();
+   g_pplayer->m_ptable->m_settings.Load(false);
+
+   // Reset scene lighting back to Table mode (SetEmissionScale forces User mode)
+   if (g_pplayer->m_renderer)
+   {
+      g_pplayer->m_renderer->m_sceneLighting.SetMode(Renderer::SceneLighting::Mode::Table);
+      g_pplayer->m_renderer->DisableStaticPrePass(true);
+      g_pplayer->m_renderer->MarkShaderDirty();
+   }
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
 void VPinballLib::UpdateWebServer()
 {
    m_webServer.Update();
@@ -1144,6 +1169,28 @@ VPINBALL_STATUS VPinballLib::GetScoreViewSourceSize(int& width, int& height)
 {
    // Get PUP video source dimensions (set by PUP plugin during render)
    GetPUPVideoSourceSize(width, height);
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::ResetTable()
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Trigger the Reset action by simulating a key press
+   // This is the same action that would be triggered by pressing F3 or the mapped reset key
+   auto& inputActions = g_pplayer->m_pininput.GetInputActions();
+   unsigned int resetActionId = g_pplayer->m_pininput.GetResetActionId();
+
+   if (resetActionId >= inputActions.size())
+      return VPINBALL_STATUS_FAILURE;
+
+   // Create a direct state slot and trigger press/release
+   int slot = inputActions[resetActionId]->NewDirectStateSlot();
+   inputActions[resetActionId]->SetDirectState(slot, true);
+   inputActions[resetActionId]->SetDirectState(slot, false);
+
+   PLOGI.printf("ResetTable: Reset action triggered");
    return VPINBALL_STATUS_SUCCESS;
 }
 

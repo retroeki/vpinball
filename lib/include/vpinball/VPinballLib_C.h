@@ -78,6 +78,7 @@ VPINBALLAPI void VPinballSaveValueString(const char* pSectionName, const char* p
 VPINBALLAPI int VPinballLoadValueBool(const char* pSectionName, const char* pKey, int defaultValue);
 VPINBALLAPI void VPinballSaveValueBool(const char* pSectionName, const char* pKey, int value);
 VPINBALLAPI VPINBALL_STATUS VPinballResetIni();
+VPINBALLAPI VPINBALL_STATUS VPinballResetTableIni();
 
 // Web Server
 
@@ -124,4 +125,7 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetMusicVolume(int volume);
 VPINBALLAPI VPINBALL_STATUS VPinballSetSoundVolume(int volume);
 VPINBALLAPI int VPinballGetMusicVolume();
 VPINBALLAPI int VPinballGetSoundVolume();
+
+// Table control
+VPINBALLAPI VPINBALL_STATUS VPinballResetTable();
 

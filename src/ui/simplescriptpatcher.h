@@ -94,6 +94,9 @@ private:
     // Multi-dimensional array access Array(x)(y)
     static std::string Patch2DArrayAccess(const std::string& script);
 
+    // Ambiguous call parens: SubName (expr)+rest → Wine "Missing comma"
+    static std::string PatchAmbiguousCallParens(const std::string& script);
+
     // DTArray/STArray patterns
     static std::string PatchDTArray(const std::string& script);
     static std::string PatchSTArray(const std::string& script);
@@ -149,6 +152,10 @@ private:
     // Controller.ChangedLamps - VPM property that may not be available on Android
     // Wrap LampTimer subs with error handling to prevent crashes
     static std::string PatchControllerChangedLamps(const std::string& script);
+
+    // Duplicate vpmInit Me calls corrupt flipper callback state in Wine
+    // Keep only the first occurrence, comment out duplicates
+    static std::string PatchDuplicateVpmInit(const std::string& script);
 
     // Inject helper functions
     static std::string InjectHelpers(const std::string& script);

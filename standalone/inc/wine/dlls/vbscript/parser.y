@@ -217,7 +217,12 @@ Statement
     | SimpleStatement ':'                   { $$ = $1; }
 
 SimpleStatement
-    : CallExpression ArgumentList_opt       { call_expression_t *call_expr = make_call_expression(ctx, $1, $2); CHECK_ERROR;
+    : CallExpression ArgumentList_opt       { call_expression_t *call_expr = make_call_expression(ctx, $1, $2);
+                                              if(!call_expr && ctx->error_loc == (unsigned)-1) {
+                                                  ctx->error_loc = @1;
+                                                  PARSER_LOG("make_call_expression failed at offset %u\n", @1);
+                                              }
+                                              CHECK_ERROR;
                                               $$ = new_call_statement(ctx, @$, &call_expr->expr); CHECK_ERROR; }
     | tCALL UnaryExpression                 { $$ = new_call_statement(ctx, @$, $2); CHECK_ERROR; }
     | CallExpression '=' Expression
@@ -750,6 +755,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
         return new_call_expression(ctx, callee_expr, arguments);
     if(callee_expr->type != EXPR_CALL) {
         FIXME("Unhandled for expr type %u\n", callee_expr->type);
+        PARSER_LOG("PARSE FAIL: make_call_expression - Unhandled expr type %u\n", callee_expr->type);
         ctx->hres = E_FAIL;
         return NULL;
     }
@@ -761,6 +767,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
 
     if(call_expr->args->next) {
         FIXME("Invalid syntax: invalid use of parentheses for arguments\n");
+        PARSER_LOG("PARSE FAIL: make_call_expression - Invalid use of parentheses for arguments\n");
         ctx->hres = E_FAIL;
         return NULL;
     }
@@ -773,6 +780,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
 
     if(arguments->type != EXPR_NOARG) {
         FIXME("Invalid syntax: missing comma\n");
+        PARSER_LOG("PARSE FAIL: make_call_expression - Missing comma\n");
         ctx->hres = E_FAIL;
         return NULL;
     }
@@ -825,6 +833,7 @@ static statement_t *new_call_statement(parser_ctx_t *ctx, unsigned loc, expressi
         break;
     default:
         FIXME("Unsupported expr type %u\n", expr->type);
+        PARSER_LOG("PARSE FAIL: new_call_statement - Unsupported expr type %u\n", expr->type);
         ctx->hres = E_NOTIMPL;
     }
     if(!call_expr)
@@ -1082,6 +1091,7 @@ static function_decl_t *new_function_decl(parser_ctx_t *ctx, const WCHAR *name, 
             is_default = TRUE;
         }else {
             FIXME("Invalid default property\n");
+            PARSER_LOG("PARSE FAIL: new_function_decl - Invalid default property, type=%d name=%ls\n", type, name);
             ctx->hres = E_FAIL;
             return NULL;
         }
@@ -1136,6 +1146,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
         if(!wcsicmp(iter->name, decl->name)) {
             if(decl->type == FUNC_SUB || decl->type == FUNC_FUNCTION) {
                 FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
+                PARSER_LOG("PARSE FAIL: add_class_function - Redefinition of %ls::%ls (sub/func)\n", class_decl->name, decl->name);
                 ctx->hres = E_FAIL;
                 return NULL;
             }
@@ -1143,6 +1154,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
             while(1) {
                 if(iter->type == decl->type) {
                     FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
+                    PARSER_LOG("PARSE FAIL: add_class_function - Redefinition of %ls::%ls (same type %d)\n", class_decl->name, decl->name, decl->type);
                     ctx->hres = E_FAIL;
                     return NULL;
                 }
@@ -1167,6 +1179,7 @@ static class_decl_t *add_dim_prop(parser_ctx_t *ctx, class_decl_t *class_decl, d
 
     if(storage_flags & STORAGE_IS_DEFAULT) {
         FIXME("variant prop can't be default value\n");
+        PARSER_LOG("PARSE FAIL: add_dim_prop - variant prop can't be default value\n");
         ctx->hres = E_FAIL;
         return NULL;
     }

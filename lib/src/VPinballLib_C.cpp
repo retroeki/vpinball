@@ -144,6 +144,11 @@ VPINBALLAPI VPINBALL_STATUS VPinballResetIni()
    return VPinballLib::VPinballLib::Instance().ResetIni();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballResetTableIni()
+{
+   return VPinballLib::VPinballLib::Instance().ResetTableIni();
+}
+
 VPINBALLAPI void VPinballUpdateWebServer()
 {
    VPinballLib::VPinballLib::Instance().UpdateWebServer();
@@ -332,5 +337,10 @@ VPINBALLAPI const char* VPinballGetTableVersion()
    thread_local string tableVersion;
    tableVersion = VPinballLib::VPinballLib::Instance().GetTableVersion();
    return tableVersion.c_str();
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballResetTable()
+{
+   return VPinballLib::VPinballLib::Instance().ResetTable();
 }
 

@@ -2081,21 +2081,32 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         return hres;
     }
 
+    COMPILE_LOG("Compiling main code (global scope)...\n");
     hres = compile_func(&ctx, ctx.parser.stats, &ctx.code->main_code);
     if(FAILED(hres)) {
+        COMPILE_LOG("compile_func (main) FAILED: hres=0x%08lx\n", (unsigned long)hres);
         hres = compile_error(script, &ctx, hres);
         release_compiler(&ctx);
         return hres;
     }
+    COMPILE_LOG("Main code compiled OK\n");
 
     code->option_explicit = ctx.parser.option_explicit;
     ctx.global_consts = ctx.const_decls;
     code->option_explicit = ctx.parser.option_explicit;
 
+    {
+        int func_count = 0;
+        for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next)
+            func_count++;
+        COMPILE_LOG("Compiling %d functions...\n", func_count);
+    }
 
     for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next) {
+        COMPILE_LOG("Compiling function: %ls\n", func_decl->name);
         hres = create_function(&ctx, func_decl, &new_func);
         if(FAILED(hres)) {
+            COMPILE_LOG("create_function FAILED for '%ls': hres=0x%08lx\n", func_decl->name, (unsigned long)hres);
             hres = compile_error(script, &ctx, hres);
             release_compiler(&ctx);
             return hres;
@@ -2104,18 +2115,23 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         new_func->next = ctx.code->funcs;
         ctx.code->funcs = new_func;
     }
+    COMPILE_LOG("All functions compiled OK\n");
 
     for(class_decl = ctx.parser.class_decls; class_decl; class_decl = class_decl->next) {
+        COMPILE_LOG("Compiling class: %ls\n", class_decl->name);
         hres = compile_class(&ctx, class_decl);
         if(FAILED(hres)) {
+            COMPILE_LOG("compile_class FAILED for '%ls': hres=0x%08lx\n", class_decl->name, (unsigned long)hres);
             hres = compile_error(script, &ctx, hres);
             release_compiler(&ctx);
             return hres;
         }
     }
+    COMPILE_LOG("All classes compiled OK\n");
 
     hres = check_script_collisions(&ctx, script);
     if(FAILED(hres)) {
+        COMPILE_LOG("check_script_collisions FAILED: hres=0x%08lx\n", (unsigned long)hres);
         hres = compile_error(script, &ctx, hres);
         release_compiler(&ctx);
         return hres;

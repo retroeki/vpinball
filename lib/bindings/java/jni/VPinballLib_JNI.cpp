@@ -235,6 +235,11 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetIni(JN
    return VPinballResetIni();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetTableIni(JNIEnv* env, jobject obj)
+{
+   return VPinballResetTableIni();
+}
+
 JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballUpdateWebServer(JNIEnv* env, jobject obj)
 {
    VPinballUpdateWebServer();
@@ -406,6 +411,11 @@ JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetTable
 JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetTableVersion(JNIEnv* env, jobject obj)
 {
    return env->NewStringUTF(VPinballGetTableVersion());
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetTable(JNIEnv* env, jobject obj)
+{
+   return VPinballResetTable();
 }
 
 #ifdef ENABLE_XR

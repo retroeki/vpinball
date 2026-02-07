@@ -79,6 +79,7 @@ public:
    bool LoadValueBool(const string& sectionName, const string& key, bool defaultValue);
    void SaveValueBool(const string& sectionName, const string& key, bool value);
    VPINBALL_STATUS ResetIni();
+   VPINBALL_STATUS ResetTableIni();
    void UpdateWebServer();
    VPINBALL_STATUS LoadTable(const string& tablePath);
    void CancelLoading();
@@ -106,6 +107,7 @@ public:
    VPINBALL_STATUS CycleViewMode();
    VPINBALL_STATUS ToggleScoreView(bool enable, int x, int y, int width, int height);
    VPINBALL_STATUS GetScoreViewSourceSize(int& width, int& height);
+   VPINBALL_STATUS ResetTable();
    void SetGameLoop(std::function<void()> gameLoop) { m_gameLoop = gameLoop; }
 
 private:

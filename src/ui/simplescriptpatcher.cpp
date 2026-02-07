@@ -67,12 +67,52 @@
  *      DoDTAnim/DoSTAnim functions. This safely exits if array isn't initialized yet.
  *    - This is safe for other tables because IsArray() returns True once array is defined.
  *
+ * 7. GAME OF THRONES LE (Stern 2015) VPW 1.2 - PARSER "MISSING COMMA" (February 2026)
+ *    Wine's parser (parser.y make_call_expression) fails with "Missing comma" for
+ *    three distinct syntax patterns. All trigger the same E_FAIL in the bison grammar.
+ *
+ *    a) (new ClassName)(args) - 14+ instances (DropTarget, StandupTarget classes)
+ *       Wine parser sees )(  as missing comma between arguments.
+ *       Fix (PatchNewClassCall): Split into temp variable:
+ *         Set DT7 = (new DropTarget)(a,b) → Set ssp_newobj = new DropTarget : Set DT7 = ssp_newobj(a,b)
+ *       NOTE: Previously marked as "handled in compile.c" but parser fails BEFORE compiler runs.
+ *
+ *    b) arr(x)(y) chained indexing - 20+ instances (DSSources, PictoPops, MysteryAwards)
+ *       Wine parser cannot handle consecutive )( in expression context.
+ *       Fix (Patch2DArrayAccess): Use helper function:
+ *         PictoPops(val)(3) → ssp_idx(PictoPops(val), 3)
+ *       CAVEAT: Must coordinate with PatchSelectCaseArrayAccess - ssp_idx must be in
+ *       its skip list or the Select Case patch incorrectly splits ssp_idx(arr(x), y).
+ *
+ *    c) SubName (expr)+rest - Wine greedily parses (expr) as Arguments
+ *       Wine: AddScore (a*b)+c → AddScore(a*b) then sees +c as extra args → "Missing comma"
+ *       Windows VBScript correctly parses (a*b)+c as a single expression argument.
+ *       Fix (PatchAmbiguousCallParens): Wrap in extra parens:
+ *         AddScore (a*b)+c → AddScore ((a*b)+c)
+ *       GOTCHAS:
+ *         - Must trim \r before detecting end of expression (CRLF line endings)
+ *         - Must exclude VBScript keywords (if, while, and, or, not, etc.) from
+ *           identifier matching or `if (expr)*rest then` gets incorrectly wrapped
+ *
+ *    d) (Not func)(arg) - Wine arity mismatch bug
+ *       Fix (PatchParenthesizedNot): (not bInlanes)(0) → not bInlanes(0)
+ *       GOTCHA: Regex must use (?i) flag - GOT script uses lowercase `not`,
+ *       original pattern only matched capital `Not`.
+ *
+ * 8. DUPLICATE vpmInit Me (PatchDuplicateVpmInit)
+ *    - Back to the Future (Data East 1990) has two vpmInit Me calls
+ *    - The second call corrupts flipper callback state in Wine VBScript
+ *    - Fix: Comment out all but the first vpmInit Me occurrence
+ *
  * Tables fixed in this session:
  * - Rollercoaster Tycoon (Stern 2002) - For Each, RenderingMode, TestVRonDT
  * - WoZ (Original 2018) - B2SSetData in multiple contexts
  * - Led Zeppelin Pinball 2.5 - WshShell
  * - Beavis and Butt-head Pinballed - vpmKeyDown (controller.vbs issue)
  * - Star Wars (Data East 1992) - DoSTAnim called before STArray initialization
+ * - Game of Thrones LE (Stern 2015) VPW 1.2 - (new Class)(args), arr(x)(y),
+ *   SubName (expr)+rest, (Not func)(arg) - all "Missing comma" parser failures
+ * - Back to the Future (Data East 1990) - duplicate vpmInit Me breaks flippers
  * =============================================================================
  */
 
@@ -341,8 +381,35 @@ std::string SimpleScriptPatcher::PatchWScriptShell(const std::string& script) {
 // The compiler detects (new ClassName)(args) and calls Init method explicitly
 // =============================================================================
 std::string SimpleScriptPatcher::PatchNewClassCall(const std::string& script) {
-    // No-op - now handled in Wine VBScript compiler
-    return script;
+    std::string r = script;
+    int count = 0;
+
+    // Wine VBScript parser cannot handle (new ClassName)(args) syntax
+    // which calls the default member of a newly created object.
+    // The PARSER fails with "Missing comma" before the compiler ever runs.
+    // Fix: Split into temp variable creation + default member call via temp var.
+    // Set var = (new ClassName)(args)
+    //   → Set ssp_newobj = new ClassName : Set var = ssp_newobj(args)
+    // ssp_newobj(args) calls the default member (typically Init) which returns Me.
+    // Dim ssp_newobj is declared in InjectHelpers.
+    static const RE2 p(R"((?im)^([ \t]*)(Set\s+\w+\s*=\s*)\(new\s+(\w+)\)\(([^)\r\n]*)\)\s*(?:'[^\r\n]*)?\r?$)");
+
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        count++;
+        std::string indent = m[1];
+        std::string setVarEq = m[2];  // "Set DT7 = " etc.
+        std::string className = m[3]; // "DropTarget"
+        std::string args = m[4];      // "target7, target7a, ..."
+        PLOGI.printf("PatchNewClassCall: (new %s)(%s) -> temp var",
+            className.c_str(), args.substr(0, 50).c_str());
+        return indent + "Set ssp_newobj = new " + className + " : " +
+               setVarEq + "ssp_newobj(" + args + ")";
+    });
+
+    if (count > 0) {
+        LogPatch("Fixed (new ClassName)(args) syntax for Wine parser", count);
+    }
+    return r;
 }
 
 // =============================================================================
@@ -516,14 +583,220 @@ std::string SimpleScriptPatcher::PatchGlfBooleanArray(const std::string& script)
 // =============================================================================
 
 // =============================================================================
-// Multi-dimensional Array Access: Array(x)(y) fails in Wine
-// We NO LONGER do generic transformation - only specific DTArray/STArray patterns
-// Generic arr(x)(y) is too dangerous as it breaks function calls
+// Chained Parentheses: arr(x)(y) fails in Wine VBScript parser
+// Wine's parser treats )( as "missing comma" and sets E_FAIL.
+// Fix: Replace arr(expr)(index) with ssp_idx(arr(expr), index)
+// where ssp_idx is a helper: Function ssp_idx(a, i) : ssp_idx = a(i) : End Function
+// This avoids the )( pattern by evaluating arr(expr) as a function argument first.
 // =============================================================================
 std::string SimpleScriptPatcher::Patch2DArrayAccess(const std::string& script) {
-    // DISABLED - generic 2D array transformation breaks function calls
-    // Only DTArray/STArray are handled specifically in their own functions
-    return script;
+    std::string r = script;
+    int count = 0;
+
+    // Quick check - if no )( in script, nothing to do
+    if (r.find(")(") == std::string::npos)
+        return r;
+
+    // Match: identifier(args_with_optional_nesting)(simple_args)
+    // Allows one level of nested parentheses in first args
+    // e.g., MysteryAwards(MysteryVals(i))(0) -> ssp_idx(MysteryAwards(MysteryVals(i)), 0)
+    // e.g., DSSources(iii)(0) -> ssp_idx(DSSources(iii), 0)
+    // e.g., PictoPops(i)(2) -> ssp_idx(PictoPops(i), 2)
+    // Also handles Split(str, delim)(0) and similar function-return indexing
+    static const RE2 p(R"((\w+)\(([^()]*(?:\([^()]*\))?[^()]*)\)\(([^()]*)\))");
+
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        count++;
+        std::string name = m[1];
+        std::string args1 = m[2];
+        std::string args2 = m[3];
+        return "ssp_idx(" + name + "(" + args1 + "), " + args2 + ")";
+    });
+
+    if (count > 0) {
+        LogPatch("Fixed chained parentheses arr(x)(y) for Wine parser using ssp_idx helper", count);
+    }
+
+    // Check for remaining )( patterns (deeper nesting or unusual syntax)
+    if (r.find(")(") != std::string::npos) {
+        PLOGI.printf("SimpleScriptPatcher: WARNING - Residual )( patterns remain after Patch2DArrayAccess");
+    }
+
+    return r;
+}
+
+// =============================================================================
+// Ambiguous Call Parens: Wine parser fails on SubName (expr)OPERATOR rest
+// Wine greedily parses (expr) as the call's Arguments, leaving OPERATOR rest
+// as dangling ArgumentList_opt → "Missing comma" error.
+// Windows VBScript treats (expr)OPERATOR rest as a single expression argument.
+// Fix: Add extra parentheses to disambiguate:
+//   AddScore (a*b)+c           → AddScore ((a*b)+c)
+//   .Method ((i-1)*25)+14,x,y  → .Method (((i-1)*25)+14),x,y
+// =============================================================================
+std::string SimpleScriptPatcher::PatchAmbiguousCallParens(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Quick check: look for )OPERATOR pattern (excluding inside strings/comments)
+    bool hasPattern = false;
+    for (size_t p = 1; p < r.size(); p++) {
+        if (r[p-1] == ')' && (r[p] == '+' || r[p] == '-' || r[p] == '&' ||
+            r[p] == '*' || r[p] == '/' || r[p] == '\\' || r[p] == '^')) {
+            hasPattern = true;
+            break;
+        }
+    }
+    if (!hasPattern)
+        return r;
+
+    // Process line by line
+    std::string result;
+    result.reserve(r.size() + 256);
+    size_t lineStart = 0;
+
+    while (lineStart < r.size()) {
+        // Find end of line
+        size_t lineEnd = r.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = r.size();
+        std::string line = r.substr(lineStart, lineEnd - lineStart);
+
+        // Skip comment lines
+        size_t firstNonSpace = line.find_first_not_of(" \t");
+        if (firstNonSpace != std::string::npos && line[firstNonSpace] == '\'') {
+            result += line;
+            if (lineEnd < r.size()) result += '\n';
+            lineStart = lineEnd + 1;
+            continue;
+        }
+
+        // Check if line has )OPERATOR pattern
+        bool lineNeedsFix = false;
+        for (size_t p = 1; p < line.size(); p++) {
+            if (line[p-1] == ')' && (line[p] == '+' || line[p] == '-' || line[p] == '&' ||
+                line[p] == '*' || line[p] == '/' || line[p] == '\\' || line[p] == '^')) {
+                lineNeedsFix = true;
+                break;
+            }
+        }
+
+        if (lineNeedsFix) {
+            // Find the )OPERATOR position
+            for (size_t p = 1; p < line.size(); p++) {
+                char op = line[p];
+                if (line[p-1] != ')' || (op != '+' && op != '-' && op != '&' &&
+                    op != '*' && op != '/' && op != '\\' && op != '^'))
+                    continue;
+
+                size_t closeParenPos = p - 1;
+
+                // Walk backward to find the matching (
+                int depth = 0;
+                size_t openParenPos = std::string::npos;
+                for (size_t j = closeParenPos; ; ) {
+                    if (line[j] == ')') depth++;
+                    else if (line[j] == '(') {
+                        depth--;
+                        if (depth == 0) {
+                            openParenPos = j;
+                            break;
+                        }
+                    }
+                    if (j == 0) break;
+                    j--;
+                }
+
+                if (openParenPos == std::string::npos) continue;
+
+                // Check if before openParen there's a space + identifier/member
+                if (openParenPos == 0) continue;
+                size_t beforeParen = openParenPos - 1;
+                // Must have at least one space before (
+                if (line[beforeParen] != ' ' && line[beforeParen] != '\t') continue;
+                // Before the space, must be an identifier char
+                while (beforeParen > 0 && (line[beforeParen] == ' ' || line[beforeParen] == '\t'))
+                    beforeParen--;
+                if (!isalnum(line[beforeParen]) && line[beforeParen] != '_')
+                    continue;
+
+                // Extract the identifier name to check against keywords
+                size_t identEnd = beforeParen + 1;
+                size_t identStart = beforeParen;
+                while (identStart > 0 && (isalnum(line[identStart-1]) || line[identStart-1] == '_'))
+                    identStart--;
+                std::string ident = line.substr(identStart, identEnd - identStart);
+                // Convert to lowercase for comparison
+                std::string identLower = ident;
+                for (auto& c : identLower) c = tolower(c);
+                // Skip VBScript keywords - these use (expr) for grouping, not function calls
+                if (identLower == "if" || identLower == "elseif" || identLower == "while" ||
+                    identLower == "until" || identLower == "and" || identLower == "or" ||
+                    identLower == "not" || identLower == "xor" || identLower == "mod" ||
+                    identLower == "is" || identLower == "then" || identLower == "case" ||
+                    identLower == "to" || identLower == "step" || identLower == "eqv" ||
+                    identLower == "imp" || identLower == "like" || identLower == "select" ||
+                    identLower == "return" || identLower == "wend" || identLower == "loop" ||
+                    identLower == "do" || identLower == "for" || identLower == "each" ||
+                    identLower == "dim" || identLower == "redim" || identLower == "const" ||
+                    identLower == "set" || identLower == "let" || identLower == "end" ||
+                    identLower == "sub" || identLower == "function" || identLower == "class" ||
+                    identLower == "property" || identLower == "with" || identLower == "new" ||
+                    identLower == "call" || identLower == "exit" || identLower == "on" ||
+                    identLower == "typeof" || identLower == "cbool" || identLower == "cbyte" ||
+                    identLower == "cint" || identLower == "clng" || identLower == "csng" ||
+                    identLower == "cdbl" || identLower == "cstr" || identLower == "cdate")
+                    continue;
+
+                // This is the ambiguous pattern! Now find where the first argument ends.
+                // It ends at a comma at depth 0 (after the operator expression) or at
+                // end of statement (newline, colon, or line end).
+                size_t exprStart = openParenPos; // the (
+                size_t exprEnd = p; // start of operator
+                int depth2 = 0;
+                for (size_t k = p; k < line.size(); k++) {
+                    char c = line[k];
+                    if (c == '(') depth2++;
+                    else if (c == ')') depth2--;
+                    else if (c == ',' && depth2 == 0) {
+                        exprEnd = k;
+                        break;
+                    }
+                    else if (c == ':' && depth2 == 0) {
+                        exprEnd = k;
+                        break;
+                    }
+                    else if (c == '\'' && depth2 == 0) {
+                        exprEnd = k;
+                        break;
+                    }
+                    exprEnd = k + 1;
+                }
+
+                // Trim trailing whitespace (including \r) from the expression
+                while (exprEnd > p && (line[exprEnd-1] == ' ' || line[exprEnd-1] == '\t' || line[exprEnd-1] == '\r'))
+                    exprEnd--;
+
+                // Insert extra parens: ( before the original ( and ) at exprEnd
+                // Before: ... SubName (expr)+rest...
+                // After:  ... SubName ((expr)+rest)...
+                line.insert(exprEnd, ")");
+                line.insert(openParenPos + 1, "(");
+                count++;
+                PLOGI.printf("PatchAmbiguousCallParens: Fixed at line position %zu: %s",
+                    openParenPos, line.substr(openParenPos, 60).c_str());
+                break; // Only fix first occurrence per line to avoid offset issues
+            }
+        }
+
+        result += line;
+        if (lineEnd < r.size()) result += '\n';
+        lineStart = lineEnd + 1;
+    }
+
+    if (count > 0) {
+        LogPatch("Fixed ambiguous call parentheses (Wine parser 'Missing comma')", count);
+    }
+    return result;
 }
 
 // =============================================================================
@@ -899,7 +1172,7 @@ std::string SimpleScriptPatcher::PatchParenthesizedNot(const std::string& script
     // Match pattern: (Not FunctionName)(argument)
     // Captures: FunctionName, argument
     // Replace with: Not FunctionName(argument)
-    static const RE2 p(R"(\(Not\s+(\w+)\)\s*\(([^)]+)\))");
+    static const RE2 p(R"((?i)\(Not\s+(\w+)\)\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         count++;
         PLOGI.printf("PatchParenthesizedNot: (Not %s)(%s) -> Not %s(%s)",
@@ -1018,7 +1291,8 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
             lowerName == "instrrev" || lowerName == "strreverse" || lowerName == "array" ||
             lowerName == "filter" || lowerName == "isarray" || lowerName == "isdate" ||
             lowerName == "isempty" || lowerName == "isnull" || lowerName == "isnumeric" ||
-            lowerName == "isobject" || lowerName == "typename" || lowerName == "vartype") {
+            lowerName == "isobject" || lowerName == "typename" || lowerName == "vartype" ||
+            lowerName == "ssp_idx") {
             return std::string(m[0]);  // Don't transform function calls
         }
 
@@ -1117,66 +1391,97 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
     std::string r = script;
     int count = 0;
 
-    // Pattern 1: Dim var : For Each var In collection : statement : Next
-    static const RE2 p1(R"((?im)^([ \t]*)(Dim\s+(\w+)\s*:\s*)(For\s+Each\s+\3\s+[Ii]n\s+(\w+)\s*:\s*)([^:\r\n]+)(\s*:\s*[Nn]ext))");
+    // Pattern 1: Dim var : For Each var In collection : body : Next
+    // NOTE: RE2 does NOT support backreferences (\3) so we can't enforce that
+    // the Dim variable matches the For Each variable in the regex itself.
+    // Instead we capture both and the callback verifies they match.
+    // Collection supports expressions like obj(x) via \w+(?:\s*\([^)]*\))?
+    // Body uses (.*) to capture multiple colon-separated statements.
+    static const RE2 p1(R"((?im)^([ \t]*)Dim\s+(\w+)\s*:\s*For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+(?:\s*\([^)]*\))?)\s*:\s*(.*?)\s*:\s*[Nn]ext[ \t]*(?:'[^\r\n]*)?\r?$)");
     r = RE2ReplaceWithCallback(r, p1, [&count](const RE2Match& m) -> std::string {
         std::string indent = m[1];
-        std::string varName = m[3];
-        std::string collection = m[5];
-        std::string statement = m[6];
+        std::string dimVar = m[2];
+        std::string forVar = m[3];
+        std::string collection = m[4];
+        std::string body = m[5];
+        // Verify Dim variable matches For Each variable (case-insensitive)
+        if (!EqualsIgnoreCase(dimVar, forVar)) {
+            return m.full_match;  // Not a match, return unchanged
+        }
         std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
         count++;
-        PLOGI.printf("PatchSingleLineForEach: Converting Dim + For Each to For loop");
-        // Convert to For loop - use Set for object assignment, guard with IsArray check
-        return indent + "Dim " + varName + ", " + tempIdx + "\r\n" +
-               indent + "If IsArray(" + collection + ") Then\r\n" +
-               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
-               indent + "\t\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
-               indent + "\t\t" + std::string(statement) + "\r\n" +
+        PLOGI.printf("PatchSingleLineForEach: Converting Dim + For Each to For loop (body: %s)", body.c_str());
+        // If collection contains parens (e.g. obj(x)), store in temp var to avoid re-evaluation
+        bool needsCollTemp = (collection.find('(') != std::string::npos);
+        std::string collVar = collection;
+        std::string collDecl = "";
+        if (needsCollTemp) {
+            collVar = "ssp_c" + std::to_string(s_forEachTempVarCounter - 1);
+            collDecl = ", " + collVar + " : " + collVar + " = " + collection;
+        }
+        return indent + "Dim " + forVar + ", " + tempIdx + collDecl + "\r\n" +
+               indent + "If IsArray(" + collVar + ") Then\r\n" +
+               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
+               indent + "\t\tSet " + forVar + " = " + collVar + "(" + tempIdx + ")\r\n" +
+               indent + "\t\t" + body + "\r\n" +
                indent + "\tNext\r\n" +
                indent + "End If";
     });
 
-    // Pattern 2: Simple For Each var In collection : statement : Next
-    static const RE2 p2(R"((?im)^([ \t]*)(For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+)\s*:\s*)([^:\r\n]+)(\s*:\s*[Nn]ext))");
+    // Pattern 2: For Each var In collection : body : Next (no Dim prefix)
+    // Body uses (.*?) with trailing :\s*Next anchor to capture all statements.
+    // Collection supports expressions like obj(x).
+    static const RE2 p2(R"((?im)^([ \t]*)For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+(?:\s*\([^)]*\))?)\s*:\s*(.*?)\s*:\s*[Nn]ext[ \t]*(?:'[^\r\n]*)?\r?$)");
     r = RE2ReplaceWithCallback(r, p2, [&count](const RE2Match& m) -> std::string {
         std::string indent = m[1];
-        std::string varName = m[3];
-        std::string collection = m[4];
-        std::string statement = m[5];
+        std::string varName = m[2];
+        std::string collection = m[3];
+        std::string body = m[4];
         std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
         count++;
-        PLOGI.printf("PatchSingleLineForEach: Converting single-line For Each to For loop");
-        // Convert to For loop - need to declare temp var, use Set for object assignment, guard with IsArray check
-        return indent + "Dim " + tempIdx + "\r\n" +
-               indent + "If IsArray(" + collection + ") Then\r\n" +
-               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
-               indent + "\t\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
-               indent + "\t\t" + std::string(statement) + "\r\n" +
+        PLOGI.printf("PatchSingleLineForEach: Converting single-line For Each to For loop (body: %s)", body.c_str());
+        // If collection contains parens (e.g. obj(x)), store in temp var
+        bool needsCollTemp = (collection.find('(') != std::string::npos);
+        std::string collVar = collection;
+        std::string collDecl = "";
+        if (needsCollTemp) {
+            collVar = "ssp_c" + std::to_string(s_forEachTempVarCounter - 1);
+            collDecl = indent + "Dim " + collVar + " : " + collVar + " = " + collection + "\r\n";
+        }
+        return collDecl +
+               indent + "Dim " + tempIdx + "\r\n" +
+               indent + "If IsArray(" + collVar + ") Then\r\n" +
+               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
+               indent + "\t\tSet " + varName + " = " + collVar + "(" + tempIdx + ")\r\n" +
+               indent + "\t\t" + body + "\r\n" +
                indent + "\tNext\r\n" +
                indent + "End If";
     });
 
     // Pattern 3: Multi-line For Each (already expanded or written multi-line)
-    // For Each var In collection
-    //     statements
-    // Next
+    // NOTE: This pattern uses (?!Next\b) negative lookahead which RE2 does NOT support.
+    // The pattern silently fails (re_.ok() == false). However, Wine VBScript handles
+    // multi-line For Each natively, so this pattern is not needed for correctness.
+    // Keeping it as documentation of what was attempted.
     static const RE2 p3(R"((?ims)^([ \t]*)(For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+)\s*\r?\n)((?:(?!Next\b)[^\r\n]*\r?\n)*?)([ \t]*)(Next\b))");
-    r = RE2ReplaceWithCallback(r, p3, [&count](const RE2Match& m) -> std::string {
-        std::string indent = m[1];
-        std::string varName = m[3];
-        std::string collection = m[4];
-        std::string body = m[5];
-        std::string nextIndent = m[6];
-        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
-        count++;
-        PLOGI.printf("PatchSingleLineForEach: Converting multi-line For Each to For loop");
-        // Convert to For loop - use Set for object assignment, guard with IsArray check
-        return indent + "Dim " + tempIdx + " : If IsArray(" + collection + ") Then : For " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
-               indent + "\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
-               body +
-               nextIndent + "Next : End If";
-    });
+    if (!p3.ok()) {
+        PLOGI.printf("PatchSingleLineForEach: Pattern 3 (multi-line) skipped - RE2 does not support negative lookahead");
+    } else {
+        r = RE2ReplaceWithCallback(r, p3, [&count](const RE2Match& m) -> std::string {
+            std::string indent = m[1];
+            std::string varName = m[3];
+            std::string collection = m[4];
+            std::string body = m[5];
+            std::string nextIndent = m[6];
+            std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
+            count++;
+            PLOGI.printf("PatchSingleLineForEach: Converting multi-line For Each to For loop");
+            return indent + "Dim " + tempIdx + " : If IsArray(" + collection + ") Then : For " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
+                   indent + "\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
+                   body +
+                   nextIndent + "Next : End If";
+        });
+    }
 
     if (count > 0) {
         LogPatch("Converted For Each to For loop for Wine compatibility", count);
@@ -1547,6 +1852,38 @@ std::string SimpleScriptPatcher::PatchControllerChangedLamps(const std::string& 
 }
 
 // =============================================================================
+// Duplicate vpmInit Me calls corrupt flipper callback state in Wine
+// Some table scripts (e.g., Back to the Future) call vpmInit Me twice.
+// Wine VBScript re-initializes callbacks on the second call, breaking flippers.
+// Fix: Keep only the first vpmInit Me call, comment out duplicates.
+// =============================================================================
+std::string SimpleScriptPatcher::PatchDuplicateVpmInit(const std::string& script) {
+    std::string r = script;
+
+    // Find all vpmInit Me calls (case insensitive)
+    static const RE2 vpmInitRegex(R"((?i)\bvpmInit\s+[Mm]e\b)");
+
+    auto matches = RE2FindAll(r, vpmInitRegex);
+
+    if (matches.size() > 1) {
+        PLOGI.printf("PatchDuplicateVpmInit: Found %zu vpmInit calls - removing duplicates", matches.size());
+
+        // Remove all but the first occurrence (process in reverse to preserve positions)
+        for (size_t i = matches.size() - 1; i > 0; --i) {
+            size_t pos = matches[i].position;
+            size_t len = matches[i].length;
+            // Comment out the duplicate instead of removing to preserve line numbers
+            r = r.substr(0, pos) + "' [Wine: Removed duplicate] " + r.substr(pos, len) + r.substr(pos + len);
+            PLOGI.printf("PatchDuplicateVpmInit: Commented out duplicate vpmInit at position %zu", pos);
+        }
+
+        LogPatch("Removed duplicate vpmInit Me calls (Wine flipper fix)", (int)(matches.size() - 1));
+    }
+
+    return r;
+}
+
+// =============================================================================
 // Helper function injection
 // =============================================================================
 std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
@@ -1558,6 +1895,13 @@ std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
 ' Global temp variable for Select Case array access workaround
 ' (Wine VBScript doesn't allow Dim inside Case blocks)
 Dim vpx_ssc_tmp
+
+' Temp variable for (new ClassName)(args) decomposition
+Dim ssp_newobj
+
+' Helper to index into a function/array return value
+' Replaces arr(x)(y) -> ssp_idx(arr(x), y) to avoid Wine parser )( limitation
+Function ssp_idx(ssp_a, ssp_i) : ssp_idx = ssp_a(ssp_i) : End Function
 
 )";
 
@@ -1710,18 +2054,20 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchDoubleDot(result);                // Common typo fix
     result = PatchGlfBooleanArray(result);          // GLF Boolean Array Bug
     // REMOVED: PatchInlineStatements - Wine parser now handles these patterns natively
-    result = Patch2DArrayAccess(result);            // Bug 53877
     result = PatchDTArray(result);                  // DTArray patterns
     result = PatchSTArray(result);                  // STArray patterns
-    // REMOVED: PatchNewClassCall - now handled in Wine VBScript compiler (compile.c)
     result = PatchControllerPause(result);          // Controller.Pause not available on Android
     result = PatchPinUpPlayerFileAccess(result);    // PinUp Player file access not available on Android
     result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
+    result = PatchNewClassCall(result);             // (new ClassName)(args) Wine parser limitation
+    result = Patch2DArrayAccess(result);            // arr(x)(y) chained indexing Wine parser limitation
+    result = PatchAmbiguousCallParens(result);      // SubName (expr)+rest Wine parser "Missing comma"
     result = PatchForwardConstantReference(result); // cGameName forward reference issue
     result = PatchSolCallbackBlock(result);         // SolCallback VPM constants not defined
     result = PatchSelectCaseArrayAccess(result);    // Select Case Array(x) Wine limitation
     result = PatchSingleLineForEach(result);        // For Each...Next on single line Wine limitation
     result = PatchControllerChangedLamps(result);   // Controller.ChangedLamps may fail on Android
+    result = PatchDuplicateVpmInit(result);         // Duplicate vpmInit Me breaks flippers in Wine
     result = PatchArrayList(result);               // System.Collections.ArrayList not available on Android
     result = PatchRenderingMode(result);           // RenderingMode global may not be defined
     result = PatchTestVRonDT(result);              // TestVRonDT VR testing variable may not be defined
@@ -1753,11 +2099,13 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
         PLOGI.printf("SimpleScriptPatcher: Output script length: %zu characters", result.length());
         PLOGI.printf("SimpleScriptPatcher: =====================================");
 
-        // Debug: Check if GLF patch survived to the end
-        if (result.find("glf_last_isGetRef") != std::string::npos) {
-            PLOGI.printf("GLF patch: FINAL CHECK - glf_last_isGetRef PRESENT in result");
-        } else {
-            PLOGE.printf("GLF patch: FINAL CHECK - glf_last_isGetRef MISSING from result!");
+        // Debug: Check if GLF patch survived to the end (only if script uses GLF)
+        if (original.find("glf_funcRefMap") != std::string::npos) {
+            if (result.find("glf_last_isGetRef") != std::string::npos) {
+                PLOGI.printf("GLF patch: FINAL CHECK - glf_last_isGetRef PRESENT in result");
+            } else {
+                PLOGE.printf("GLF patch: FINAL CHECK - glf_last_isGetRef MISSING from result!");
+            }
         }
 
         // Dump patched script for debugging/error reporting
