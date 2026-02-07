@@ -474,10 +474,10 @@ void PUPScreen::Render(VPXRenderContext2D* const ctx, bool skipBackground) {
    if (!skipBackground)
       m_background.Render(ctx, m_rect);
    m_pMediaPlayerManager->Render(ctx);
-   for (PUPLabel* pLabel : m_labels)
-      pLabel->Render(ctx, m_rect, m_pagenum);
    if (!skipBackground)
       m_overlay.Render(ctx, m_rect);
+   for (PUPLabel* pLabel : m_labels)
+      pLabel->Render(ctx, m_rect, m_pagenum);
 
    for (auto pScreen : m_topChildren)
       pScreen->Render(ctx);
