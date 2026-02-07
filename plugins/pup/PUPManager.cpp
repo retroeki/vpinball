@@ -654,7 +654,17 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
    {
    case VPXWindowId::VPXWINDOW_Topper: screen = me->GetScreen(0); break;
    case VPXWindowId::VPXWINDOW_Backglass: screen = me->GetScreen(2); break;
-   case VPXWindowId::VPXWINDOW_ScoreView: screen = me->GetScreen(1); break; // Use screen 1 (DMD) - most PUP packs use this
+   case VPXWindowId::VPXWINDOW_ScoreView:
+      screen = me->GetScreen(1); // Use screen 1 (DMD) - most PUP packs use this
+      // Fallback: if screen 1 is Off, try screen 2 (Backglass) which is the composite parent
+      // Screen 5 (FullDMD) is typically an empty child of screen 2, so screen 2 is the better fallback
+      if (screen == nullptr || screen->GetMode() == PUPScreen::Mode::Off)
+      {
+         auto fallback = me->GetScreen(2);
+         if (fallback != nullptr && fallback->GetMode() != PUPScreen::Mode::Off)
+            screen = fallback;
+      }
+      break;
    default: break;
    }
    if (screen == nullptr)
