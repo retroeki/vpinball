@@ -1,0 +1,13 @@
+ID,Active,Descript,Trigger,ScreenNum,PlayList,PlayFile,Volume,Priority,Length,Counter,RestSeconds,Loop,Defaults
+92,1,StartUPBG,D0,2,PupVideos,Attract1.png,,1,1,,,normal,0
+2,0,StartUP,D0,5,BGDefault,Attract1.png,,0,,,,SetBG,0
+85,0,Attract,E454,5,BGDefault,default.mp4,,1,,,,SetBG,0
+86,0,Attract,E454,5,PupOverlays,blank.png,,1,,,,,0
+94,1,ShowClip,E455,5,PuPOverlays,batsignal3.png,,1,,,,SetBG,0
+95,1,ShowClip2,E455,16,PuPVideos,Start_Movie.mp4,,1,,,,Loop,0
+98,1,ShowClip4,E455,17,PuPVideos,BatClimb.mp4,,1,,,,Loop,0
+102,1,ShowClip5,E455,18,PuPVideos,BatClimb2.mp4,,1,,,,Loop,0
+106,1,1-Screen,E457,5,PuPOverlays,batsignal.png,,1,,,,SetBG,0
+108,1,StartGame,E457,16,PuPVideos,Start_Movie.mp4,,1,,,,SetBG,0
+104,1,3-Screen,E458,5,PuPOverlays,batsignal3.png,,1,,,,SetBG,0
+110,1,TEST,E459,13,PuPVideos,Start_Movie.mp4,,1,,,,SetBG,0
