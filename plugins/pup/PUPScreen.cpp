@@ -297,6 +297,21 @@ void PUPScreen::SetSize(int w, int h)
    }
 }
 
+void PUPScreen::SetSizeWithViewport(int w, int h, int viewportX, int viewportY)
+{
+   assert(std::this_thread::get_id() == m_apiThread);
+   m_rect = m_pCustomPos ? m_pCustomPos->ScaledRect(w, h) : SDL_Rect { 0, 0, w, h };
+   // Apply viewport offset so that the crop origin maps to (0,0) in output
+   m_rect.x -= viewportX;
+   m_rect.y -= viewportY;
+   m_pMediaPlayerManager->SetBounds(m_rect);
+
+   for (auto pChildren : { &m_defaultChildren, &m_backChildren, &m_topChildren }) {
+      for (auto pScreen : *pChildren)
+          pScreen->SetSizeWithViewport(w, h, viewportX, viewportY);
+   }
+}
+
 void PUPScreen::SetCustomPos(const string& szCustomPos)
 {
    assert(std::this_thread::get_id() == m_apiThread);
@@ -418,21 +433,51 @@ bool PUPScreen::IsPlaying() {
    return m_pMediaPlayerManager->IsPlaying();
 }
 
-void PUPScreen::Render(VPXRenderContext2D* const ctx) {
+void PUPScreen::Render(VPXRenderContext2D* const ctx, bool skipBackground) {
    assert(std::this_thread::get_id() == m_apiThread);
+
+   // One-time diagnostic log for scoreview fallback rendering
+   static bool s_screenRenderLogged = false;
+   if (skipBackground && !s_screenRenderLogged)
+   {
+      s_screenRenderLogged = true;
+      LOGI("PUP SCREEN RENDER: screen=%d(%s) rect=(%d,%d,%d,%d) labels=%zu "
+         "backChildren=%zu defaultChildren=%zu topChildren=%zu "
+         "outputArea=(%.0f,%.0f) skipBg=%d customPos={%s}",
+         m_screenNum, m_screenDes.c_str(),
+         m_rect.x, m_rect.y, m_rect.w, m_rect.h,
+         m_labels.size(),
+         m_backChildren.size(), m_defaultChildren.size(), m_topChildren.size(),
+         ctx->srcWidth, ctx->srcHeight,
+         skipBackground ? 1 : 0,
+         m_pCustomPos ? m_pCustomPos->ToString().c_str() : "none");
+
+      // Also log all child screens
+      for (auto pChildren : { &m_backChildren, &m_defaultChildren, &m_topChildren }) {
+         for (const auto& pScreen : *pChildren) {
+            const auto& cp = pScreen->GetCustomPos();
+            LOGI("PUP CHILD SCREEN: parent=%d child=%d(%s) mode=%s rect=(%d,%d,%d,%d) customPos={%s}",
+               m_screenNum, pScreen->GetScreenNum(), pScreen->GetScreenDes().c_str(),
+               PUPScreen::ToString(pScreen->GetMode()).c_str(),
+               pScreen->GetRect().x, pScreen->GetRect().y, pScreen->GetRect().w, pScreen->GetRect().h,
+               cp ? cp->ToString().c_str() : "none");
+         }
+      }
+   }
+
    for (auto pScreen : m_backChildren)
       pScreen->Render(ctx);
 
    for (auto pScreen : m_defaultChildren)
       pScreen->Render(ctx);
 
-   m_background.Render(ctx, m_rect);
+   if (!skipBackground)
+      m_background.Render(ctx, m_rect);
    m_pMediaPlayerManager->Render(ctx);
-   // FIXME port SDL_SetRenderClipRect(m_pRenderer, &m_rect);
    for (PUPLabel* pLabel : m_labels)
       pLabel->Render(ctx, m_rect, m_pagenum);
-   // FIXME port SDL_SetRenderClipRect(m_pRenderer, NULL);
-   m_overlay.Render(ctx, m_rect);
+   if (!skipBackground)
+      m_overlay.Render(ctx, m_rect);
 
    for (auto pScreen : m_topChildren)
       pScreen->Render(ctx);
@@ -471,6 +516,66 @@ int PUPScreen::GetVideoWidth() const
 int PUPScreen::GetVideoHeight() const
 {
    return m_pMediaPlayerManager ? m_pMediaPlayerManager->GetVideoHeight() : 0;
+}
+
+bool PUPScreen::GetBackgroundDimensions(int& width, int& height) const
+{
+   return m_background.GetDimensions(width, height);
+}
+
+bool PUPScreen::GetFrameWindowArea(float& x, float& y, float& w, float& h) const
+{
+   return m_background.GetTransparentRegion(x, y, w, h);
+}
+
+bool PUPScreen::GetContentArea(float& cropX, float& cropY, float& cropW, float& cropH) const
+{
+   // Calculate the content area by finding the bounding box of non-full-area, active child screens.
+   // These sub-region children define where videos appear within the backglass frame.
+   // On Windows, the frame image masks everything outside these areas.
+   // For the Android scoreview, we crop to this area to match the Windows visible region.
+   float minX = 100.f, minY = 100.f, maxX = 0.f, maxY = 0.f;
+   bool found = false;
+
+   for (auto pChildren : { &m_defaultChildren, &m_backChildren, &m_topChildren }) {
+      for (const auto& pScreen : *pChildren) {
+         const auto& cp = pScreen->GetCustomPos();
+         if (!cp)
+            continue;
+
+         const SDL_FRect& r = cp->GetRect();
+
+         // Skip full-area children (they overlay the entire backglass, not a sub-region)
+         if (r.w >= 90.f && r.h >= 90.f)
+            continue;
+
+         // Skip inactive screens
+         if (pScreen->GetMode() == Mode::Off || pScreen->GetMode() == Mode::MusicOnly)
+            continue;
+
+         found = true;
+         minX = std::min(minX, r.x);
+         minY = std::min(minY, r.y);
+         maxX = std::max(maxX, r.x + r.w);
+         maxY = std::max(maxY, r.y + r.h);
+      }
+   }
+
+   if (!found)
+      return false;
+
+   // Add 1% padding on each side
+   const float pad = 1.f;
+   cropX = std::max(0.f, minX - pad) / 100.f;
+   cropY = std::max(0.f, minY - pad) / 100.f;
+   float right = std::min(100.f, maxX + pad) / 100.f;
+   float bottom = std::min(100.f, maxY + pad) / 100.f;
+   cropW = right - cropX;
+   cropH = bottom - cropY;
+
+   LOGI("Content area: cropX=%.1f%%, cropY=%.1f%%, cropW=%.1f%%, cropH=%.1f%% (from children bounding box)",
+      cropX * 100.f, cropY * 100.f, cropW * 100.f, cropH * 100.f);
+   return true;
 }
 
 }

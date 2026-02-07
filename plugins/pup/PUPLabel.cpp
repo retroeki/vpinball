@@ -381,6 +381,7 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
       || (m_szPath.empty() && fontColor != m_renderState.m_prerenderedColor))
    {
       m_dirty = false;
+      m_positionLogged = false; // Re-log position on next render after content/position change
       if (!m_szPath.empty())
          m_pendingTextureUpdate = std::async(std::launch::async, [this]() {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -430,17 +431,55 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
 
    SDL_FRect dest = { static_cast<float>(rect.x), static_cast<float>(rect.y), width, height };
 
-   dest.x += static_cast<float>(rect.w) * (m_xPos == 0.f ? 0.5f : (m_xPos / 100.0f));
+   // When pos% is 0 (default/unset), use alignment-natural position:
+   // LEFT/TOP → 0%, CENTER → 50%, RIGHT/BOTTOM → 100%
+   float xFactor;
+   if (m_xPos == 0.f)
+      xFactor = (m_xAlign == PUP_LABEL_XALIGN_LEFT) ? 0.f : (m_xAlign == PUP_LABEL_XALIGN_CENTER) ? 0.5f : 1.f;
+   else
+      xFactor = m_xPos / 100.0f;
+
+   float yFactor;
+   if (m_yPos == 0.f)
+      yFactor = (m_yAlign == PUP_LABEL_YALIGN_TOP) ? 0.f : (m_yAlign == PUP_LABEL_YALIGN_CENTER) ? 0.5f : 1.f;
+   else
+      yFactor = m_yPos / 100.0f;
+
+   dest.x += static_cast<float>(rect.w) * xFactor;
    if (m_xAlign == PUP_LABEL_XALIGN_CENTER)
       dest.x -= (width / 2.f);
    else if (m_xAlign == PUP_LABEL_XALIGN_RIGHT)
       dest.x -= width;
 
-   dest.y += static_cast<float>(rect.h) * (m_yPos == 0.f ? 0.5f : (m_yPos / 100.0f));
+   dest.y += static_cast<float>(rect.h) * yFactor;
    if (m_yAlign == PUP_LABEL_YALIGN_CENTER)
       dest.y -= (height / 2.f);
    else if (m_yAlign == PUP_LABEL_YALIGN_BOTTOM)
       dest.y -= height;
+
+   // Non-repeating diagnostic log: fires once per label, resets when content/position changes (m_dirty)
+   if (!m_positionLogged)
+   {
+      const char* typeStr = (m_type == PUP_LABEL_TYPE_TEXT) ? "TEXT" : (m_type == PUP_LABEL_TYPE_IMAGE) ? "IMAGE" : "GIF";
+      const char* xAlignStr = (m_xAlign == PUP_LABEL_XALIGN_LEFT) ? "LEFT" : (m_xAlign == PUP_LABEL_XALIGN_CENTER) ? "CENTER" : "RIGHT";
+      const char* yAlignStr = (m_yAlign == PUP_LABEL_YALIGN_TOP) ? "TOP" : (m_yAlign == PUP_LABEL_YALIGN_CENTER) ? "CENTER" : "BOTTOM";
+      LOGI("PUP LABEL POS: screen=%d(%s) name='%s' type=%s caption='%s' path='%s' "
+         "pos%%=(%.1f,%.1f) align=(%s,%s) imgSize%%=(%.1f,%.1f) fontSize%%=%.1f "
+         "screenRect=(%d,%d,%d,%d) dest=(%.1f,%.1f,%.1f,%.1f) "
+         "outputArea=(%.0f,%.0f) page=%d",
+         m_pScreen ? m_pScreen->GetScreenNum() : -1,
+         m_pScreen ? m_pScreen->GetScreenDes().c_str() : "?",
+         m_szName.c_str(), typeStr,
+         m_szCaption.substr(0, 60).c_str(),
+         m_szPath.substr(0, 80).c_str(),
+         m_xPos, m_yPos, xAlignStr, yAlignStr,
+         m_imageWidth, m_imageHeight, m_size,
+         rect.x, rect.y, rect.w, rect.h,
+         dest.x, dest.y, dest.w, dest.h,
+         ctx->srcWidth, ctx->srcHeight,
+         m_pagenum);
+      m_positionLogged = true;
+   }
 
    if (m_animation)
    {
@@ -452,10 +491,40 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
    }
 
    VPXTextureInfo* texInfo = GetTextureInfo(m_renderState.m_pTexture);
+
+   // Clip dest rect to screen bounds, clamped to output area (prevents overflow with viewport offsets)
+   const float clipL = (rect.x < 0) ? 0.f : static_cast<float>(rect.x);
+   const float clipT = (rect.y < 0) ? 0.f : static_cast<float>(rect.y);
+   const float clipR = (static_cast<float>(rect.x + rect.w) > ctx->srcWidth) ? ctx->srcWidth : static_cast<float>(rect.x + rect.w);
+   const float clipB = (static_cast<float>(rect.y + rect.h) > ctx->srcHeight) ? ctx->srcHeight : static_cast<float>(rect.y + rect.h);
+
+   const float origL = dest.x;
+   const float origT = dest.y;
+   const float origR = dest.x + dest.w;
+   const float origB = dest.y + dest.h;
+
+   if (origR <= clipL || origL >= clipR || origB <= clipT || origT >= clipB)
+      return; // Fully outside screen bounds
+
+   const float newL = (origL < clipL) ? clipL : origL;
+   const float newT = (origT < clipT) ? clipT : origT;
+   const float newR = (origR > clipR) ? clipR : origR;
+   const float newB = (origB > clipB) ? clipB : origB;
+
+   // Adjust texture coordinates for the clipped region
+   const float texW = static_cast<float>(texInfo->width);
+   const float texH = static_cast<float>(texInfo->height);
+   const float invW = 1.f / (origR - origL);
+   const float invH = 1.f / (origB - origT);
+   const float clippedTexX = (newL - origL) * invW * texW;
+   const float clippedTexY = (newT - origT) * invH * texH;
+   const float clippedTexW = (newR - newL) * invW * texW;
+   const float clippedTexH = (newB - newT) * invH * texH;
+
    ctx->DrawImage(ctx, m_renderState.m_pTexture, 1.f, 1.f, 1.f, 1.f,
-      0.f, 0.f, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height), 
+      clippedTexX, clippedTexY, clippedTexW, clippedTexH,
       0.f, 0.f, -m_angle, // FIXME compute center (used to be SDL_FPoint center = { height / 2.0f, 0 };)
-      dest.x, dest.y, dest.w, dest.h);
+      newL, newT, newR - newL, newB - newT);
 }
 
 PUPLabel::RenderState PUPLabel::UpdateImageTexture(PUP_LABEL_TYPE type, const string& szPath)

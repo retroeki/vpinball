@@ -655,15 +655,9 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
    case VPXWindowId::VPXWINDOW_Topper: screen = me->GetScreen(0); break;
    case VPXWindowId::VPXWINDOW_Backglass: screen = me->GetScreen(2); break;
    case VPXWindowId::VPXWINDOW_ScoreView:
-      screen = me->GetScreen(1); // Use screen 1 (DMD) - most PUP packs use this
-      // Fallback: if screen 1 is Off, try screen 2 (Backglass) which is the composite parent
-      // Screen 5 (FullDMD) is typically an empty child of screen 2, so screen 2 is the better fallback
+      screen = me->GetScreen(1); // Screen 1 (DMD)
       if (screen == nullptr || screen->GetMode() == PUPScreen::Mode::Off)
-      {
-         auto fallback = me->GetScreen(2);
-         if (fallback != nullptr && fallback->GetMode() != PUPScreen::Mode::Off)
-            screen = fallback;
-      }
+         screen = me->GetScreen(2, false); // Screen 2 (Backglass) — has videos + FullDMD labels as children
       break;
    default: break;
    }
@@ -677,21 +671,31 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
    if (!LibAV::LibAV::GetInstance().isLoaded)
       return false;
 
-   // srcWidth/srcHeight must match outWidth/outHeight for coordinate normalization
-   renderCtx->srcWidth = renderCtx->outWidth;
-   renderCtx->srcHeight = renderCtx->outHeight;
+   const float outWidth = renderCtx->outWidth;
+   const float outHeight = renderCtx->outHeight;
 
-   // Store video source dimensions for aspect ratio queries (ScoreView only)
-   if (renderCtx->window == VPXWindowId::VPXWINDOW_ScoreView)
    {
-      int videoWidth = screen->GetVideoWidth();
-      int videoHeight = screen->GetVideoHeight();
-      if (videoWidth > 0 && videoHeight > 0)
-         SetPUPVideoSourceSize(videoWidth, videoHeight);
+      renderCtx->srcWidth = outWidth;
+      renderCtx->srcHeight = outHeight;
+
+      bool isScoreView = (renderCtx->window == VPXWindowId::VPXWINDOW_ScoreView);
+
+      // Report source dimensions for ScoreView aspect ratio
+      if (isScoreView)
+      {
+         int w = screen->GetVideoWidth();
+         int h = screen->GetVideoHeight();
+         if (w <= 0 || h <= 0)
+            screen->GetBackgroundDimensions(w, h);
+         if (w > 0 && h > 0)
+            SetPUPVideoSourceSize(w, h);
+      }
+
+      screen->SetSize(static_cast<int>(outWidth), static_cast<int>(outHeight));
+      // Skip background frame image when rendering backglass as scoreview
+      screen->Render(renderCtx, isScoreView && screen->GetScreenNum() == 2);
    }
 
-   screen->SetSize(static_cast<int>(renderCtx->outWidth), static_cast<int>(renderCtx->outHeight));
-   screen->Render(renderCtx);
    return true;
 }
 

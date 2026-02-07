@@ -14,6 +14,7 @@ public:
    static std::unique_ptr<PUPCustomPos> CreateFromCSV(const string& line);
 
    int GetSourceScreen() const { return m_sourceScreen; }
+   const SDL_FRect& GetRect() const { return m_frect; }
    SDL_Rect ScaledRect(int w, int h) const;
    string ToString() const;
 

@@ -56,6 +56,7 @@ public:
    const std::unique_ptr<PUPCustomPos>& GetCustomPos() const { return m_pCustomPos; }
    void SetCustomPos(const string& szCustomPos);
    void SetSize(int w, int h);
+   void SetSizeWithViewport(int w, int h, int viewportX, int viewportY);
 
    void AddChild(std::shared_ptr<PUPScreen> pScreen);
    void SendToFront();
@@ -91,9 +92,12 @@ public:
    bool IsPlaying();
 
    const SDL_Rect& GetRect() const { return m_rect; }
-   void Render(VPXRenderContext2D* const ctx);
+   void Render(VPXRenderContext2D* const ctx, bool skipBackground = false);
    int GetVideoWidth() const;
    int GetVideoHeight() const;
+   bool GetBackgroundDimensions(int& width, int& height) const;
+   bool GetFrameWindowArea(float& x, float& y, float& w, float& h) const;
+   bool GetContentArea(float& cropX, float& cropY, float& cropW, float& cropH) const;
 
    static const string& ToString(Mode mode);
 
