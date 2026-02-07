@@ -315,8 +315,9 @@ void PUPPinDisplay::SendMSG(const string& szMsg)
                         break;
                      case 15:
                         // set screen custompos { 'mt':301, 'SN':15,'FN':15,'CP':'parent_screen,x,y,w,h'} CP = CustomPos String, coordinates relative in %
-                        LOGD("Set screen custompos requested: screen={%s}, fn=%d, szMsg=%s",pScreen->ToString(false).c_str(), fn, szMsg.c_str());
-                        pScreen->SetCustomPos(json["CP"s].as_str());
+                        // Ignore dynamic CustomPos changes - on Android scoreview there's no backglass frame
+                        // to mask sub-regions, so repositioning causes visible size changes mid-game
+                        LOGI("Ignoring SetCustomPos: screen={%s}, fn=%d, szMsg=%s",pScreen->ToString(false).c_str(), fn, szMsg.c_str());
                         break;
                      case 16:
                         // start executable

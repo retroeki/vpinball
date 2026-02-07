@@ -523,7 +523,7 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
 
    ctx->DrawImage(ctx, m_renderState.m_pTexture, 1.f, 1.f, 1.f, 1.f,
       clippedTexX, clippedTexY, clippedTexW, clippedTexH,
-      0.f, 0.f, -m_angle, // FIXME compute center (used to be SDL_FPoint center = { height / 2.0f, 0 };)
+      0.f, 0.f, m_angle,
       newL, newT, newR - newL, newB - newT);
 }
 

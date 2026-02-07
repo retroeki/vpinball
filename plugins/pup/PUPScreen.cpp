@@ -297,6 +297,18 @@ void PUPScreen::SetSize(int w, int h)
    }
 }
 
+void PUPScreen::SetFullSize(int w, int h)
+{
+   assert(std::this_thread::get_id() == m_apiThread);
+   m_rect = { 0, 0, w, h };
+   m_pMediaPlayerManager->SetBounds(m_rect);
+
+   for (auto pChildren : { &m_defaultChildren, &m_backChildren, &m_topChildren }) {
+      for (auto pScreen : *pChildren)
+          pScreen->SetFullSize(w, h);
+   }
+}
+
 void PUPScreen::SetSizeWithViewport(int w, int h, int viewportX, int viewportY)
 {
    assert(std::this_thread::get_id() == m_apiThread);

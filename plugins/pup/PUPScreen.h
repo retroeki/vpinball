@@ -56,6 +56,7 @@ public:
    const std::unique_ptr<PUPCustomPos>& GetCustomPos() const { return m_pCustomPos; }
    void SetCustomPos(const string& szCustomPos);
    void SetSize(int w, int h);
+   void SetFullSize(int w, int h);
    void SetSizeWithViewport(int w, int h, int viewportX, int viewportY);
 
    void AddChild(std::shared_ptr<PUPScreen> pScreen);
