@@ -166,6 +166,7 @@ private:
    };
 
    bool m_dirty = true;
+   bool m_positionLogged = false;
    std::unique_ptr<Animation> m_animation;
    RenderState m_renderState;
    int m_animationFrame = 0;

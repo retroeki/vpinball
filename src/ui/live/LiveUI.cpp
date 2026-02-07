@@ -549,6 +549,9 @@ void LiveUI::HideUI()
 
 bool LiveUI::ProposeInputLayout(const string &deviceName, const std::function<void(bool, bool)> &handler)
 {
+   // RETROEKI: Disabled controller detector dialog - we hardcode our own controls
+   return false;
+
    if (!m_deviceLayoutName.empty())
       return false;
    m_deviceLayoutName = deviceName;

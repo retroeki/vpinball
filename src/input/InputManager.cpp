@@ -43,6 +43,8 @@ InputManager::InputManager()
       SDL_free(touchDevices);
    auto addTouchRegion = [this](const RECT& region, unsigned int actionId) { m_touchRegionMap.emplace_back(region, actionId, m_inputActions[actionId]->NewDirectStateSlot()); };
    // RECT definition is left, top, right, bottom in % of screen
+   // RETROEKI: Disabled all touch zones - we use our own controls
+   /*
    addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
    addTouchRegion(RECT { 50, 0, 100, 10 }, GetExitInteractiveActionId());
    addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
@@ -54,6 +56,7 @@ InputManager::InputManager()
    addTouchRegion(RECT { 70, 60, 100, 90 }, GetRightFlipperActionId());
    addTouchRegion(RECT { 0, 90, 30, 100 }, GetStartActionId());
    addTouchRegion(RECT { 70, 90, 100, 100 }, GetLaunchBallActionId());
+   */
 
    // Analog sensors for plunger and nudge
    for (int i = 0; i < 2; i++)

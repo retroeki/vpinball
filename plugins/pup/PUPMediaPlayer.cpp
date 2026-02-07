@@ -339,12 +339,37 @@ void PUPMediaPlayer::Render(VPXRenderContext2D* const ctx, const SDL_Rect& destR
       }
    }
 
-   // Render image
+   // Render image (clip to output area to prevent overflow when viewport offsets are applied)
    if (m_videoTexture)
    {
       VPXTextureInfo* texInfo = GetTextureInfo(m_videoTexture);
-      ctx->DrawImage(ctx, m_videoTexture, 1.f, 1.f, 1.f, 1.f, 0.f, 0.f, static_cast<float>(texInfo->width), static_cast<float>(texInfo->height), 0.f, 0.f, 0.f,
-         static_cast<float>(destRect.x), static_cast<float>(destRect.y), static_cast<float>(destRect.w), static_cast<float>(destRect.h));
+
+      const float dstL = static_cast<float>(destRect.x);
+      const float dstT = static_cast<float>(destRect.y);
+      const float dstR = static_cast<float>(destRect.x + destRect.w);
+      const float dstB = static_cast<float>(destRect.y + destRect.h);
+
+      const float clipL = (dstL < 0.f) ? 0.f : dstL;
+      const float clipT = (dstT < 0.f) ? 0.f : dstT;
+      const float clipR = (dstR > ctx->srcWidth) ? ctx->srcWidth : dstR;
+      const float clipB = (dstB > ctx->srcHeight) ? ctx->srcHeight : dstB;
+
+      if (clipL >= clipR || clipT >= clipB)
+         return; // Fully outside output area
+
+      const float texW = static_cast<float>(texInfo->width);
+      const float texH = static_cast<float>(texInfo->height);
+      const float invW = 1.f / (dstR - dstL);
+      const float invH = 1.f / (dstB - dstT);
+      const float clippedTexX = (clipL - dstL) * invW * texW;
+      const float clippedTexY = (clipT - dstT) * invH * texH;
+      const float clippedTexW = (clipR - clipL) * invW * texW;
+      const float clippedTexH = (clipB - clipT) * invH * texH;
+
+      ctx->DrawImage(ctx, m_videoTexture, 1.f, 1.f, 1.f, 1.f,
+         clippedTexX, clippedTexY, clippedTexW, clippedTexH,
+         0.f, 0.f, 0.f,
+         clipL, clipT, clipR - clipL, clipB - clipT);
    }
 }
 
