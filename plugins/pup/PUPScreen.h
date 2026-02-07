@@ -61,6 +61,7 @@ public:
 
    void AddChild(std::shared_ptr<PUPScreen> pScreen);
    void SendToFront();
+   int GetChildCount() const { return static_cast<int>(m_defaultChildren.size() + m_backChildren.size() + m_topChildren.size()); }
 
    void AddTrigger(PUPTrigger* pTrigger);
    vector<PUPTrigger*>* GetTriggers(const string& szTrigger);

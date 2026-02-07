@@ -477,22 +477,42 @@ void PUPScreen::Render(VPXRenderContext2D* const ctx, bool skipBackground) {
       }
    }
 
-   for (auto pScreen : m_defaultChildren)
-      pScreen->Render(ctx);
+   if (skipBackground) {
+      // ScoreView mode: render parent video as backdrop, then all children on top
+      // On desktop, children are separate sub-windows with z-ordering handled by the OS.
+      // On Android scoreview, we composite everything onto a single surface, so the
+      // parent's video must render first as the backdrop, then children overlay it.
+      m_pMediaPlayerManager->Render(ctx);
 
-   for (auto pScreen : m_backChildren)
-      pScreen->Render(ctx);
+      for (auto pScreen : m_defaultChildren)
+         pScreen->Render(ctx);
 
-   if (!skipBackground)
+      for (auto pScreen : m_backChildren)
+         pScreen->Render(ctx);
+
+      for (PUPLabel* pLabel : m_labels)
+         pLabel->Render(ctx, m_rect, m_pagenum);
+
+      for (auto pScreen : m_topChildren)
+         pScreen->Render(ctx);
+   }
+   else {
+      // Desktop mode: standard PUP render order
+      for (auto pScreen : m_defaultChildren)
+         pScreen->Render(ctx);
+
+      for (auto pScreen : m_backChildren)
+         pScreen->Render(ctx);
+
       m_background.Render(ctx, m_rect);
-   m_pMediaPlayerManager->Render(ctx);
-   if (!skipBackground)
+      m_pMediaPlayerManager->Render(ctx);
       m_overlay.Render(ctx, m_rect);
-   for (PUPLabel* pLabel : m_labels)
-      pLabel->Render(ctx, m_rect, m_pagenum);
+      for (PUPLabel* pLabel : m_labels)
+         pLabel->Render(ctx, m_rect, m_pagenum);
 
-   for (auto pScreen : m_topChildren)
-      pScreen->Render(ctx);
+      for (auto pScreen : m_topChildren)
+         pScreen->Render(ctx);
+   }
 }
 
 string PUPScreen::ToString(bool full) const

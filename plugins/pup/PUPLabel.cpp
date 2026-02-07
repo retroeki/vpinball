@@ -493,23 +493,34 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
    VPXTextureInfo* texInfo = GetTextureInfo(m_renderState.m_pTexture);
 
    // Don't clip labels to screen rect boundaries - labels can extend past the screen
-   // edge (e.g. pos% > 100). Let the GPU/viewport handle natural clipping.
-   // Only do a basic visibility check.
+   // edge (e.g. pos% > 100). But DO clip to the output area to prevent overflow beyond
+   // the scoreview surface.
    const float origL = dest.x;
    const float origT = dest.y;
    const float origR = dest.x + dest.w;
    const float origB = dest.y + dest.h;
 
-   if (origR <= 0.f || origL >= ctx->srcWidth || origB <= 0.f || origT >= ctx->srcHeight)
+   const float clipL = (origL < 0.f) ? 0.f : origL;
+   const float clipT = (origT < 0.f) ? 0.f : origT;
+   const float clipR = (origR > ctx->srcWidth) ? ctx->srcWidth : origR;
+   const float clipB = (origB > ctx->srcHeight) ? ctx->srcHeight : origB;
+
+   if (clipL >= clipR || clipT >= clipB)
       return; // Fully outside output area
 
    const float texW = static_cast<float>(texInfo->width);
    const float texH = static_cast<float>(texInfo->height);
+   const float invW = 1.f / (origR - origL);
+   const float invH = 1.f / (origB - origT);
+   const float clippedTexX = (clipL - origL) * invW * texW;
+   const float clippedTexY = (clipT - origT) * invH * texH;
+   const float clippedTexW = (clipR - clipL) * invW * texW;
+   const float clippedTexH = (clipB - clipT) * invH * texH;
 
    ctx->DrawImage(ctx, m_renderState.m_pTexture, 1.f, 1.f, 1.f, 1.f,
-      0.f, 0.f, texW, texH,
+      clippedTexX, clippedTexY, clippedTexW, clippedTexH,
       0.f, 0.f, m_angle,
-      origL, origT, origR - origL, origB - origT);
+      clipL, clipT, clipR - clipL, clipB - clipT);
 }
 
 PUPLabel::RenderState PUPLabel::UpdateImageTexture(PUP_LABEL_TYPE type, const string& szPath)

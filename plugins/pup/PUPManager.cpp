@@ -140,15 +140,60 @@ void PUPManager::LoadConfig(const string& szRomName)
       LOGI("No screens.pup file found");
    }
 
+   // Determine which screen to use for scoreview
+   DetermineScoreViewScreen();
+
    // Queue initial event
    LOGI("Queueing initial D0 trigger");
    QueueTriggerData({ 'D', 0, 1 });
+}
+
+void PUPManager::DetermineScoreViewScreen()
+{
+   // Screen 1 (DMD) is the primary scoreview screen if active
+   auto screen1 = GetScreen(PUP_SCREEN_DMD);
+   if (screen1 && screen1->GetMode() != PUPScreen::Mode::Off && screen1->GetMode() != PUPScreen::Mode::MusicOnly) {
+      m_scoreViewScreenNum = PUP_SCREEN_DMD;
+      LOGI("ScoreView screen: %d (%s) - DMD active", m_scoreViewScreenNum, screen1->GetScreenDes().c_str());
+      return;
+   }
+
+   // Screen 1 is Off/MusicOnly — pick the root screen (2 or 5) with the most children
+   // That's the composite display the table author built their visual layout around
+   struct Candidate { int screenNum; std::shared_ptr<PUPScreen> screen; };
+   Candidate candidates[] = {
+      { PUP_SCREEN_FULLDMD, GetScreen(PUP_SCREEN_FULLDMD) },
+      { PUP_SCREEN_BACKGLASS, GetScreen(PUP_SCREEN_BACKGLASS) },
+   };
+
+   int bestScreenNum = -1;
+   int bestChildCount = -1;
+   for (auto& c : candidates) {
+      if (!c.screen || c.screen->GetMode() == PUPScreen::Mode::Off || c.screen->GetMode() == PUPScreen::Mode::MusicOnly)
+         continue;
+      int childCount = c.screen->GetChildCount();
+      if (childCount > bestChildCount) {
+         bestChildCount = childCount;
+         bestScreenNum = c.screenNum;
+      }
+   }
+
+   if (bestScreenNum >= 0) {
+      m_scoreViewScreenNum = bestScreenNum;
+      auto screen = GetScreen(bestScreenNum);
+      LOGI("ScoreView screen: %d (%s) - %d children", m_scoreViewScreenNum, screen->GetScreenDes().c_str(), bestChildCount);
+   }
+   else {
+      LOGW("ScoreView screen: none found");
+      m_scoreViewScreenNum = -1;
+   }
 }
 
 void PUPManager::Unload()
 {
    Stop();
 
+   m_scoreViewScreenNum = -1;
    m_screenMap.clear();
 
    UnloadFonts();
@@ -655,9 +700,8 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
    case VPXWindowId::VPXWINDOW_Topper: screen = me->GetScreen(0); break;
    case VPXWindowId::VPXWINDOW_Backglass: screen = me->GetScreen(2); break;
    case VPXWindowId::VPXWINDOW_ScoreView:
-      screen = me->GetScreen(1); // Screen 1 (DMD)
-      if (screen == nullptr || screen->GetMode() == PUPScreen::Mode::Off)
-         screen = me->GetScreen(2, false); // Screen 2 (Backglass) — has videos + FullDMD labels as children
+      if (me->m_scoreViewScreenNum >= 0)
+         screen = me->GetScreen(me->m_scoreViewScreenNum);
       break;
    default: break;
    }
@@ -692,8 +736,8 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
       }
 
       screen->SetSize(static_cast<int>(outWidth), static_cast<int>(outHeight));
-      // Skip background frame image when rendering backglass as scoreview
-      screen->Render(renderCtx, isScoreView && screen->GetScreenNum() == 2);
+      // Skip background/overlay frame images when rendering as scoreview (they're decorative frames for desktop windows)
+      screen->Render(renderCtx, isScoreView && screen->GetScreenNum() != PUP_SCREEN_DMD);
    }
 
    return true;

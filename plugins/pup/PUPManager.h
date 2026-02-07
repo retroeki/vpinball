@@ -94,6 +94,7 @@ private:
    void UnloadFonts();
    void LoadFonts();
    void LoadPlaylists();
+   void DetermineScoreViewScreen();
    void Start();
    void Stop();
 
@@ -109,6 +110,7 @@ private:
    bool m_isRunning = false;
    std::thread m_thread;
    vector<PUPPlaylist*> m_playlists;
+   int m_scoreViewScreenNum = -1;
 
    const MsgPluginAPI* const m_msgApi;
    const uint32_t m_endpointId;
