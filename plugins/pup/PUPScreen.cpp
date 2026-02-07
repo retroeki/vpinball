@@ -465,10 +465,10 @@ void PUPScreen::Render(VPXRenderContext2D* const ctx, bool skipBackground) {
       }
    }
 
-   for (auto pScreen : m_backChildren)
+   for (auto pScreen : m_defaultChildren)
       pScreen->Render(ctx);
 
-   for (auto pScreen : m_defaultChildren)
+   for (auto pScreen : m_backChildren)
       pScreen->Render(ctx);
 
    if (!skipBackground)
