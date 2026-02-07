@@ -492,39 +492,24 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
 
    VPXTextureInfo* texInfo = GetTextureInfo(m_renderState.m_pTexture);
 
-   // Clip dest rect to screen bounds, clamped to output area (prevents overflow with viewport offsets)
-   const float clipL = (rect.x < 0) ? 0.f : static_cast<float>(rect.x);
-   const float clipT = (rect.y < 0) ? 0.f : static_cast<float>(rect.y);
-   const float clipR = (static_cast<float>(rect.x + rect.w) > ctx->srcWidth) ? ctx->srcWidth : static_cast<float>(rect.x + rect.w);
-   const float clipB = (static_cast<float>(rect.y + rect.h) > ctx->srcHeight) ? ctx->srcHeight : static_cast<float>(rect.y + rect.h);
-
+   // Don't clip labels to screen rect boundaries - labels can extend past the screen
+   // edge (e.g. pos% > 100). Let the GPU/viewport handle natural clipping.
+   // Only do a basic visibility check.
    const float origL = dest.x;
    const float origT = dest.y;
    const float origR = dest.x + dest.w;
    const float origB = dest.y + dest.h;
 
-   if (origR <= clipL || origL >= clipR || origB <= clipT || origT >= clipB)
-      return; // Fully outside screen bounds
+   if (origR <= 0.f || origL >= ctx->srcWidth || origB <= 0.f || origT >= ctx->srcHeight)
+      return; // Fully outside output area
 
-   const float newL = (origL < clipL) ? clipL : origL;
-   const float newT = (origT < clipT) ? clipT : origT;
-   const float newR = (origR > clipR) ? clipR : origR;
-   const float newB = (origB > clipB) ? clipB : origB;
-
-   // Adjust texture coordinates for the clipped region
    const float texW = static_cast<float>(texInfo->width);
    const float texH = static_cast<float>(texInfo->height);
-   const float invW = 1.f / (origR - origL);
-   const float invH = 1.f / (origB - origT);
-   const float clippedTexX = (newL - origL) * invW * texW;
-   const float clippedTexY = (newT - origT) * invH * texH;
-   const float clippedTexW = (newR - newL) * invW * texW;
-   const float clippedTexH = (newB - newT) * invH * texH;
 
    ctx->DrawImage(ctx, m_renderState.m_pTexture, 1.f, 1.f, 1.f, 1.f,
-      clippedTexX, clippedTexY, clippedTexW, clippedTexH,
+      0.f, 0.f, texW, texH,
       0.f, 0.f, m_angle,
-      newL, newT, newR - newL, newB - newT);
+      origL, origT, origR - origL, origB - origT);
 }
 
 PUPLabel::RenderState PUPLabel::UpdateImageTexture(PUP_LABEL_TYPE type, const string& szPath)
