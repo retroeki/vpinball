@@ -91,6 +91,9 @@ private:
 
     // Inline statements: REMOVED - Wine parser now handles these patterns natively
 
+    // GetRef(name)(args) chained call - Wine parser )( limitation
+    static std::string PatchGetRefCall(const std::string& script);
+
     // Multi-dimensional array access Array(x)(y)
     static std::string Patch2DArrayAccess(const std::string& script);
 

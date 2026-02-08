@@ -104,6 +104,17 @@
  *    - The second call corrupts flipper callback state in Wine VBScript
  *    - Fix: Comment out all but the first vpmInit Me occurrence
  *
+ * 9. DARK CHAOS (Apophis 2025) 2.0 - GetRef(name)(args) REGRESSION (February 2026)
+ *    GetRef returns a function reference, and (args) invokes it. Wine's parser
+ *    fails on the )( between them. Patch2DArrayAccess incorrectly wrapped these
+ *    as ssp_idx(GetRef(name), args) which fails as a standalone statement because
+ *    VBScript forbids func(a, b) syntax at statement level without Call keyword.
+ *    Also, many GetRef patterns with nested args (e.g., GetRef(cb)(Array(x,y)))
+ *    weren't matched by the regex at all, leaving raw )( for Wine.
+ *    Fix (PatchGetRefCall): Split into temp variable (runs before Patch2DArrayAccess):
+ *      GetRef(name)(args) → Set ssp_ref = GetRef(name) : ssp_ref(args)
+ *    CAVEAT: Patch2DArrayAccess must also skip GetRef to avoid double-patching.
+ *
  * Tables fixed in this session:
  * - Rollercoaster Tycoon (Stern 2002) - For Each, RenderingMode, TestVRonDT
  * - WoZ (Original 2018) - B2SSetData in multiple contexts
@@ -113,6 +124,7 @@
  * - Game of Thrones LE (Stern 2015) VPW 1.2 - (new Class)(args), arr(x)(y),
  *   SubName (expr)+rest, (Not func)(arg) - all "Missing comma" parser failures
  * - Back to the Future (Data East 1990) - duplicate vpmInit Me breaks flippers
+ * - Dark Chaos (Apophis 2025) 2.0 - GetRef(name)(args) regression from GOT fix
  * =============================================================================
  */
 
@@ -395,11 +407,20 @@ std::string SimpleScriptPatcher::PatchNewClassCall(const std::string& script) {
     static const RE2 p(R"((?im)^([ \t]*)(Set\s+\w+\s*=\s*)\(new\s+(\w+)\)\(([^)\r\n]*)\)\s*(?:'[^\r\n]*)?\r?$)");
 
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
-        count++;
         std::string indent = m[1];
         std::string setVarEq = m[2];  // "Set DT7 = " etc.
         std::string className = m[3]; // "DropTarget"
         std::string args = m[4];      // "target7, target7a, ..."
+
+        // Skip when args are empty: (new Class)() is just object creation with
+        // grouping parens, NOT a default member call. Wine handles this fine.
+        // Transforming to ssp_newobj() would incorrectly call a default member
+        // that may not exist, breaking object initialization.
+        if (args.empty() || args.find_first_not_of(" \t") == std::string::npos) {
+            return std::string(m[0]);  // Return unchanged
+        }
+
+        count++;
         PLOGI.printf("PatchNewClassCall: (new %s)(%s) -> temp var",
             className.c_str(), args.substr(0, 50).c_str());
         return indent + "Set ssp_newobj = new " + className + " : " +
@@ -583,6 +604,154 @@ std::string SimpleScriptPatcher::PatchGlfBooleanArray(const std::string& script)
 // =============================================================================
 
 // =============================================================================
+// GetRef Call: GetRef(name)(args) fails in Wine VBScript parser
+// Wine's parser treats )( as "Missing comma". This is distinct from arr(x)(y)
+// because GetRef returns a function reference and (args) invokes it.
+// Additionally, ssp_idx(GetRef(...), args) fails when used as a standalone
+// statement because VBScript forbids func(a, b) syntax at statement level.
+// Fix: Split into temp variable + call to avoid )( pattern:
+//   GetRef(name)(args)       → Set ssp_ref = GetRef(name) : ssp_ref(args)
+//   x = GetRef(name)(args)   → Set ssp_ref = GetRef(name) : x = ssp_ref(args)
+//   Set x = GetRef(n)(args)  → Set ssp_ref = GetRef(n) : Set x = ssp_ref(args)
+// Uses balanced parenthesis tracking to handle arbitrary nesting depth in args.
+// Must run BEFORE Patch2DArrayAccess to prevent incorrect ssp_idx wrapping.
+// =============================================================================
+std::string SimpleScriptPatcher::PatchGetRefCall(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Quick check - no )( means no chained calls to fix
+    if (r.find(")(") == std::string::npos)
+        return r;
+
+    // Also need GetRef somewhere in the script (case-insensitive)
+    bool hasGetRef = false;
+    for (size_t i = 0; i + 5 < r.size() && !hasGetRef; i++) {
+        if (tolower(r[i]) == 'g' && tolower(r[i+1]) == 'e' && tolower(r[i+2]) == 't' &&
+            tolower(r[i+3]) == 'r' && tolower(r[i+4]) == 'e' && tolower(r[i+5]) == 'f') {
+            hasGetRef = true;
+        }
+    }
+    if (!hasGetRef)
+        return r;
+
+    // Process line by line
+    std::string result;
+    result.reserve(r.size() + 2048);
+    size_t lineStart = 0;
+
+    while (lineStart < r.size()) {
+        size_t lineEnd = r.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = r.size();
+        std::string line = r.substr(lineStart, lineEnd - lineStart);
+
+        // Skip comment lines
+        size_t firstNonSpace = line.find_first_not_of(" \t");
+        if (firstNonSpace == std::string::npos || line[firstNonSpace] == '\'') {
+            result += line;
+            if (lineEnd < r.size()) result += '\n';
+            lineStart = lineEnd + 1;
+            continue;
+        }
+
+        // Search for GetRef(...)(...) pattern using balanced paren tracking
+        size_t searchPos = 0;
+        while (searchPos + 5 < line.size()) {
+            // Find "GetRef" case-insensitive
+            size_t grPos = std::string::npos;
+            for (size_t i = searchPos; i + 5 < line.size(); i++) {
+                if (tolower(line[i]) == 'g' && tolower(line[i+1]) == 'e' &&
+                    tolower(line[i+2]) == 't' && tolower(line[i+3]) == 'r' &&
+                    tolower(line[i+4]) == 'e' && tolower(line[i+5]) == 'f') {
+                    // Check word boundaries
+                    if (i > 0 && (isalnum(line[i-1]) || line[i-1] == '_'))
+                        continue;
+                    if (i + 6 < line.size() && (isalnum(line[i+6]) || line[i+6] == '_'))
+                        continue;
+                    grPos = i;
+                    break;
+                }
+            }
+            if (grPos == std::string::npos)
+                break;
+
+            size_t afterGetRef = grPos + 6;
+            if (afterGetRef >= line.size() || line[afterGetRef] != '(') {
+                searchPos = afterGetRef;
+                continue;
+            }
+
+            // Find matching ) for first ( using balanced paren tracking
+            int depth = 1;
+            size_t ci = afterGetRef + 1;
+            while (ci < line.size() && depth > 0) {
+                if (line[ci] == '(') depth++;
+                else if (line[ci] == ')') depth--;
+                ci++;
+            }
+            if (depth != 0) {
+                searchPos = afterGetRef + 1;
+                continue;
+            }
+            size_t firstClosePos = ci - 1;
+
+            // Check if immediately followed by (
+            if (ci >= line.size() || line[ci] != '(') {
+                searchPos = ci;
+                continue;
+            }
+
+            // Find matching ) for second ( using balanced paren tracking
+            size_t secondOpenPos = ci;
+            depth = 1;
+            ci = secondOpenPos + 1;
+            while (ci < line.size() && depth > 0) {
+                if (line[ci] == '(') depth++;
+                else if (line[ci] == ')') depth--;
+                ci++;
+            }
+            if (depth != 0) {
+                searchPos = secondOpenPos + 1;
+                continue;
+            }
+            size_t secondClosePos = ci - 1;
+
+            // Extract parts
+            std::string getrefArg = line.substr(afterGetRef + 1, firstClosePos - afterGetRef - 1);
+            std::string callArgs = line.substr(secondOpenPos + 1, secondClosePos - secondOpenPos - 1);
+
+            // Get the indent
+            size_t indentEnd = line.find_first_not_of(" \t");
+            std::string indent = (indentEnd != std::string::npos) ? line.substr(0, indentEnd) : "";
+
+            // Replace GetRef(arg1)(arg2) with ssp_ref(arg2) in the line,
+            // then prepend "Set ssp_ref = GetRef(arg1) : " after indent
+            std::string before = line.substr(0, grPos);
+            std::string after = line.substr(secondClosePos + 1);
+            std::string restOfLine = before.substr(indent.size()) + "ssp_ref(" + callArgs + ")" + after;
+            line = indent + "Set ssp_ref = GetRef(" + getrefArg + ") : " + restOfLine;
+
+            count++;
+            PLOGI.printf("PatchGetRefCall: GetRef(%s)(%s) -> temp var",
+                getrefArg.substr(0, 40).c_str(), callArgs.substr(0, 40).c_str());
+
+            // One replacement per line to avoid position tracking issues
+            break;
+        }
+
+        result += line;
+        if (lineEnd < r.size()) result += '\n';
+        lineStart = lineEnd + 1;
+    }
+
+    if (count > 0) {
+        LogPatch("Fixed GetRef(name)(args) chained call for Wine parser using temp var", count);
+    }
+
+    return result;
+}
+
+// =============================================================================
 // Chained Parentheses: arr(x)(y) fails in Wine VBScript parser
 // Wine's parser treats )( as "missing comma" and sets E_FAIL.
 // Fix: Replace arr(expr)(index) with ssp_idx(arr(expr), index)
@@ -606,10 +775,19 @@ std::string SimpleScriptPatcher::Patch2DArrayAccess(const std::string& script) {
     static const RE2 p(R"((\w+)\(([^()]*(?:\([^()]*\))?[^()]*)\)\(([^()]*)\))");
 
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
-        count++;
         std::string name = m[1];
         std::string args1 = m[2];
         std::string args2 = m[3];
+
+        // Skip GetRef - it returns a function reference, not an array.
+        // GetRef(name)(args) is handled by PatchGetRefCall which runs first.
+        std::string lowerName = name;
+        for (auto& c : lowerName) c = tolower(c);
+        if (lowerName == "getref") {
+            return std::string(m[0]);  // Return unchanged
+        }
+
+        count++;
         return "ssp_idx(" + name + "(" + args1 + "), " + args2 + ")";
     });
 
@@ -1899,9 +2077,8 @@ Dim vpx_ssc_tmp
 ' Temp variable for (new ClassName)(args) decomposition
 Dim ssp_newobj
 
-' Helper to index into a function/array return value
-' Replaces arr(x)(y) -> ssp_idx(arr(x), y) to avoid Wine parser )( limitation
-Function ssp_idx(ssp_a, ssp_i) : ssp_idx = ssp_a(ssp_i) : End Function
+' End Wine VBScript Compatibility Helpers
+' ============================================================================
 
 )";
 
@@ -2060,7 +2237,12 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchPinUpPlayerFileAccess(result);    // PinUp Player file access not available on Android
     result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
     result = PatchNewClassCall(result);             // (new ClassName)(args) Wine parser limitation
-    result = Patch2DArrayAccess(result);            // arr(x)(y) chained indexing Wine parser limitation
+    // DISABLED: PatchGetRefCall and Patch2DArrayAccess cause regressions on tables where
+    // Wine's parser handles )( patterns fine (e.g., Dark Chaos). The ssp_idx transformation
+    // breaks lvalue assignments (dict(key)("field") = value) and statement-level calls.
+    // These were disabled before the GOT fix and no tables relied on them.
+    // result = PatchGetRefCall(result);              // GetRef(name)(args) Wine parser )( limitation
+    // result = Patch2DArrayAccess(result);            // arr(x)(y) chained indexing Wine parser limitation
     result = PatchAmbiguousCallParens(result);      // SubName (expr)+rest Wine parser "Missing comma"
     result = PatchForwardConstantReference(result); // cGameName forward reference issue
     result = PatchSolCallbackBlock(result);         // SolCallback VPM constants not defined
