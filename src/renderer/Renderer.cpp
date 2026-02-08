@@ -3257,8 +3257,8 @@ void Renderer::RenderAncillaryWindow(VPXWindowId window, VPX::RenderOutput& outp
          break;
    }
 
-   // Note: Video source dimensions are stored via plugin callbacks, not from context
-   // The context.srcWidth/srcHeight are used for coordinate normalization and must match output
+   // Note: context.srcWidth/srcHeight are the fitted virtual canvas size (includes padding), not the actual
+   // display source dimensions. Source size for JNI queries is obtained directly from display sources.
 
    if (output.GetMode() == VPX::RenderOutput::OM_WINDOW)
    {

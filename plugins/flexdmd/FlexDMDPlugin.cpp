@@ -548,8 +548,11 @@ static DisplayFrame GetRenderFrame(const CtlResId id)
 static void onGetRenderDMDSrc(const unsigned int eventId, void* userData, void* msgData)
 {
    GetDisplaySrcMsg& msg = *static_cast<GetDisplaySrcMsg*>(msgData);
+   LPI_LOGI("onGetRenderDMDSrc: queried, %zu FlexDMD instances", flexDmds.size());
    for (const FlexDMD* pFlex : flexDmds)
    {
+      LPI_LOGI("onGetRenderDMDSrc: instance id=%d show=%d renderMode=%d w=%d h=%d",
+         pFlex->GetId(), pFlex->GetShow(), (int)pFlex->GetRenderMode(), pFlex->GetWidth(), pFlex->GetHeight());
       if (pFlex->GetShow() && ((pFlex->GetRenderMode() == RenderMode_DMD_GRAY_2) || (pFlex->GetRenderMode() == RenderMode_DMD_GRAY_4) || (pFlex->GetRenderMode() == RenderMode_DMD_RGB)))
       {
          if (msg.count < msg.maxEntryCount)
@@ -564,6 +567,7 @@ static void onGetRenderDMDSrc(const unsigned int eventId, void* userData, void* 
             // TODO we should also provide identify frame to allow colorization/upscaling/pup events/...
          }
          msg.count++;
+         LPI_LOGI("onGetRenderDMDSrc: added source %dx%d (count now %d)", pFlex->GetWidth(), pFlex->GetHeight(), msg.count);
       }
    }
 }
@@ -592,6 +596,8 @@ static void OnShowChanged(FlexDMD* pFlexI)
             hasAlpha = true;
       }
    }
+   LPI_LOGI("OnShowChanged: hasDMD=%d (was %d), hasAlpha=%d (was %d), flexDmds=%zu",
+      hasDMD, hadDMD, hasAlpha, hadAlpha, flexDmds.size());
    if (hasDMD != hadDMD)
    {
       if (hasDMD)
@@ -693,6 +699,8 @@ MSGPI_EXPORT void MSGPIAPI FlexDMDPluginLoad(const uint32_t sessionId, const Msg
       pFlex->SetId(nextDmdId);
       pFlex->SetOnDMDChangedHandler(OnShowChanged);
       pFlex->SetOnDestroyHandler(OnFlexDestroyed);
+      LPI_LOGI("FlexDMD::CreateObject: created instance id=%d, show=%d, run=%d, renderMode=%d, %dx%d",
+         nextDmdId, pFlex->GetShow(), pFlex->GetRun(), (int)pFlex->GetRenderMode(), pFlex->GetWidth(), pFlex->GetHeight());
       nextDmdId++;
       flexDmds.push_back(pFlex);
       return static_cast<void*>(pFlex);

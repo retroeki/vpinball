@@ -7587,7 +7587,13 @@ STDMETHODIMP PinTable::put_EnableDecals(VARIANT_BOOL newVal)
 
 STDMETHODIMP PinTable::get_ShowDT(VARIANT_BOOL *pVal)
 {
+#if defined(__ANDROID__)
+   // On Android, always report fullscreen mode to scripts so they enable FlexDMD and other
+   // fullscreen-only features (Android forces BG_DESKTOP for rendering but is not a desktop environment)
+   *pVal = VARIANT_FALSE;
+#else
    *pVal = FTOVB(m_viewMode == BG_DESKTOP || m_viewMode == BG_FSS); // DT & FSS
+#endif
    return S_OK;
 }
 

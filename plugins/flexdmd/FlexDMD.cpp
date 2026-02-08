@@ -37,6 +37,8 @@ FlexDMD::~FlexDMD()
 
 void FlexDMD::SetRun(bool run)
 {
+   LOGI("FlexDMD::SetRun(%d) id=%d, current m_run=%d, m_show=%d, renderMode=%d, %dx%d, handler=%p",
+      run, m_id, m_run, m_show, (int)m_renderMode, m_width, m_height, (void*)m_onDMDChangedHandler);
    if (run == m_run)
       return;
    m_run = run;

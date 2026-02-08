@@ -39,6 +39,7 @@ static int OnRender(VPXRenderContext2D* ctx, void*)
       vpxApi->GetTableInfo(&tableInfo);
 
       scoreView = std::make_unique<ScoreView>(msgApi, endpointId, vpxApi);
+      LOGI("ScoreView: Loading layouts from table path: %s", PathFromFilename(tableInfo.path).c_str());
       scoreView->Load(PathFromFilename(tableInfo.path));
       if (!scoreView->HasLayouts())
       {
@@ -52,8 +53,10 @@ static int OnRender(VPXRenderContext2D* ctx, void*)
          path = GetPluginPath();
          #endif
          path += "layouts"s + PATH_SEPARATOR_CHAR;
+         LOGI("ScoreView: No table layouts, loading defaults from: %s", path.c_str());
          scoreView->Load(path);
       }
+      LOGI("ScoreView: %d layouts loaded", scoreView->HasLayouts() ? 1 : 0);
    }
    return scoreView->Render(ctx) ? 1 : 0;
 }

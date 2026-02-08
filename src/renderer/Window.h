@@ -158,7 +158,7 @@ public:
    void GetPos(int& x, int& y) const;
    void SetPos(int x, int y) const;
 
-   // Source dimensions from last render (for PUP video source size)
+   // Source dimensions from last render (set by Renderer for ScoreView/backglass source size queries)
    int GetSourceWidth() const { return m_srcWidth; }
    int GetSourceHeight() const { return m_srcHeight; }
    void SetSourceSize(int w, int h) { m_srcWidth = w; m_srcHeight = h; }
