@@ -451,11 +451,13 @@ Player::Player(PinTable *const table, const int playMode)
 
       std::mutex mutex;
       int nLoadInProgress = 0;
+      size_t estimatedInProgressMem = 0; // Track estimated memory of all in-progress loads
       vector<Texture *> failedPreloads;
       const unsigned int maxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_MaxTexDimension());
-      auto loadImage = [maxTexDim, &mutex, &nLoadInProgress, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
+      auto loadImage = [maxTexDim, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
       {
          bool readyToLoad = false;
+         const size_t neededMem = image->GetEstimatedGPUSize() * 3; // 3x: image loader + BaseTexture + rendering API copy
          while (!readyToLoad)
          {
             {
@@ -464,22 +466,40 @@ Player::Player(PinTable *const table, const int playMode)
                   readyToLoad = true;
                else
                {
-                  size_t neededMem= image->GetEstimatedGPUSize() * 3; // 3x the estimated size is one for the image loader, one for the BaseTexture instance and one for the rendering API copy
                   #ifdef _MSC_VER
                      MEMORYSTATUSEX statex;
                      statex.dwLength = sizeof(statex);
                      GlobalMemoryStatusEx(&statex);
                      readyToLoad = statex.ullAvailPhys > neededMem;
+                  #elif defined(__ANDROID__)
+                     // Use /proc/meminfo for available memory on Android
+                     // MemAvailable is the best estimate of memory available without swapping
+                     size_t availMem = 0;
+                     FILE* f = fopen("/proc/meminfo", "r");
+                     if (f) {
+                        char line[256];
+                        while (fgets(line, sizeof(line), f)) {
+                           if (strncmp(line, "MemAvailable:", 13) == 0) {
+                              unsigned long kB = 0;
+                              sscanf(line + 13, " %lu", &kB);
+                              availMem = (size_t)kB * 1024;
+                              break;
+                           }
+                        }
+                        fclose(f);
+                     }
+                     // Account for in-progress loads that haven't been reflected in /proc/meminfo yet
+                     // Without this, all threads pass the check before any allocate, causing OOM
+                     readyToLoad = availMem > (neededMem + estimatedInProgressMem);
                   #else
-                     // TODO implement for other platforms
-                     // struct sysinfo memInfo;
-                     // sysinfo(&memInfo);
-                     // readyToLoad = memInfo.freeram > neededMem;
                      readyToLoad = true;
                   #endif
                }
                if (readyToLoad)
+               {
                   nLoadInProgress++;
+                  estimatedInProgressMem += neededMem;
+               }
             }
             if (!readyToLoad)
                std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -538,6 +558,7 @@ Player::Player(PinTable *const table, const int playMode)
          {
             const std::lock_guard<std::mutex> lock(mutex);
             nLoadInProgress--;
+            estimatedInProgressMem -= neededMem;
          }
       };
 
