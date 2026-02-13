@@ -169,6 +169,17 @@ public:
    const string& GetFilePath() const { return m_ppb->m_path; }
    bool SaveFile(const string &filename) const { return m_ppb->WriteToFile(filename); }
 
+#if defined(__ANDROID__)
+   // Release compressed source data (PNG/JPEG/WebP) to free memory after textures are uploaded to GPU
+   size_t ReleaseSourceData()
+   {
+      const size_t freed = m_ppb->m_buffer.size();
+      m_ppb->m_buffer.clear();
+      m_ppb->m_buffer.shrink_to_fit();
+      return freed;
+   }
+#endif
+
    const uint8_t* GetMD5Hash() const { UpdateMD5(); return m_md5Hash; }
    bool IsOpaque() const override { UpdateOpaque(); return m_isOpaque; }
    bool IsHDR() const;

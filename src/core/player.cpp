@@ -598,10 +598,14 @@ Player::Player(PinTable *const table, const int playMode)
       m_renderer->m_renderDevice->m_frameMutex.unlock();
       #endif
 #if defined(__ANDROID__)
-      MEM_LOG("=== TEXTURE LOADING START === %zu images, %d threads | AvailMem: %zuMB",
-         m_ptable->m_vimage.size(), g_pvp->GetLogicalNumberOfProcessors(), getAvailableMemoryMB());
+      // Cap threads to reduce peak memory from parallel texture decoding
+      const int nThreads = min(g_pvp->GetLogicalNumberOfProcessors(), 4);
+      MEM_LOG("=== TEXTURE LOADING START === %zu images, %d threads (capped from %d) | AvailMem: %zuMB",
+         m_ptable->m_vimage.size(), nThreads, g_pvp->GetLogicalNumberOfProcessors(), getAvailableMemoryMB());
+#else
+      const int nThreads = g_pvp->GetLogicalNumberOfProcessors();
 #endif
-      ThreadPool pool(g_pvp->GetLogicalNumberOfProcessors());
+      ThreadPool pool(nThreads);
       for (auto image : m_ptable->m_vimage)
          pool.enqueue(loadImage, image, false);
       pool.wait_until_empty();
@@ -712,6 +716,19 @@ Player::Player(PinTable *const table, const int playMode)
    wintimer_init();
    m_physics->StartPhysics();
    m_renderer->RenderFrame();
+
+#if defined(__ANDROID__)
+   // Free compressed source data (PNG/JPEG/WebP) from all images - no longer needed after textures are on GPU
+   {
+      size_t totalFreed = 0;
+      for (auto image : m_ptable->m_vimage)
+      {
+         totalFreed += image->ReleaseSourceData();
+      }
+      MEM_LOG("=== RELEASED COMPRESSED IMAGE DATA === Freed %zuMB | AvailMem: %zuMB",
+         totalFreed / (1024 * 1024), getAvailableMemoryMB());
+   }
+#endif
 
    // Reset the perf counter to start time when physics starts
    wintimer_init();
