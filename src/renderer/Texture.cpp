@@ -34,8 +34,17 @@
 #undef FAR
 extern "C" {
 #include "jpeglib.h"
+#include "png.h"
 }
 #pragma pop_macro("FAR")
+// OpenEXR headers (symbols already exported from libfreeimage.so)
+#include <ImfInputFile.h>
+#include <ImfFrameBuffer.h>
+#include <ImfChannelList.h>
+#include <ImfIO.h>
+#include <ImfHeader.h>
+#include <ImathBox.h>
+#include <half.h>
 #define TEX_LOG(...) __android_log_print(ANDROID_LOG_WARN, "VPinball_Mem", __VA_ARGS__)
 
 // JPEG scaled decode: decode large JPEGs at 1/2, 1/4, or 1/8 scale at the DCT level.
@@ -143,6 +152,331 @@ static std::shared_ptr<BaseTexture> JpegScaledDecode(const void* data, const siz
       imgW, imgH, outW, outH, scale_denom, savedMB);
 
    return tex;
+}
+
+// PNG scaled decode: read header for dimensions, then decode row-by-row with subsampling.
+// Unlike JPEG (which has DCT-level scaling), PNG must be decompressed sequentially,
+// but we only need ONE row buffer (~32KB) instead of the full image (~256MB for 8K).
+// This is critical for VLM.Nestmap textures (8128x8192 PNGs needing ~2GB to fully decode).
+
+struct PngMemReader {
+   const uint8_t* data;
+   size_t size;
+   size_t offset;
+};
+
+static void pngReadFromMemory(png_structp png_ptr, png_bytep outBytes, png_size_t byteCountToRead)
+{
+   PngMemReader* r = (PngMemReader*)png_get_io_ptr(png_ptr);
+   if (r->offset + byteCountToRead > r->size) {
+      png_error(png_ptr, "Read past end of PNG data");
+      return;
+   }
+   memcpy(outBytes, r->data + r->offset, byteCountToRead);
+   r->offset += byteCountToRead;
+}
+
+static void pngErrorCallback(png_structp png_ptr, png_const_charp msg)
+{
+   TEX_LOG("PNG error: %s", msg);
+   jmp_buf* jmpbuf = (jmp_buf*)png_get_error_ptr(png_ptr);
+   longjmp(*jmpbuf, 1);
+}
+
+static void pngWarningCallback(png_structp, png_const_charp) { /* suppress */ }
+
+static std::shared_ptr<BaseTexture> PngScaledDecode(const void* data, const size_t size, const bool isImageData, unsigned int maxTexDim) noexcept
+{
+   if (size < 8 || maxTexDim == 0)
+      return nullptr;
+
+   const uint8_t* bytes = static_cast<const uint8_t*>(data);
+   static const uint8_t png_sig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+   if (memcmp(bytes, png_sig, 8) != 0)
+      return nullptr;
+
+   jmp_buf jmpbuf;
+   png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, &jmpbuf, pngErrorCallback, pngWarningCallback);
+   if (!png_ptr)
+      return nullptr;
+
+   png_infop info_ptr = png_create_info_struct(png_ptr);
+   if (!info_ptr) {
+      png_destroy_read_struct(&png_ptr, nullptr, nullptr);
+      return nullptr;
+   }
+
+   if (setjmp(jmpbuf)) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   PngMemReader reader = {bytes, size, 0};
+   png_set_read_fn(png_ptr, &reader, pngReadFromMemory);
+
+   png_read_info(png_ptr, info_ptr);
+
+   png_uint_32 imgW, imgH;
+   int bit_depth, color_type;
+   png_get_IHDR(png_ptr, info_ptr, &imgW, &imgH, &bit_depth, &color_type, nullptr, nullptr, nullptr);
+
+   // Skip interlaced PNGs - row-by-row subsampling doesn't work with Adam7
+   if (png_get_interlace_type(png_ptr, info_ptr) != PNG_INTERLACE_NONE) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   // Calculate scale factor (same logic as JPEG path)
+   unsigned int scale_denom = 1;
+   for (unsigned int d = 8; d > 1; d /= 2) {
+      if (((imgW + d - 1) / d >= maxTexDim) || ((imgH + d - 1) / d >= maxTexDim)) {
+         scale_denom = d;
+         break;
+      }
+   }
+
+   if (scale_denom <= 1) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   // Normalize all PNG variants to 8-bit RGB or RGBA:
+   if (color_type == PNG_COLOR_TYPE_PALETTE)
+      png_set_palette_to_rgb(png_ptr);
+   if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8)
+      png_set_expand_gray_1_2_4_to_8(png_ptr);
+   if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS))
+      png_set_tRNS_to_alpha(png_ptr);
+   if (bit_depth == 16)
+      png_set_strip_16(png_ptr);
+   // Convert gray+alpha to RGBA for simpler handling
+   if (color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+      png_set_gray_to_rgb(png_ptr);
+
+   png_read_update_info(png_ptr, info_ptr);
+
+   const unsigned int channels = png_get_channels(png_ptr, info_ptr);
+   const unsigned int srcRowBytes = (unsigned int)png_get_rowbytes(png_ptr, info_ptr);
+
+   const unsigned int outW = imgW / scale_denom;
+   const unsigned int outH = imgH / scale_denom;
+   if (outW == 0 || outH == 0) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   // Determine BaseTexture format
+   BaseTexture::Format format;
+   if (channels == 1)
+      format = BaseTexture::BW;
+   else if (channels == 4)
+      format = isImageData ? BaseTexture::SRGBA : BaseTexture::RGBA;
+   else
+      format = isImageData ? BaseTexture::SRGB : BaseTexture::RGB;
+
+   auto tex = BaseTexture::Create(outW, outH, format);
+   if (!tex) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   // Allocate ONE row buffer for the source image (~32KB for 8K RGB)
+   // This is the key memory saving: instead of ~256MB for full decode, we use ~32KB
+   png_bytep rowBuf = (png_bytep)malloc(srcRowBytes);
+   if (!rowBuf) {
+      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+      return nullptr;
+   }
+
+   uint8_t* dst = static_cast<uint8_t*>(tex->data());
+   const unsigned int dstRowBytes = outW * channels;
+   unsigned int outY = 0;
+
+   for (unsigned int y = 0; y < imgH; y++) {
+      png_read_row(png_ptr, rowBuf, nullptr);
+
+      // Keep every scale_denom-th row
+      if (y % scale_denom != 0)
+         continue;
+      if (outY >= outH)
+         break;
+
+      // Subsample every scale_denom-th pixel
+      uint8_t* dstRow = dst + (size_t)outY * dstRowBytes;
+      for (unsigned int srcX = 0, dstX = 0; srcX < imgW && dstX < outW; srcX += scale_denom, dstX++) {
+         memcpy(dstRow + (size_t)dstX * channels, rowBuf + (size_t)srcX * channels, channels);
+      }
+      outY++;
+   }
+
+   free(rowBuf);
+   png_read_end(png_ptr, nullptr);
+   png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
+
+   tex->m_realWidth = imgW;
+   tex->m_realHeight = imgH;
+
+   const size_t fullMB = (size_t)imgW * imgH * channels / (1024 * 1024);
+   const size_t outMB = (size_t)outW * outH * channels / (1024 * 1024);
+   TEX_LOG("PNG scaled decode: %ux%u -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
+      imgW, imgH, outW, outH, scale_denom, channels, fullMB, outMB);
+
+   return tex;
+}
+
+// EXR scaled decode: use OpenEXR scanline API (already in libfreeimage.so) to decode
+// large EXR textures row-by-row with subsampling. This is critical for VLM.Nestmap
+// textures (8K OpenEXR HDR images needing ~512MB+ to fully decode via FreeImage).
+// Peak memory: ~64KB row buffer + ~2-4MB OpenEXR internal + final texture.
+
+// Memory-backed IStream for OpenEXR
+class MemIStream : public Imf::IStream {
+   const char* _data;
+   size_t _size;
+   uint64_t _pos;
+public:
+   MemIStream(const char* data, size_t size)
+      : Imf::IStream("memory"), _data(data), _size(size), _pos(0) {}
+
+   bool isMemoryMapped() const override { return true; }
+
+   bool read(char c[], int n) override {
+      if (_pos + (uint64_t)n > _size)
+         throw Iex::InputExc("Read past end of EXR data");
+      memcpy(c, _data + _pos, n);
+      _pos += n;
+      return (_pos < _size);
+   }
+
+   char* readMemoryMapped(int n) override {
+      if (_pos + (uint64_t)n > _size)
+         throw Iex::InputExc("Read past end of EXR data");
+      char* ptr = const_cast<char*>(_data + _pos);
+      _pos += n;
+      return ptr;
+   }
+
+   uint64_t tellg() override { return _pos; }
+   void seekg(uint64_t pos) override { _pos = pos; }
+};
+
+static std::shared_ptr<BaseTexture> ExrScaledDecode(const void* data, const size_t size, const bool isImageData, unsigned int maxTexDim) noexcept
+{
+   if (size < 8 || maxTexDim == 0)
+      return nullptr;
+
+   // Check EXR magic: 0x76 0x2F 0x31 0x01
+   const uint8_t* bytes = static_cast<const uint8_t*>(data);
+   if (bytes[0] != 0x76 || bytes[1] != 0x2F || bytes[2] != 0x31 || bytes[3] != 0x01)
+      return nullptr;
+
+   try {
+      MemIStream stream(static_cast<const char*>(data), size);
+      // numThreads=1 minimizes internal allocations (2 LineBuffers instead of 2*N)
+      Imf::InputFile file(stream, 1);
+
+      const Imf::Header& header = file.header();
+      const Imath::Box2i& dw = header.dataWindow();
+      const int imgW = dw.max.x - dw.min.x + 1;
+      const int imgH = dw.max.y - dw.min.y + 1;
+
+      if (imgW <= 0 || imgH <= 0)
+         return nullptr;
+
+      // Calculate scale factor (same logic as JPEG/PNG paths)
+      unsigned int scale_denom = 1;
+      for (unsigned int d = 8; d > 1; d /= 2) {
+         if ((((unsigned)imgW + d - 1) / d >= maxTexDim) || (((unsigned)imgH + d - 1) / d >= maxTexDim)) {
+            scale_denom = d;
+            break;
+         }
+      }
+
+      if (scale_denom <= 1)
+         return nullptr;
+
+      const unsigned int outW = (unsigned)imgW / scale_denom;
+      const unsigned int outH = (unsigned)imgH / scale_denom;
+      if (outW == 0 || outH == 0)
+         return nullptr;
+
+      // Check which channels exist
+      const Imf::ChannelList& channels = header.channels();
+      const Imf::Channel* chR = channels.findChannel("R");
+      const Imf::Channel* chG = channels.findChannel("G");
+      const Imf::Channel* chB = channels.findChannel("B");
+      const Imf::Channel* chA = channels.findChannel("A");
+
+      const bool hasColor = (chR && chG && chB);
+      if (!hasColor)
+         return nullptr; // Unsupported channel layout
+
+      const bool hasAlpha = (chA != nullptr);
+      const unsigned int numCh = hasAlpha ? 4 : 3;
+
+      // Output format: half-float (matching FreeImage's EXR handling)
+      BaseTexture::Format format = hasAlpha ? BaseTexture::RGBA_FP16 : BaseTexture::RGB_FP16;
+
+      auto tex = BaseTexture::Create(outW, outH, format);
+      if (!tex)
+         return nullptr;
+
+      // Allocate ONE source row buffer: imgW pixels * numCh channels * 2 bytes (half)
+      const size_t rowBufSize = (size_t)imgW * numCh * sizeof(half);
+      std::vector<half> rowBuf(imgW * numCh);
+
+      uint16_t* dst = (uint16_t*)tex->data();
+      const unsigned int dstRowPixels = outW * numCh;
+      unsigned int outY = 0;
+
+      for (int y = dw.min.y; y <= dw.max.y; y++) {
+         // Point framebuffer slices at our one-row buffer for this specific scanline
+         char* base = (char*)rowBuf.data() - dw.min.x * (int)(numCh * sizeof(half)) - (int64_t)y * (int64_t)imgW * (int)(numCh * sizeof(half));
+
+         Imf::FrameBuffer fb;
+         fb.insert("R", Imf::Slice(Imf::HALF, base + 0 * sizeof(half), numCh * sizeof(half), (size_t)imgW * numCh * sizeof(half)));
+         fb.insert("G", Imf::Slice(Imf::HALF, base + 1 * sizeof(half), numCh * sizeof(half), (size_t)imgW * numCh * sizeof(half)));
+         fb.insert("B", Imf::Slice(Imf::HALF, base + 2 * sizeof(half), numCh * sizeof(half), (size_t)imgW * numCh * sizeof(half)));
+         if (hasAlpha)
+            fb.insert("A", Imf::Slice(Imf::HALF, base + 3 * sizeof(half), numCh * sizeof(half), (size_t)imgW * numCh * sizeof(half)));
+
+         file.setFrameBuffer(fb);
+         file.readPixels(y);
+
+         // Keep every scale_denom-th row
+         if ((y - dw.min.y) % (int)scale_denom != 0)
+            continue;
+         if (outY >= outH)
+            break;
+
+         // Subsample every scale_denom-th pixel into output
+         uint16_t* dstRow = dst + (size_t)outY * dstRowPixels;
+         for (unsigned int srcX = 0, dstX = 0; srcX < (unsigned)imgW && dstX < outW; srcX += scale_denom, dstX++) {
+            const half* src = &rowBuf[srcX * numCh];
+            for (unsigned int c = 0; c < numCh; c++)
+               dstRow[dstX * numCh + c] = src[c].bits();
+         }
+         outY++;
+      }
+
+      tex->m_realWidth = imgW;
+      tex->m_realHeight = imgH;
+      tex->SetIsOpaque(!hasAlpha);
+
+      const size_t fullMB = (size_t)imgW * imgH * numCh * sizeof(half) / (1024 * 1024);
+      const size_t outMB = (size_t)outW * outH * numCh * sizeof(half) / (1024 * 1024);
+      TEX_LOG("EXR scaled decode: %dx%d -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
+         imgW, imgH, outW, outH, scale_denom, numCh, fullMB, outMB);
+
+      return tex;
+
+   } catch (const std::exception& e) {
+      TEX_LOG("EXR scaled decode failed: %s", e.what());
+      return nullptr;
+   } catch (...) {
+      TEX_LOG("EXR scaled decode failed: unknown exception");
+      return nullptr;
+   }
 }
 #endif // __ANDROID__
 
@@ -268,6 +602,39 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
          return tex;
       }
    }
+
+   // Try PNG scaled decode: row-by-row decode with subsampling.
+   // This is critical for VLM.Nestmap textures (8K PNGs needing ~2GB to fully decode).
+   // Instead of full decode + resize, we decode row-by-row keeping only every Nth row/pixel.
+   // Peak memory: ~32KB row buffer + final texture, instead of ~256-2048MB.
+   if (tex == nullptr && maxTexDimension > 0)
+   {
+      tex = PngScaledDecode(data, size, isImageData, maxTexDimension);
+      if (tex)
+      {
+         #ifdef __OPENGLES__
+         if (tex->m_format == SRGB || tex->m_format == RGB_FP16 || tex->m_format == RGB_FP32)
+            tex = tex->NewWithAlpha();
+         #endif
+         return tex;
+      }
+   }
+
+   // Try EXR scaled decode: scanline-by-scanline using OpenEXR API from libfreeimage.so.
+   // This is critical for VLM.Nestmap textures (8K OpenEXR HDR images, ~512MB+ full decode).
+   // Peak memory: ~64KB row buffer + ~4MB OpenEXR internal, instead of ~512MB.
+   if (tex == nullptr && maxTexDimension > 0)
+   {
+      tex = ExrScaledDecode(data, size, isImageData, maxTexDimension);
+      if (tex)
+      {
+         #ifdef __OPENGLES__
+         if (tex->m_format == SRGB || tex->m_format == RGB_FP16 || tex->m_format == RGB_FP32)
+            tex = tex->NewWithAlpha();
+         #endif
+         return tex;
+      }
+   }
 #endif
 
    if (tex == nullptr)
@@ -282,6 +649,14 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
          FreeImage_CloseMemory(dataHandle);
          return nullptr;
       }
+#if defined(__ANDROID__)
+      // Debug: log format for large textures that bypassed our scaled decoders
+      if (size > 1024 * 1024) {
+         const uint8_t* hdr = static_cast<const uint8_t*>(data);
+         TEX_LOG("FreeImage fallback: fif=%d size=%zuMB magic=[%02x %02x %02x %02x %02x %02x %02x %02x]",
+            (int)fif, size / (1024*1024), hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7]);
+      }
+#endif
       // Load
       FIBITMAP * const dib = FreeImage_LoadFromMemory(fif, dataHandle, 0);
       FreeImage_CloseMemory(dataHandle);
