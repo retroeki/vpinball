@@ -26,6 +26,126 @@
 #include <iostream>
 #endif
 
+#if defined(__ANDROID__)
+#include <setjmp.h>
+#include <android/log.h>
+// Wine headers define FAR as a broken macro; save and restore around jpeglib include
+#pragma push_macro("FAR")
+#undef FAR
+extern "C" {
+#include "jpeglib.h"
+}
+#pragma pop_macro("FAR")
+#define TEX_LOG(...) __android_log_print(ANDROID_LOG_WARN, "VPinball_Mem", __VA_ARGS__)
+
+// JPEG scaled decode: decode large JPEGs at 1/2, 1/4, or 1/8 scale at the DCT level.
+// This avoids allocating full-resolution pixel data (e.g., 256MB for an 8K texture),
+// instead decoding directly to ~2K resolution (~12MB).
+struct AndroidJpegErrorMgr {
+   struct jpeg_error_mgr pub;
+   jmp_buf setjmp_buffer;
+};
+
+static void androidJpegErrorExit(j_common_ptr cinfo) {
+   AndroidJpegErrorMgr* myerr = (AndroidJpegErrorMgr*)cinfo->err;
+   longjmp(myerr->setjmp_buffer, 1);
+}
+
+// Returns a BaseTexture decoded at reduced scale, or nullptr if not beneficial/possible.
+static std::shared_ptr<BaseTexture> JpegScaledDecode(const void* data, const size_t size, const bool isImageData, unsigned int maxTexDim) noexcept
+{
+   if (size < 2 || maxTexDim == 0)
+      return nullptr;
+
+   const uint8_t* bytes = static_cast<const uint8_t*>(data);
+   if (bytes[0] != 0xFF || bytes[1] != 0xD8) // Not JPEG
+      return nullptr;
+
+   struct jpeg_decompress_struct cinfo;
+   AndroidJpegErrorMgr jerr;
+
+   cinfo.err = jpeg_std_error(&jerr.pub);
+   jerr.pub.error_exit = androidJpegErrorExit;
+
+   if (setjmp(jerr.setjmp_buffer)) {
+      jpeg_destroy_decompress(&cinfo);
+      return nullptr;
+   }
+
+   jpeg_create_decompress(&cinfo);
+   jpeg_mem_src(&cinfo, (unsigned char*)data, (unsigned long)size);
+
+   if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+      jpeg_destroy_decompress(&cinfo);
+      return nullptr;
+   }
+
+   const unsigned int imgW = cinfo.image_width;
+   const unsigned int imgH = cinfo.image_height;
+
+   // Calculate best scale denominator (1, 2, 4, 8)
+   // Pick the largest denominator where max(scaled_w, scaled_h) >= maxTexDim
+   unsigned int scale_denom = 1;
+   for (unsigned int d = 8; d > 1; d /= 2) {
+      if (((imgW + d - 1) / d >= maxTexDim) || ((imgH + d - 1) / d >= maxTexDim)) {
+         scale_denom = d;
+         break;
+      }
+   }
+
+   // No benefit if scale_denom == 1 (image is small enough for normal decode)
+   if (scale_denom <= 1) {
+      jpeg_destroy_decompress(&cinfo);
+      return nullptr;
+   }
+
+   cinfo.scale_num = 1;
+   cinfo.scale_denom = scale_denom;
+   cinfo.out_color_space = JCS_RGB; // Force RGB output regardless of input colorspace
+
+   jpeg_start_decompress(&cinfo);
+
+   const unsigned int outW = cinfo.output_width;
+   const unsigned int outH = cinfo.output_height;
+   const int channels = cinfo.output_components;
+
+   // Determine BaseTexture format
+   BaseTexture::Format format;
+   if (channels == 1)
+      format = BaseTexture::BW;
+   else
+      format = isImageData ? BaseTexture::SRGB : BaseTexture::RGB;
+
+   auto tex = BaseTexture::Create(outW, outH, format);
+   if (!tex) {
+      jpeg_abort_decompress(&cinfo);
+      jpeg_destroy_decompress(&cinfo);
+      return nullptr;
+   }
+
+   // jpeglib outputs RGB top-down, BaseTexture expects top-down - direct copy
+   uint8_t* dst = static_cast<uint8_t*>(tex->data());
+   const unsigned int rowBytes = outW * channels;
+
+   while (cinfo.output_scanline < outH) {
+      uint8_t* row = dst + cinfo.output_scanline * rowBytes;
+      jpeg_read_scanlines(&cinfo, &row, 1);
+   }
+
+   jpeg_finish_decompress(&cinfo);
+   jpeg_destroy_decompress(&cinfo);
+
+   tex->m_realWidth = imgW;
+   tex->m_realHeight = imgH;
+
+   const size_t savedMB = ((size_t)imgW * imgH * channels - (size_t)outW * outH * channels) / (1024 * 1024);
+   TEX_LOG("JPEG scaled decode: %ux%u -> %ux%u (1/%u) | Peak RAM saved: ~%zuMB",
+      imgW, imgH, outW, outH, scale_denom, savedMB);
+
+   return tex;
+}
+#endif // __ANDROID__
+
 static inline int GetPixelSize(const BaseTexture::Format format)
 {
    switch (format)
@@ -131,6 +251,24 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
          stbi_image_free(stbi_data);
       }
    }
+
+#if defined(__ANDROID__)
+   // Try JPEG scaled decode to massively reduce peak memory for large textures.
+   // libjpeg can decode at 1/2, 1/4, or 1/8 scale at the DCT level, avoiding
+   // full-resolution allocation (e.g., 256MB for an 8K texture → 12MB at 1/4).
+   if (tex == nullptr && maxTexDimension > 0)
+   {
+      tex = JpegScaledDecode(data, size, isImageData, maxTexDimension);
+      if (tex)
+      {
+         #ifdef __OPENGLES__
+         if (tex->m_format == SRGB || tex->m_format == RGB_FP16 || tex->m_format == RGB_FP32)
+            tex = tex->NewWithAlpha();
+         #endif
+         return tex;
+      }
+   }
+#endif
 
    if (tex == nullptr)
    {
