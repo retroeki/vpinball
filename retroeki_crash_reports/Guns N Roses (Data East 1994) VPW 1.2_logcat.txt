@@ -1,0 +1,679 @@
+=== MAIN LOG (filtered) ===
+02-13 20:03:36.000 E/studio.deploy(25431): ERROR: Could not remove dir '/data/data/com.retroeki.app.debug/code_cache/.ll/': No such file or directory
+02-13 20:03:36.227 W/re-initialized>(29678): type=1400 audit(0.0:98768): avc: granted { execute } for path="/data/data/com.retroeki.app.debug/code_cache/startup_agents/f943a550-agent.so" dev="dm-21" ino=30157 scontext=u:r:untrusted_app:s0:c157,c256,c512,c768 tcontext=u:object_r:app_data_file:s0:c157,c256,c512,c768 tclass=file app=com.retroeki.app.debug
+02-13 20:03:36.235 W/roeki.app.debug(29678): DexFile /data/data/com.retroeki.app.debug/code_cache/.studio/instruments-76719913.jar is in boot class path but is not in a known location
+02-13 20:03:36.245 W/ziparchive(29678): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dm': No such file or directory
+02-13 20:03:36.246 W/ziparchive(29678): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dm': No such file or directory
+02-13 20:03:36.247 W/ziparchive(29678): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dm': No such file or directory
+02-13 20:03:36.248 W/ziparchive(29678): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:03:36.248 W/ziparchive(29678): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:03:36.351 V/GraphicsEnvironment(29678): ANGLE Developer option for 'com.retroeki.app.debug' set to: 'default'
+02-13 20:03:36.351 V/GraphicsEnvironment(29678): ANGLE GameManagerService for com.retroeki.app.debug: false
+02-13 20:03:36.351 V/GraphicsEnvironment(29678): Updatable production driver is not supported on the device.
+02-13 20:03:36.405 I/FirebaseCrashlytics(29678): Initializing Firebase Crashlytics 20.0.4 for com.retroeki.app.debug
+02-13 20:03:36.458 D/RetroEkiApplication$Companion(29678): Device check - Manufacturer: AYN, Model: ODIN2, Device: KALAMA
+02-13 20:03:36.469 W/roeki.app.debug(29678): ClassLoaderContext classpath size mismatch. expected=15, found=23 (DLC[];PCL[base.apk*1947944633:base.apk!classes2.dex*3363074376:base.apk!classes3.dex*1338959545:base.apk!classes4.dex*2440263476:base.apk!classes5.dex*1923706355:base.apk!classes6.dex*3175291108:base.apk!classes7.dex*3796035266:base.apk!classes8.dex*2666962906:base.apk!classes9.dex*2070953282:base.apk!classes10.dex*2203888622:base.apk!classes11.dex*2561949965:base.apk!classes12.dex*987284249:base.apk!classes13.dex*2715393093:base.apk!classes14.dex*2211608738:base.apk!classes15.dex*1734879872]{PCL[/system/framework/org.apache.http.legacy.jar*1601893743]#PCL[/system/framework/com.android.location.provider.jar*989331188]#PCL[/system/framework/com.android.media.remotedisplay.jar*373201995]} | DLC[];PCL[/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dex*81089958:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dex*3946435001:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dex*1327106092:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk*3450176052:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes2.dex*75973370:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes3.dex*1186234399:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes4.dex*1272603360:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes5.dex*4029162541:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes6.dex*16967813:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes7.dex*789641879:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes8.dex*1814127319:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes9.dex*2113280446:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes10.dex*3462507385:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes11.dex*1481996434:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes12.dex*1010130844:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes13.dex*4069982282:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes14.dex*2918330331:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes15.dex*1007834727:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes16.dex*176797770:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes17.dex*1807909916:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes18.dex*222393799:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes19.dex*2559357448:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes20.dex*1689192988])
+02-13 20:03:36.540 D/FirebaseSessions(29678): App foregrounded on com.retroeki.app.debug
+02-13 20:03:36.540 D/FirebaseSessions(29678): Process com.retroeki.app.debug is stale
+02-13 20:03:36.542 D/FirebaseSessions(29678): Process com.retroeki.app.debug is stale
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): QUALCOMM build                   : 1a285a84ae, I2991b7e11e
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Build Date                       : 06/04/23
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): OpenGL ES Shader Compiler Version: E031.41.03.36
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Local Branch                     : 
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Remote Branch                    : 
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Remote Branch                    : 
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Reconstruct Branch               : 
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Build Config                     : S P 14.1.4 AArch64
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+02-13 20:03:36.556 I/AdrenoGLES-0(29678): Driver Version                   : 0676.32
+02-13 20:03:36.559 I/AdrenoGLES-0(29678): PFP: 0x01740158, ME: 0x00000000
+02-13 20:03:36.560 I/FA      (29678):   adb shell setprop debug.firebase.analytics.app com.retroeki.app.debug
+02-13 20:03:36.564 I/AdrenoUtils(29678): <ReadGpuID:408>: Reading chip ID through GSL
+02-13 20:03:36.569 E/OpenGLRenderer(29678): Unable to match the desired swap behavior.
+02-13 20:03:36.604 D/FirebaseSessions(29678): App backgrounded on com.retroeki.app.debug
+02-13 20:03:36.623 D/FirebaseSessions(29678): App foregrounded on com.retroeki.app.debug
+02-13 20:03:36.631 E/OpenGLRenderer(29678): Unable to match the desired swap behavior.
+02-13 20:03:36.958 W/FlagRegistrar(29678): Failed to register com.google.android.gms.providerinstaller#com.retroeki.app.debug
+02-13 20:03:42.463 D/ProfileInstaller(29678): Installing profile for com.retroeki.app.debug
+02-13 20:03:48.154 W/roeki.app.debug(29678): Accessing hidden method Landroid/database/sqlite/SQLiteSession;->beginTransaction(ILandroid/database/sqlite/SQLiteTransactionListener;ILandroid/os/CancellationSignal;)V (unsupported, reflection, allowed)
+02-13 20:03:48.235 D/GridImageGenerator$generateGridImage(29678): 🎨 Grid image saved: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png (44KB)
+02-13 20:03:48.249 D/GamesViewModel$loadGamesV2(29678): 🎨 ✅ Grid generated: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png
+02-13 20:03:48.284 D/GridImageGenerator$generateGridImage(29678): 🎨 Grid image saved: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png (44KB)
+02-13 20:03:48.284 D/GamesViewModel$loadGamesV2(29678): 🎨 ✅ Grid generated: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png
+02-13 20:03:49.140 D/GameLauncher(29678): Launching VPinball with table: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:49.147 D/GameLauncher(29678): VPinball launched successfully
+02-13 20:03:49.150 D/FirebaseSessions(29678): App backgrounded on com.retroeki.app.debug
+02-13 20:03:49.166 D/VPinballLauncherActivity(29678): onCreate: activity=f0b610
+02-13 20:03:49.206 D/VPinballLauncherActivity(29678): DMD corners scaled to screen (1920x1025): TL=(311,325) TR=(1455,337) BL=(322,778) BR=(1442,728)
+02-13 20:03:49.223 D/VPinballLauncherActivity(29678): showLoadingUI: dmdView created = be58727
+02-13 20:03:49.227 D/FirebaseSessions(29678): App foregrounded on com.retroeki.app.debug
+02-13 20:03:49.236 E/OpenGLRenderer(29678): Unable to match the desired swap behavior.
+02-13 20:03:49.274 I/VPinballLauncherActivity$Companion(29678): Acquired table lock for: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:49.298 I/VPinballLauncherActivity(29678): Raw file path is accessible: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:49.542 D/VpxParser(29678): Tastywasps - VR Room & Guitar.
+02-13 20:03:49.724 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed ROM name: gnr_300
+02-13 20:03:49.725 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed display type: VPM DMD
+02-13 20:03:49.725 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed author: VPW
+02-13 20:03:49.725 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed VPX version: 10.8.0
+02-13 20:03:49.725 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed FSS: false, View modes: DT:Camera | FS:Window | FSS:Camera
+02-13 20:03:49.726 I/VPinballLauncherActivity$prepareAndLaunchPlayer(29678): Parsed 0 high scores from NVRAM (method: file_not_found)
+02-13 20:03:49.733 I/VPinballLauncherActivity(29678): Binding to VPinballService...
+02-13 20:03:49.784 W/:native_process(29900): DexFile /data/data/com.retroeki.app.debug/code_cache/.studio/instruments-76719913.jar is in boot class path but is not in a known location
+02-13 20:03:49.794 W/ziparchive(29900): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dm': No such file or directory
+02-13 20:03:49.794 W/ziparchive(29900): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dm': No such file or directory
+02-13 20:03:49.795 W/ziparchive(29900): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dm': No such file or directory
+02-13 20:03:49.796 W/ziparchive(29900): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:03:49.796 W/ziparchive(29900): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:03:49.898 V/GraphicsEnvironment(29900): ANGLE Developer option for 'com.retroeki.app.debug' set to: 'default'
+02-13 20:03:49.898 V/GraphicsEnvironment(29900): ANGLE GameManagerService for com.retroeki.app.debug: false
+02-13 20:03:49.898 V/GraphicsEnvironment(29900): Updatable production driver is not supported on the device.
+02-13 20:03:49.928 I/FirebaseCrashlytics(29900): Initializing Firebase Crashlytics 20.0.4 for com.retroeki.app.debug
+02-13 20:03:49.987 W/:native_process(29900): ClassLoaderContext classpath size mismatch. expected=15, found=23 (DLC[];PCL[base.apk*1947944633:base.apk!classes2.dex*3363074376:base.apk!classes3.dex*1338959545:base.apk!classes4.dex*2440263476:base.apk!classes5.dex*1923706355:base.apk!classes6.dex*3175291108:base.apk!classes7.dex*3796035266:base.apk!classes8.dex*2666962906:base.apk!classes9.dex*2070953282:base.apk!classes10.dex*2203888622:base.apk!classes11.dex*2561949965:base.apk!classes12.dex*987284249:base.apk!classes13.dex*2715393093:base.apk!classes14.dex*2211608738:base.apk!classes15.dex*1734879872]{PCL[/system/framework/org.apache.http.legacy.jar*1601893743]#PCL[/system/framework/com.android.location.provider.jar*989331188]#PCL[/system/framework/com.android.media.remotedisplay.jar*373201995]} | DLC[];PCL[/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dex*81089958:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dex*3946435001:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dex*1327106092:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk*3450176052:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes2.dex*75973370:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes3.dex*1186234399:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes4.dex*1272603360:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes5.dex*4029162541:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes6.dex*16967813:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes7.dex*789641879:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes8.dex*1814127319:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes9.dex*2113280446:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes10.dex*3462507385:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes11.dex*1481996434:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes12.dex*1010130844:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes13.dex*4069982282:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes14.dex*2918330331:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes15.dex*1007834727:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes16.dex*176797770:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes17.dex*1807909916:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes18.dex*222393799:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes19.dex*2559357448:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes20.dex*1689192988])
+02-13 20:03:50.013 D/RetroEkiApplication$Companion(29900): Device check - Manufacturer: AYN, Model: ODIN2, Device: KALAMA
+02-13 20:03:50.018 I/VPinballService(29900): VPinballService created in native process
+02-13 20:03:50.018 I/VPinballService(29900): VPinballService bound
+02-13 20:03:50.020 I/VPinballLauncherActivity$serviceConnection(29678): Connected to VPinballService
+02-13 20:03:50.020 I/VPinballLauncherActivity(29678): Requesting table load from service: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:50.021 I/VPinballService(29900): VPinballService loading table: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:50.037 I/FA      (29900):   adb shell setprop debug.firebase.analytics.app com.retroeki.app.debug
+02-13 20:03:50.225 I/VPinballService$Companion(29900): All VPinball native libraries loaded successfully
+02-13 20:03:50.226 I/VPinballService(29900): Initializing VPinball in service
+02-13 20:03:50.228 D/VPinballService(29900): Assets already copied for version 5
+02-13 20:03:50.228 I/VPinballService(29900): Writing settings to INI: /data/user/0/com.retroeki.app.debug/files/VPinballX.ini
+02-13 20:03:50.246 I/VPinballService(29900): INI file written successfully
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.251 INFO  [29900] [VPinballLib::VPinballLib::InitHeadless@325] VPX Headless - v10.8.1 Beta (Rev. 9999 (unknown), android BGFX 64bits)
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [VPinballLib::VPinballLib::InitHeadless@326] m_logicalNumberOfProcessors=8
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [VPinballLib::VPinballLib::InitHeadless@327] m_myPath=/data/user/0/com.retroeki.app.debug/files/
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [VPinballLib::VPinballLib::InitHeadless@328] m_myPrefPath=/data/user/0/com.retroeki.app.debug/files/
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin vpx loaded (statically linked plugin)
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin ScoreView loaded (statically linked plugin)
+02-13 20:03:50.252 I/vpinball(29900): 2026-02-13 20:03:50.252 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin PinMAME loaded (statically linked plugin)
+02-13 20:03:50.253 I/vpinball(29900): 2026-02-13 20:03:50.253 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin B2SLegacy loaded (statically linked plugin)
+02-13 20:03:50.253 I/vpinball(29900): 2026-02-13 20:03:50.253 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin FlexDMD loaded (statically linked plugin)
+02-13 20:03:50.254 W/vpinball(29900): 2026-02-13 20:03:50.254 WARN  [29900] [VPXPluginAPIImpl::PluginLog@226] PUP folder was not found (settings is '')
+02-13 20:03:50.254 I/vpinball(29900): 2026-02-13 20:03:50.254 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin PUP loaded (statically linked plugin)
+02-13 20:03:50.255 I/vpinball(29900): 2026-02-13 20:03:50.254 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin Serum loaded (statically linked plugin)
+02-13 20:03:50.255 I/vpinball(29900): 2026-02-13 20:03:50.255 INFO  [29900] [VPXPluginAPIImpl::PluginLog@225] WMP Plugin loaded successfully
+02-13 20:03:50.255 I/vpinball(29900): 2026-02-13 20:03:50.255 INFO  [29900] [MsgPI::MsgPlugin::Load@490] Plugin WMP loaded (statically linked plugin)
+02-13 20:03:50.258 I/VPinballService(29900): Applying default input mappings for handheld devices
+02-13 20:03:50.282 I/VPinballService(29900): Default input mappings applied
+02-13 20:03:50.286 I/VPinballService(29900): VPinball initialized successfully
+02-13 20:03:50.287 I/VPinballService$loadTable(29900): Loading table: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:50.288 I/vpinball(29900): 2026-02-13 20:03:50.288 INFO  [29939] [VPinballLib::VPinballLib::LoadTable@718] LoadTable called with path: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:50.288 I/vpinball(29900): 2026-02-13 20:03:50.288 INFO  [29939] [PinTable::UpdateCurrentBGSet@6786] UpdateCurrentBGSet: Android forced to BG_DESKTOP
+02-13 20:03:50.288 I/vpinball(29900): 2026-02-13 20:03:50.288 INFO  [29939] [PinTable::LoadGameFromFilename@1850] LoadGameFromFilename /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:03:50.288 E/vpinball(29900): 2026-02-13 20:03:50.288 ERROR [29939] [VPX::Properties::LayeredINIPropertyStore::Load@47] Failed to load settings from '/storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.ini'
+02-13 20:03:50.288 I/vpinball(29900): 2026-02-13 20:03:50.288 INFO  [29939] [Settings::Load@279] Settings file was not found at '/storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.ini'
+02-13 20:03:50.298 D/VPinballLauncherActivity(29678): VPX version string: 'v10.8.1 Beta (Rev. 9999 (unknown), android BGFX 64bits)' -> parsed: '10.8.1'
+02-13 20:03:51.050 I/vpinball(29900): 2026-02-13 20:03:51.050 INFO  [29939] [PinTable::UpdateCurrentBGSet@6786] UpdateCurrentBGSet: Android forced to BG_DESKTOP
+02-13 20:03:51.084 I/vpinball(29900): 2026-02-13 20:03:51.084 INFO  [29939] [SimpleScriptPatcher::PatchScript@2214] SimpleScriptPatcher: ========== STARTING PATCH PROCESS ==========
+02-13 20:03:51.084 I/vpinball(29900): 2026-02-13 20:03:51.084 INFO  [29939] [SimpleScriptPatcher::PatchScript@2215] SimpleScriptPatcher: Input script length: 251174 characters
+02-13 20:03:51.090 I/vpinball(29900): 2026-02-13 20:03:51.090 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Bug 55093: Added parentheses around Not expressions (1)
+02-13 20:03:51.091 I/vpinball(29900): 2026-02-13 20:03:51.091 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Fixed double dots (..) -> (.) (9)
+02-13 20:03:51.092 I/vpinball(29900): 2026-02-13 20:03:51.092 INFO  [29939] [SimpleScriptPatcher::PatchDTArray@999] SimpleScriptPatcher: Detected DTArray(i)(n) pattern - applying class injection
+02-13 20:03:51.093 I/vpinball(29900): 2026-02-13 20:03:51.093 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: DTArray: Converted to DropTarget class pattern (1)
+02-13 20:03:51.094 I/vpinball(29900): 2026-02-13 20:03:51.094 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Added IsArray guard to DoDTAnim (1)
+02-13 20:03:51.097 I/vpinball(29900): 2026-02-13 20:03:51.097 INFO  [29939] [SimpleScriptPatcher::PatchParenthesizedNot@1356] PatchParenthesizedNot: (Not IsEmpty)(Rampballs(x,1) -> Not IsEmpty(Rampballs(x,1)
+02-13 20:03:51.097 I/vpinball(29900): 2026-02-13 20:03:51.097 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Fixed parenthesized Not function calls (Wine arity bug) (1)
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw33, sw33a, BP_sw33, 33, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw34, sw34a, BP_sw34, 34, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw35, sw35a, BP_sw35, 35, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw36, sw36a, BP_sw36, 36, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw57, sw57a, BP_sw57, 57, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new DropTarget)(sw59, sw59a, BP_sw59, 59, 0, false) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new StandupTarget)(sw17, BP_sw17, 17, 0) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new StandupTarget)(sw18, BP_sw18, 18, 0) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new StandupTarget)(sw19, BP_sw19, 19, 0) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::PatchNewClassCall@424] PatchNewClassCall: (new StandupTarget)(sw20, BP_sw20, 20, 0) -> temp var
+02-13 20:03:51.098 I/vpinball(29900): 2026-02-13 20:03:51.098 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Fixed (new ClassName)(args) syntax for Wine parser (10)
+02-13 20:03:51.099 I/vpinball(29900): 2026-02-13 20:03:51.099 INFO  [29939] [SimpleScriptPatcher::PatchSolCallbackBlock@1420] PatchSolCallbackBlock: Found first SolCallback line
+02-13 20:03:51.099 I/vpinball(29900): 2026-02-13 20:03:51.099 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Added error handling for SolCallback block (Wine VPM compatibility) (1)
+02-13 20:03:51.100 I/vpinball(29900): 2026-02-13 20:03:51.100 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1591] PatchSingleLineForEach: Converting Dim + For Each to For loop (body: x.color = v : x.opacity = 100.0 / i)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1591] PatchSingleLineForEach: Converting Dim + For Each to For loop (body: x.transz=prim.transz: x.rotx=prim.rotx: x.roty=prim.roty)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1591] PatchSingleLineForEach: Converting Dim + For Each to For loop (body: x.transy=prim.transy)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = v)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.X = 940.0 + 13.0 * OutPostMod)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = v)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = 1 - v)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = v)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.Visible = 1)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.Visible = 1)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.visible = 1)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.Visible = 0)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.Visible = 0)
+02-13 20:03:51.101 I/vpinball(29900): 2026-02-13 20:03:51.101 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: VR_Obj.visible = 0)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = lfa : LM.opacity = 100 - v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = lfa : LM.opacity = v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = lfa1 : LM.Opacity = 100 - v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = lfa1 : LM.Opacity = v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = rfa : LM.Opacity = 100 - v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: LM.Rotz = rfa : LM.Opacity = v)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x1)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x2)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.transx = y)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x1)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x2)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.transx = y)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x1)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.Visible = x2)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1620] PatchSingleLineForEach: Converting single-line For Each to For loop (body: x.transy = y)
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::PatchSingleLineForEach@1646] PatchSingleLineForEach: Pattern 3 (multi-line) skipped - RE2 does not support negative lookahead
+02-13 20:03:51.102 I/vpinball(29900): 2026-02-13 20:03:51.102 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Converted For Each to For loop for Wine compatibility (29)
+02-13 20:03:51.106 I/vpinball(29900): 2026-02-13 20:03:51.106 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Replaced undefined RenderingMode with 0 (Desktop mode) (3)
+02-13 20:03:51.108 I/vpinball(29900): 2026-02-13 20:03:51.108 INFO  [29939] [SimpleScriptPatcher::InjectHelpers@2129] SimpleScriptPatcher: DropTarget class already exists in script, skipping injection
+02-13 20:03:51.108 I/vpinball(29900): 2026-02-13 20:03:51.108 INFO  [29939] [SimpleScriptPatcher::LogPatch@157] SimpleScriptPatcher: Injected helper functions (1)
+02-13 20:03:51.110 I/vpinball(29900): 2026-02-13 20:03:51.110 INFO  [29939] [SimpleScriptPatcher::PatchScript@2279] SimpleScriptPatcher: ========== PATCHES APPLIED ==========
+02-13 20:03:51.110 I/vpinball(29900): 2026-02-13 20:03:51.110 INFO  [29939] [SimpleScriptPatcher::PatchScript@2280]   - Bug 55093: Added parentheses around Not expressions
+02-13 20:03:51.110 I/vpinball(29900):   - Fixed double dots (..) -> (.) (9 instances)
+02-13 20:03:51.110 I/vpinball(29900):   - DTArray: Converted to DropTarget class pattern
+02-13 20:03:51.110 I/vpinball(29900):   - Added IsArray guard to DoDTAnim
+02-13 20:03:51.110 I/vpinball(29900):   - Fixed parenthesized Not function calls (Wine arity bug)
+02-13 20:03:51.110 I/vpinball(29900):   - Fixed (new ClassName)(args) syntax for Wine parser (10 instances)
+02-13 20:03:51.110 I/vpinball(29900):   - Added error handling for SolCallback block (Wine VPM compatibility)
+02-13 20:03:51.110 I/vpinball(29900):   - Converted For Each to For loop for Wine compatibility (29 instances)
+02-13 20:03:51.110 I/vpinball(29900):   - Replaced undefined RenderingMode with 0 (Desktop mode) (3 instances)
+02-13 20:03:51.110 I/vpinball(29900):   - Injected helper functions
+02-13 20:03:51.110 I/vpinball(29900): 
+02-13 20:03:51.110 I/vpinball(29900): 2026-02-13 20:03:51.110 INFO  [29939] [SimpleScriptPatcher::PatchScript@2281] SimpleScriptPatcher: Output script length: 255088 characters
+02-13 20:03:51.110 I/vpinball(29900): 2026-02-13 20:03:51.110 INFO  [29939] [SimpleScriptPatcher::PatchScript@2282] SimpleScriptPatcher: =====================================
+02-13 20:03:51.111 I/vpinball(29900): 2026-02-13 20:03:51.111 INFO  [29939] [SimpleScriptPatcher::DumpScript@241] SimpleScriptPatcher: Script saved to /data/user/0/com.retroeki.app.debug/files/patched_script.vbs
+02-13 20:03:51.111 I/vpinball(29900): 2026-02-13 20:03:51.111 INFO  [29939] [PinTable::LoadGameFromFilename@1973] LoadData loaded
+02-13 20:03:51.330 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.330 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.346 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.347 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.380 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.380 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.397 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.397 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.414 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.430 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.430 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.463 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.497 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:03:51.497 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 1%
+02-13 20:04:00.096 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.113 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.113 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.130 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.146 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.164 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.179 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.180 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.196 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.213 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.213 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.229 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.246 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:00.263 D/VPinballLauncherActivity(29678): VPinball event: 0, progress: 50%
+02-13 20:04:08.337 I/vpinball(29900): 2026-02-13 20:04:08.337 INFO  [29939] [PinTable::LoadGameFromFilename@2014] GameItem loaded
+02-13 20:04:08.379 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 1%
+02-13 20:04:08.396 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 1%
+02-13 20:04:08.396 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 1%
+02-13 20:04:09.812 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 50%
+02-13 20:04:09.812 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 50%
+02-13 20:04:09.829 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 50%
+02-13 20:04:09.829 D/VPinballLauncherActivity(29678): VPinball event: 1, progress: 50%
+02-13 20:04:11.243 I/vpinball(29900): 2026-02-13 20:04:11.243 INFO  [29939] [PinTable::LoadGameFromFilename@2059] Sound loaded
+02-13 20:04:11.301 D/VPinballLauncherActivity(29678): VPinball event: 2, progress: 1%
+02-13 20:04:11.479 D/VPinballLauncherActivity(29678): VPinball event: 2, progress: 50%
+02-13 20:04:13.357 I/vpinball(29900): 2026-02-13 20:04:13.357 INFO  [29939] [PinTable::LoadGameFromFilename@2105] Image loaded
+02-13 20:04:13.357 I/vpinball(29900): 2026-02-13 20:04:13.357 INFO  [29939] [PinTable::LoadGameFromFilename@2140] Font loaded
+02-13 20:04:13.361 D/VPinballLauncherActivity(29678): VPinball event: 2, progress: 100%
+02-13 20:04:13.642 I/vpinball(29900): 2026-02-13 20:04:13.642 INFO  [29939] [PinTable::LoadGameFromFilename@2176] Collection loaded
+02-13 20:04:13.645 I/vpinball(29900): 2026-02-13 20:04:13.645 INFO  [29939] [PinTable::LoadGameFromFilename@2189] IEditable PostLoad performed
+02-13 20:04:13.649 I/vpinball(29900): 2026-02-13 20:04:13.649 INFO  [29939] [PinTable::LoadGameFromFilename@2194] Collection PostLoad performed
+02-13 20:04:13.651 I/vpinball(29900): 2026-02-13 20:04:13.651 INFO  [29939] [PinTable::InitTablePostLoad@290] InitTablePostLoad
+02-13 20:04:13.652 I/vpinball(29900): 2026-02-13 20:04:13.652 INFO  [29939] [VPinball::LoadFileName@1172] UI Post Load Start
+02-13 20:04:13.652 I/vpinball(29900): 2026-02-13 20:04:13.652 INFO  [29939] [VPinball::LoadFileName@1195] UI Post Load End
+02-13 20:04:13.652 I/vpinball(29900): 2026-02-13 20:04:13.652 INFO  [29939] [VPinballLib::VPinballLib::LoadTable@759] Table loaded successfully: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:04:13.653 I/VPinballService$loadTable(29900): Table loaded successfully
+02-13 20:04:13.678 I/VPinballLauncherActivity$incomingHandler(29678): Service: Table loaded - launching player
+02-13 20:04:13.678 I/VPinballLauncherActivity$Companion(29678): Table loading complete, now playing: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:04:13.697 D/FirebaseSessions(29678): App backgrounded on com.retroeki.app.debug
+02-13 20:04:13.716 D/VPinballPlayerActivity(29900): Configured Firestore with memory-only cache for native process
+02-13 20:04:13.717 I/VPinballPlayerActivity(29900): VPinballPlayerActivity starting for: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx (table already loaded by service)
+02-13 20:04:13.717 D/VPinballPlayerActivity(29900): Persisted last table name: Guns N Roses (Data East 1994) VPW 1.2
+02-13 20:04:13.755 I/VPinballPlayerActivity(29900): Loading overlay added
+02-13 20:04:13.758 D/FirebaseSessions(29900): App foregrounded on com.retroeki.app.debug:native_process
+02-13 20:04:13.758 D/FirebaseSessions(29900): Process com.retroeki.app.debug:native_process is stale
+02-13 20:04:13.759 E/VPinballPlayerActivity(29900): *** setupSettingsOverlay called ***
+02-13 20:04:13.761 D/FirebaseSessions(29900): Process com.retroeki.app.debug:native_process is stale
+02-13 20:04:13.764 I/VPinballPlayerActivity(29900): Settings overlay added
+02-13 20:04:13.764 I/VPinballPlayerActivity(29900): onResume: resuming rendering but keeping game paused (press A to continue)
+02-13 20:04:13.771 I/VPinballPlayerActivity(29900): Starting playback for: /storage/75D7-DC5F/Emptygames/Vpx/tables/Guns N Roses (Data East 1994) VPW 1.2.vpx
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): QUALCOMM build                   : 1a285a84ae, I2991b7e11e
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Build Date                       : 06/04/23
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): OpenGL ES Shader Compiler Version: E031.41.03.36
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Local Branch                     : 
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Remote Branch                    : 
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Remote Branch                    : 
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Reconstruct Branch               : 
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Build Config                     : S P 14.1.4 AArch64
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+02-13 20:04:13.793 I/AdrenoGLES-0(29900): Driver Version                   : 0676.32
+02-13 20:04:13.797 I/AdrenoGLES-0(29900): PFP: 0x01740158, ME: 0x00000000
+02-13 20:04:13.802 V/SDL     (29900): Running main function SDL_main from library /data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/lib/arm64/libvpinball.so
+02-13 20:04:13.807 E/OpenGLRenderer(29900): Unable to match the desired swap behavior.
+02-13 20:04:13.972 I/VPinballPlayerActivity(29900): Starting VPinball playback
+02-13 20:04:13.973 I/vpinball(29900): 2026-02-13 20:04:13.973 INFO  [30051] [VPinball::DoPlay@1023] Starting Play mode [table: Guns 'n Roses (Data East, 1994), play mode: 0]
+02-13 20:04:13.973 I/vpinball(29900): 2026-02-13 20:04:13.973 INFO  [30051] [PinTable::UpdateCurrentBGSet@6786] UpdateCurrentBGSet: Android forced to BG_DESKTOP
+02-13 20:04:14.003 D/VPinballLauncherActivity(29678): onDestroy: activity=f0b610, dmdView=be58727
+02-13 20:04:14.018 I/vpinball(29900): 2026-02-13 20:04:14.018 INFO  [30051] [PinTable::UpdateCurrentBGSet@6786] UpdateCurrentBGSet: Android forced to BG_DESKTOP
+02-13 20:04:14.018 I/vpinball(29900): 2026-02-13 20:04:14.018 INFO  [30051] [*PinTable::CopyForPlay@875] Duplicating parts for live instance
+02-13 20:04:14.059 I/vpinball(29900): 2026-02-13 20:04:14.059 INFO  [30051] [*PinTable::CopyForPlay@915] Duplicating collections
+02-13 20:04:14.059 I/vpinball(29900): 2026-02-13 20:04:14.059 INFO  [30051] [*PinTable::CopyForPlay@954] Implicit Textbox DMD added: name=ImplicitDMD
+02-13 20:04:14.059 I/vpinball(29900): 2026-02-13 20:04:14.059 INFO  [30051] [*PinTable::CopyForPlay@978] Implicit Flasher DMD added: name=ImplicitDMD2
+02-13 20:04:14.060 I/vpinball(29900): 2026-02-13 20:04:14.060 INFO  [30051] [*PinTable::CopyForPlay@1003] Compiling script
+02-13 20:04:14.072 E/VBScriptCompile(29900): Compiling function: SetRoomBrightness
+02-13 20:04:14.077 I/vpinball(29900): 2026-02-13 20:04:14.077 INFO  [30051] [InputManager::InputManager@37] Touch device detected: 'mouse_input'  - Enabling touch support
+02-13 20:04:14.077 I/vpinball(29900): 2026-02-13 20:04:14.077 INFO  [30051] [InputManager::InputManager@37] Touch device detected: 'pen_input'  - Enabling touch support
+02-13 20:04:14.077 I/vpinball(29900): 2026-02-13 20:04:14.077 INFO  [30051] [InputManager::InputManager@37] Touch device detected: 'Virtual'  - Enabling touch support
+02-13 20:04:14.077 I/vpinball(29900): 2026-02-13 20:04:14.077 INFO  [30051] [InputManager::InputManager@37] Touch device detected: 'synaptics_dsx'  - Enabling touch support
+02-13 20:04:14.078 I/vpinball(29900): 2026-02-13 20:04:14.078 INFO  [30051] [SDLInputHandler::SDLInputHandler@15] SDL input handler registered
+02-13 20:04:14.080 I/vpinball(29900): 2026-02-13 20:04:14.080 INFO  [30051] [SDLInputHandler::OnJoystickAdded@211] Joystick connected: Odin Controller (ID: 2, Axes: 6, Buttons: 19, Hats: 0)
+02-13 20:04:14.080 I/vpinball(29900): 2026-02-13 20:04:14.080 INFO  [30051] [VPX::AudioPlayer::AudioPlayer@226] Table sound device was not found (), using default: Error
+02-13 20:04:14.080 I/vpinball(29900): 2026-02-13 20:04:14.080 INFO  [30051] [VPX::AudioPlayer::AudioPlayer@230] Backglass sound device was not found (), using default: Error
+02-13 20:04:14.196 I/vpinball(29900): 2026-02-13 20:04:14.196 INFO  [30051] [ma_device_init__sdl@154] Audio device initialized. Device: 'System audio playback device', Freq : 44100, Format: SDL_AUDIO_S16LE, Channels: 2, Driver: AAudio
+02-13 20:04:14.198 I/vpinball(29900): 2026-02-13 20:04:14.198 INFO  [30051] [ma_device_init__sdl@154] Audio device initialized. Device: 'System audio playback device', Freq : 44100, Format: SDL_AUDIO_S16LE, Channels: 2, Driver: AAudio
+02-13 20:04:14.198 I/vpinball(29900): 2026-02-13 20:04:14.198 INFO  [30051] [ProgressDialog::SetProgress@56] Creating Player... 1%
+02-13 20:04:14.198 I/vpinball(29900): 2026-02-13 20:04:14.198 INFO  [30051] [Player::Player@210] Creating main window
+02-13 20:04:14.198 W/vpinball(29900): 2026-02-13 20:04:14.198 WARN  [30051] [VPX::Window::Window@87] The selected display "" is not available. Using display "1" instead.
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.200 INFO  [30051] [VPX::Window::Window@265] Window #0 (1920x1080) was created on display 1 [1920x1080 60Hz SDL_PIXELFORMAT_RGB565]
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.201 INFO  [30051] [Player::Player@261] Synchronization mode: 1 with maximum FPS: 60, display FPS: 60
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.201 INFO  [30051] [Player::Player@271] Initializing player
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.201 INFO  [30051] [ProgressDialog::SetProgress@56] Initializing Visuals... 10%
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.201 INFO  [30051] [Player::Player@285] Initializing renderer (global states & resources)
+02-13 20:04:14.201 I/vpinball(29900): 2026-02-13 20:04:14.201 INFO  [30051] [RenderDevice::RenderDevice@1034] Using graphics backend: Vulkan (available: Noop, OpenGLES, Vulkan)
+02-13 20:04:14.201 E/VPinball_Crash(29900): Installing crash handler system...
+02-13 20:04:14.201 E/VPinball_Crash(29900): Crash handler system installed (captures stack trace, blocks for error screen)
+02-13 20:04:14.201 E/VPinball_Crash(29900): Watchdog thread started, tid=30073
+02-13 20:04:14.239 D/vulkan  (29900): searching for layers in '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/lib/arm64'
+02-13 20:04:14.240 D/vulkan  (29900): searching for layers in '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!/lib/arm64-v8a'
+02-13 20:04:14.247 I/AdrenoVK-0(29900): ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+02-13 20:04:14.247 I/AdrenoVK-0(29900): ===== END DUMP OF OVERRIDDEN SETTINGS =====
+02-13 20:04:14.248 I/AdrenoVK-0(29900): QUALCOMM build          : 1a285a84ae, I2991b7e11e
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Build Date              : 06/04/23
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Shader Compiler Version : E031.41.03.36
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Local Branch            : 
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Remote Branch           : 
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Remote Branch           : 
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Reconstruct Branch      : 
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Build Config            : S P 14.1.4 AArch64
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Driver Version          : 0676.32
+02-13 20:04:14.248 I/AdrenoVK-0(29900): PFP                     : 0x01740158
+02-13 20:04:14.248 I/AdrenoVK-0(29900): ME                      : 0x00000000
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Application Name    : bgfx
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Application Version : 0x00000087
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Engine Name         : bgfx
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Engine Version      : 0x00000087
+02-13 20:04:14.248 I/AdrenoVK-0(29900): Api Version         : 0x00403000
+02-13 20:04:14.289 I/vpinball(29900): 2026-02-13 20:04:14.289 INFO  [30051] [RenderDevice::RenderDevice@1105] BGFX initialized using Vulkan backend
+02-13 20:04:14.344 I/vpinball(29900): 2026-02-13 20:04:14.344 INFO  [30051] [Renderer::Renderer@222] Computing environment map radiance
+02-13 20:04:14.789 I/vpinball(29900): 2026-02-13 20:04:14.789 INFO  [30051] [Renderer::Renderer@250] Environment map radiance computed
+02-13 20:04:14.790 I/vpinball(29900): 2026-02-13 20:04:14.790 INFO  [30051] [Player::Player@323] Initializing inputs & implicit objects
+02-13 20:04:14.790 I/vpinball(29900): 2026-02-13 20:04:14.790 INFO  [30051] [Player::Player@388] Initializing physics
+02-13 20:04:14.790 I/vpinball(29900): 2026-02-13 20:04:14.790 INFO  [30051] [ProgressDialog::SetProgress@56] Initializing Physics... 30%
+02-13 20:04:14.816 I/vpinball(29900): 2026-02-13 20:04:14.816 INFO  [30051] [PhysicsEngine::PhysicsEngine@89] Initializing octree
+02-13 20:04:14.847 I/vpinball(29900): 2026-02-13 20:04:14.847 INFO  [30051] [ProgressDialog::SetProgress@56] Loading Textures... 50%
+02-13 20:04:14.849 W/VPinball_Mem(29900): === TEXTURE LOADING START === 55 images, 8 threads | AvailMem: 3884MB
+02-13 20:04:14.850 I/vpinball(29900): 2026-02-13 20:04:14.850 INFO  [30094] [Player::Player@570] Image 'colorgradelut256x16-20' loaded to RAM
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-20' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 I/vpinball(29900): 2026-02-13 20:04:14.850 INFO  [30096] [Player::Player@570] Image 'colorgradelut256x16-40' loaded to RAM
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-40' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 I/vpinball(29900): 2026-02-13 20:04:14.850 INFO  [30095] [Player::Player@570] Image 'colorgradelut256x16-30' loaded to RAM
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-30' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 I/vpinball(29900): 2026-02-13 20:04:14.850 INFO  [30094] [Player::Player@570] Image 'colorgradelut256x16-80' loaded to RAM
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-80' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.851 I/vpinball(29900): 2026-02-13 20:04:14.850 INFO  [30093] [Player::Player@570] Image 'colorgradelut256x16-10' loaded to RAM
+02-13 20:04:14.851 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-10' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~17MB)
+02-13 20:04:14.851 I/vpinball(29900): 2026-02-13 20:04:14.851 INFO  [30096] [Player::Player@570] Image 'colorgradelut256x16-70' loaded to RAM
+02-13 20:04:14.851 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-70' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~19MB)
+02-13 20:04:14.852 I/vpinball(29900): 2026-02-13 20:04:14.852 INFO  [30093] [Player::Player@570] Image 'flippers_shadow' loaded to RAM
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'flippers_shadow' (256x512, ~1MB needed) | AvailMem: 3884MB | InProgress: 6 (~20MB)
+02-13 20:04:14.852 I/vpinball(29900): 2026-02-13 20:04:14.852 INFO  [30094] [Player::Player@570] Image 'ballshadow' loaded to RAM
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'ballshadow' (249x252, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~19MB)
+02-13 20:04:14.852 I/vpinball(29900): 2026-02-13 20:04:14.852 INFO  [30096] [Player::Player@570] Image 'ScratchesTT10' loaded to RAM
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'ScratchesTT10' (256x256, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~146MB)
+02-13 20:04:14.853 I/vpinball(29900): 2026-02-13 20:04:14.853 INFO  [30098] [Player::Player@570] Image 'colorgradelut256x16-50' loaded to RAM
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-50' (256x16, ~0MB needed) | AvailMem: 3880MB | InProgress: 7 (~335MB)
+02-13 20:04:14.853 I/vpinball(29900): 2026-02-13 20:04:14.853 INFO  [30095] [Player::Player@570] Image 'colorgradelut256x16-90' loaded to RAM
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-90' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~591MB)
+02-13 20:04:14.853 I/vpinball(29900): 2026-02-13 20:04:14.853 INFO  [30097] [Player::Player@570] Image 'colorgradelut256x16-60' loaded to RAM
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-60' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~710MB)
+02-13 20:04:14.853 I/vpinball(29900): 2026-02-13 20:04:14.853 INFO  [30093] [Player::Player@570] Image 'Plunger Bake' loaded to RAM
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'Plunger Bake' (256x256, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~724MB)
+02-13 20:04:14.854 I/vpinball(29900): 2026-02-13 20:04:14.854 INFO  [30099] [Player::Player@570] Image 'colorgradelut256x16-100' loaded to RAM
+02-13 20:04:14.854 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-100' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~787MB)
+02-13 20:04:14.854 I/vpinball(29900): 2026-02-13 20:04:14.854 INFO  [30092] [Player::Player@570] Image 'shinyenvironment3blur4' loaded to RAM
+02-13 20:04:14.854 W/VPinball_Mem(29900): Loaded 'shinyenvironment3blur4' (1024x512, ~15MB needed) | AvailMem: 3876MB | InProgress: 8 (~791MB)
+02-13 20:04:14.860 I/vpinball(29900): 2026-02-13 20:04:14.860 INFO  [30092] [Player::Player@570] Image 'VRBeerNormal' loaded to RAM
+02-13 20:04:14.860 W/VPinball_Mem(29900): Loaded 'VRBeerNormal' (1024x513, ~8MB needed) | AvailMem: 3822MB | InProgress: 8 (~783MB)
+02-13 20:04:14.878 I/vpinball(29900): 2026-02-13 20:04:14.878 INFO  [30099] [Player::Player@570] Image 'VRBeerFoam' loaded to RAM
+02-13 20:04:14.878 W/VPinball_Mem(29900): Loaded 'VRBeerFoam' (512x512, ~3MB needed) | AvailMem: 3754MB | InProgress: 8 (~836MB)
+02-13 20:04:14.892 I/vpinball(29900): 2026-02-13 20:04:14.891 INFO  [30097] [Player::Player@570] Image 'VRBaseBoard' loaded to RAM
+02-13 20:04:14.892 W/VPinball_Mem(29900): Loaded 'VRBaseBoard' (300x3000, ~13MB needed) | AvailMem: 3727MB | InProgress: 8 (~859MB)
+02-13 20:04:14.912 I/vpinball(29900): 2026-02-13 20:04:14.912 INFO  [30097] [Player::Player@570] Image 'VRChairShadow' loaded to RAM
+02-13 20:04:14.912 W/VPinball_Mem(29900): Loaded 'VRChairShadow' (936x666, ~9MB needed) | AvailMem: 3695MB | InProgress: 8 (~854MB)
+02-13 20:04:14.929 I/vpinball(29900): 2026-02-13 20:04:14.929 INFO  [30093] [Player::Player@570] Image 'VRBasketball' loaded to RAM
+02-13 20:04:14.929 W/VPinball_Mem(29900): Loaded 'VRBasketball' (2048x2048, ~63MB needed) | AvailMem: 3642MB | InProgress: 8 (~875MB)
+02-13 20:04:14.947 I/vpinball(29900): 2026-02-13 20:04:14.947 INFO  [30099] [Player::Player@570] Image 'VRCabShadow' loaded to RAM
+02-13 20:04:14.947 W/VPinball_Mem(29900): Loaded 'VRCabShadow' (999x1742, ~26MB needed) | AvailMem: 3613MB | InProgress: 8 (~836MB)
+02-13 20:04:14.969 I/vpinball(29900): 2026-02-13 20:04:14.969 INFO  [30092] [Player::Player@570] Image 'VRboxes' loaded to RAM
+02-13 20:04:14.970 W/VPinball_Mem(29900): Loaded 'VRboxes' (2000x2000, ~61MB needed) | AvailMem: 3577MB | InProgress: 8 (~874MB)
+02-13 20:04:14.979 I/vpinball(29900): 2026-02-13 20:04:14.979 INFO  [30094] [Player::Player@570] Image 'blueprint' loaded to RAM
+02-13 20:04:14.979 W/VPinball_Mem(29900): Loaded 'blueprint' (2048x4096, ~127MB needed) | AvailMem: 3537MB | InProgress: 8 (~965MB)
+02-13 20:04:14.982 I/vpinball(29900): 2026-02-13 20:04:14.982 INFO  [30093] [Player::Player@570] Image 'VRCouchShadow' loaded to RAM
+02-13 20:04:14.982 W/VPinball_Mem(29900): Loaded 'VRCouchShadow' (1046x1573, ~25MB needed) | AvailMem: 3522MB | InProgress: 8 (~1061MB)
+02-13 20:04:14.983 I/vpinball(29900): 2026-02-13 20:04:14.983 INFO  [30097] [Player::Player@570] Image 'VRCouch' loaded to RAM
+02-13 20:04:14.983 W/VPinball_Mem(29900): Loaded 'VRCouch' (2000x1000, ~30MB needed) | AvailMem: 3515MB | InProgress: 8 (~1100MB)
+02-13 20:04:15.040 I/vpinball(29900): 2026-02-13 20:04:15.040 INFO  [30095] [Player::Player@570] Image 'VRBackWall' loaded to RAM
+02-13 20:04:15.040 W/VPinball_Mem(29900): Loaded 'VRBackWall' (2000x3900, ~119MB needed) | AvailMem: 3381MB | InProgress: 8 (~1098MB)
+02-13 20:04:15.063 I/vpinball(29900): 2026-02-13 20:04:15.063 INFO  [30093] [Player::Player@570] Image 'VRLamp' loaded to RAM
+02-13 20:04:15.063 W/VPinball_Mem(29900): Loaded 'VRLamp' (2048x2048, ~63MB needed) | AvailMem: 3359MB | InProgress: 8 (~1043MB)
+02-13 20:04:15.067 I/vpinball(29900): 2026-02-13 20:04:15.067 INFO  [30097] [Player::Player@570] Image 'VRManual' loaded to RAM
+02-13 20:04:15.067 W/VPinball_Mem(29900): Loaded 'VRManual' (1199x1571, ~28MB needed) | AvailMem: 3340MB | InProgress: 8 (~1043MB)
+02-13 20:04:15.083 I/vpinball(29900): 2026-02-13 20:04:15.083 INFO  [30099] [Player::Player@570] Image 'VRDresser' loaded to RAM
+02-13 20:04:15.083 W/VPinball_Mem(29900): Loaded 'VRDresser' (2048x2048, ~63MB needed) | AvailMem: 3295MB | InProgress: 8 (~1022MB)
+02-13 20:04:15.084 I/vpinball(29900): 2026-02-13 20:04:15.084 INFO  [30099] [Player::Player@570] Image 'VRshadow' loaded to RAM
+02-13 20:04:15.084 W/VPinball_Mem(29900): Loaded 'VRshadow' (249x252, ~0MB needed) | AvailMem: 3294MB | InProgress: 8 (~959MB)
+02-13 20:04:15.099 I/vpinball(29900): 2026-02-13 20:04:15.099 INFO  [30099] [Player::Player@570] Image 'VRWallLamp' loaded to RAM
+02-13 20:04:15.099 W/VPinball_Mem(29900): Loaded 'VRWallLamp' (1024x1024, ~15MB needed) | AvailMem: 3266MB | InProgress: 8 (~974MB)
+02-13 20:04:15.108 I/vpinball(29900): 2026-02-13 20:04:15.108 INFO  [30097] [Player::Player@570] Image 'VRRug' loaded to RAM
+02-13 20:04:15.108 W/VPinball_Mem(29900): Loaded 'VRRug' (944x568, ~8MB needed) | AvailMem: 3265MB | InProgress: 8 (~978MB)
+02-13 20:04:15.109 I/vpinball(29900): 2026-02-13 20:04:15.109 INFO  [30096] [Player::Player@570] Image 'Pincab_Backbox' loaded to RAM
+02-13 20:04:15.109 W/VPinball_Mem(29900): Loaded 'Pincab_Backbox' (2500x5000, ~190MB needed) | AvailMem: 3270MB | InProgress: 8 (~971MB)
+02-13 20:04:15.109 I/vpinball(29900): 2026-02-13 20:04:15.109 INFO  [30093] [Player::Player@570] Image 'VRPlant' loaded to RAM
+02-13 20:04:15.109 W/VPinball_Mem(29900): Loaded 'VRPlant' (2048x2048, ~63MB needed) | AvailMem: 3271MB | InProgress: 8 (~784MB)
+02-13 20:04:15.110 I/vpinball(29900): 2026-02-13 20:04:15.110 INFO  [30097] [Player::Player@570] Image 'Black' loaded to RAM
+02-13 20:04:15.110 W/VPinball_Mem(29900): Loaded 'Black' (249x252, ~0MB needed) | AvailMem: 3270MB | InProgress: 8 (~784MB)
+02-13 20:04:15.119 I/vpinball(29900): 2026-02-13 20:04:15.119 INFO  [30096] [Player::Player@570] Image 'aluminum' loaded to RAM
+02-13 20:04:15.119 W/VPinball_Mem(29900): Loaded 'aluminum' (512x512, ~3MB needed) | AvailMem: 3258MB | InProgress: 8 (~789MB)
+02-13 20:04:15.128 I/vpinball(29900): 2026-02-13 20:04:15.128 INFO  [30099] [Player::Player@570] Image 'VRFlyer' loaded to RAM
+02-13 20:04:15.128 W/VPinball_Mem(29900): Loaded 'VRFlyer' (1000x1308, ~19MB needed) | AvailMem: 3248MB | InProgress: 8 (~1721MB)
+02-13 20:04:15.129 I/vpinball(29900): 2026-02-13 20:04:15.129 INFO  [30097] [Player::Player@570] Image 'ball_with_parts' loaded to RAM
+02-13 20:04:15.129 W/VPinball_Mem(29900): Loaded 'ball_with_parts' (600x300, ~5MB needed) | AvailMem: 3245MB | InProgress: 8 (~3733MB)
+02-13 20:04:15.157 I/vpinball(29900): 2026-02-13 20:04:15.157 INFO  [30095] [Player::Player@570] Image 'VRPhone' loaded to RAM
+02-13 20:04:15.157 W/VPinball_Mem(29900): Loaded 'VRPhone' (2048x2048, ~63MB needed) | AvailMem: 3165MB | InProgress: 8 (~5760MB)
+02-13 20:04:15.239 I/vpinball(29900): 2026-02-13 20:04:15.239 INFO  [30093] [Player::Player@570] Image 'Guitar_Texture' loaded to RAM
+02-13 20:04:15.239 W/VPinball_Mem(29900): Loaded 'Guitar_Texture' (2048x2048, ~63MB needed) | AvailMem: 2819MB | InProgress: 8 (~7616MB)
+02-13 20:04:15.343 I/vpinball(29900): 2026-02-13 20:04:15.343 INFO  [30093] [Player::Player@570] Image 'VLM.Nestmap4' loaded to RAM
+02-13 20:04:15.343 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap4' (448x2432, ~16MB needed) | AvailMem: 2408MB | InProgress: 8 (~7568MB)
+02-13 20:04:15.367 I/vpinball(29900): 2026-02-13 20:04:15.367 INFO  [30094] [Player::Player@570] Image 'VRHardwoodFloor' loaded to RAM
+02-13 20:04:15.367 W/VPinball_Mem(29900): Loaded 'VRHardwoodFloor' (3826x3828, ~223MB needed) | AvailMem: 2298MB | InProgress: 8 (~7568MB)
+02-13 20:04:15.372 I/vpinball(29900): 2026-02-13 20:04:15.372 INFO  [30093] [Player::Player@570] Image 'VLM.Nestmap4 - NM' loaded to RAM
+02-13 20:04:15.372 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap4 - NM' (448x2432, ~16MB needed) | AvailMem: 2270MB | InProgress: 8 (~7346MB)
+02-13 20:04:15.407 I/vpinball(29900): 2026-02-13 20:04:15.407 INFO  [30093] [Player::Player@570] Image 'fcw' loaded to RAM
+02-13 20:04:15.407 W/VPinball_Mem(29900): Loaded 'fcw' (512x512, ~3MB needed) | AvailMem: 2113MB | InProgress: 8 (~7333MB)
+02-13 20:04:15.414 I/vpinball(29900): 2026-02-13 20:04:15.414 INFO  [30094] [Player::Player@570] Image '_defglowtrans' loaded to RAM
+02-13 20:04:15.414 W/VPinball_Mem(29900): Loaded '_defglowtrans' (293x282, ~1MB needed) | AvailMem: 2083MB | InProgress: 8 (~7401MB)
+02-13 20:04:15.428 I/vpinball(29900): 2026-02-13 20:04:15.428 INFO  [30092] [Player::Player@570] Image 'VRFloorShadow' loaded to RAM
+02-13 20:04:15.428 W/VPinball_Mem(29900): Loaded 'VRFloorShadow' (4000x2500, ~152MB needed) | AvailMem: 2064MB | InProgress: 8 (~7471MB)
+02-13 20:04:15.481 I/vpinball(29900): 2026-02-13 20:04:15.481 INFO  [30098] [Player::Player@570] Image 'Pincab_Cabinet' loaded to RAM
+02-13 20:04:15.482 W/VPinball_Mem(29900): Loaded 'Pincab_Cabinet' (4096x4096, ~255MB needed) | AvailMem: 1830MB | InProgress: 8 (~7334MB)
+02-13 20:04:15.493 I/vpinball(29900): 2026-02-13 20:04:15.493 INFO  [30092] [Player::Player@570] Image 'cabrails' loaded to RAM
+02-13 20:04:15.494 W/VPinball_Mem(29900): Loaded 'cabrails' (2048x512, ~15MB needed) | AvailMem: 1775MB | InProgress: 8 (~7126MB)
+02-13 20:04:15.582 I/vpinball(29900): 2026-02-13 20:04:15.582 INFO  [30094] [Player::Player@570] Image 'Zon' loaded to RAM
+02-13 20:04:15.582 W/VPinball_Mem(29900): Loaded 'Zon' (2500x1869, ~71MB needed) | AvailMem: 1467MB | InProgress: 7 (~7110MB)
+02-13 20:04:15.595 I/vpinball(29900): 2026-02-13 20:04:15.595 INFO  [30098] [Player::Player@570] Image 'GNR-SS' loaded to RAM
+02-13 20:04:15.595 W/VPinball_Mem(29900): Loaded 'GNR-SS' (1300x2430, ~48MB needed) | AvailMem: 1400MB | InProgress: 6 (~7039MB)
+02-13 20:04:15.601 I/vpinball(29900): 2026-02-13 20:04:15.601 INFO  [30093] [Player::Player@570] Image 'backglass' loaded to RAM
+02-13 20:04:15.601 W/VPinball_Mem(29900): Loaded 'backglass' (2500x1869, ~71MB needed) | AvailMem: 1372MB | InProgress: 5 (~6991MB)
+02-13 20:04:16.730 I/vpinball(29900): 2026-02-13 20:04:16.730 INFO  [30096] [Player::Player@570] Image 'VLM.Nestmap0' loaded to RAM
+02-13 20:04:16.731 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap0' (7488x8192, ~936MB needed) | AvailMem: 1263MB | InProgress: 4 (~6919MB)
+02-13 20:04:17.311 I/vpinball(29900): 2026-02-13 20:04:17.310 INFO  [30095] [Player::Player@570] Image 'VLM.Nestmap3' loaded to RAM
+02-13 20:04:17.311 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap3' (7680x8192, ~1920MB needed) | AvailMem: 1216MB | InProgress: 3 (~5983MB)
+02-13 20:04:17.412 I/vpinball(29900): 2026-02-13 20:04:17.412 INFO  [30097] [Player::Player@570] Image 'VLM.Nestmap2' loaded to RAM
+02-13 20:04:17.412 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap2' (8128x8192, ~2031MB needed) | AvailMem: 1592MB | InProgress: 2 (~4063MB)
+02-13 20:04:17.455 I/vpinball(29900): 2026-02-13 20:04:17.455 INFO  [30099] [Player::Player@570] Image 'VLM.Nestmap1' loaded to RAM
+02-13 20:04:17.455 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap1' (8128x8192, ~2031MB needed) | AvailMem: 2355MB | InProgress: 1 (~2031MB)
+02-13 20:04:17.455 W/VPinball_Mem(29900): === TEXTURE LOADING DONE === AvailMem: 2355MB | 0 failed preloads
+02-13 20:04:17.455 I/vpinball(29900): 2026-02-13 20:04:17.455 INFO  [30051] [Player::Player@628] Initializing renderer
+02-13 20:04:17.455 I/vpinball(29900): 2026-02-13 20:04:17.455 INFO  [30051] [ProgressDialog::SetProgress@56] Initializing Renderer... 60%
+02-13 20:04:17.518 I/vpinball(29900): 2026-02-13 20:04:17.518 INFO  [30051] [Player::Player@663] Starting script
+02-13 20:04:17.518 I/vpinball(29900): 2026-02-13 20:04:17.518 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for 'controller.vbs'
+02-13 20:04:17.521 W/vpinball(29900): 2026-02-13 20:04:17.521 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.521 I/vpinball(29900): 2026-02-13 20:04:17.521 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/user/controller.vbs'
+02-13 20:04:17.521 W/vpinball(29900): 2026-02-13 20:04:17.521 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.521 I/vpinball(29900): 2026-02-13 20:04:17.521 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/scripts/controller.vbs'
+02-13 20:04:17.523 I/vpinball(29900): 2026-02-13 20:04:17.523 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@347] GetTextFileFromDirectory: found at '/data/user/0/com.retroeki.app.debug/files/scripts/controller.vbs'
+02-13 20:04:17.524 I/vpinball(29900): 2026-02-13 20:04:17.524 INFO  [30051] [VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides@303] COM script object b2s.server overriden to be provided by a plugin
+02-13 20:04:17.524 I/vpinball(29900): 2026-02-13 20:04:17.524 INFO  [30051] [VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides@303] COM script object vpinmame.controller overriden to be provided by a plugin
+02-13 20:04:17.525 I/vpinball(29900): 2026-02-13 20:04:17.525 INFO  [30051] [VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides@303] COM script object vpinmame.controller overriden to be provided by a plugin
+02-13 20:04:17.525 I/vpinball(29900): 2026-02-13 20:04:17.525 INFO  [30051] [VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides@303] COM script object b2s.server overriden to be provided by a plugin
+02-13 20:04:17.525 I/vpinball(29900): 2026-02-13 20:04:17.525 INFO  [30051] [VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides@303] COM script object b2s.server overriden to be provided by a plugin
+02-13 20:04:17.527 I/vpinball(29900): 2026-02-13 20:04:17.527 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for 'de.vbs'
+02-13 20:04:17.528 W/vpinball(29900): 2026-02-13 20:04:17.528 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.528 I/vpinball(29900): 2026-02-13 20:04:17.528 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/user/de.vbs'
+02-13 20:04:17.528 W/vpinball(29900): 2026-02-13 20:04:17.528 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.528 I/vpinball(29900): 2026-02-13 20:04:17.528 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/scripts/de.vbs'
+02-13 20:04:17.528 I/vpinball(29900): 2026-02-13 20:04:17.528 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@347] GetTextFileFromDirectory: found at '/data/user/0/com.retroeki.app.debug/files/scripts/de.vbs'
+02-13 20:04:17.530 I/vpinball(29900): 2026-02-13 20:04:17.530 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for 'core.vbs'
+02-13 20:04:17.530 W/vpinball(29900): 2026-02-13 20:04:17.530 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.530 I/vpinball(29900): 2026-02-13 20:04:17.530 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/user/core.vbs'
+02-13 20:04:17.531 W/vpinball(29900): 2026-02-13 20:04:17.531 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.531 I/vpinball(29900): 2026-02-13 20:04:17.531 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/scripts/core.vbs'
+02-13 20:04:17.531 I/vpinball(29900): 2026-02-13 20:04:17.531 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@347] GetTextFileFromDirectory: found at '/data/user/0/com.retroeki.app.debug/files/scripts/core.vbs'
+02-13 20:04:17.554 I/vpinball(29900): 2026-02-13 20:04:17.554 INFO  [30051] [external_log_info@893] L"Controller" redefined
+02-13 20:04:17.555 I/vpinball(29900): 2026-02-13 20:04:17.555 INFO  [30051] [external_log_info@893] L"UsePdbLeds" redefined
+02-13 20:04:17.556 I/vpinball(29900): 2026-02-13 20:04:17.556 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for 'VPMKeys.vbs'
+02-13 20:04:17.557 W/vpinball(29900): 2026-02-13 20:04:17.557 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.557 I/vpinball(29900): 2026-02-13 20:04:17.557 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/user/VPMKeys.vbs'
+02-13 20:04:17.557 W/vpinball(29900): 2026-02-13 20:04:17.557 WARN  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@345] GetTextFileFromDirectory: case-insensitive search returned empty for original path
+02-13 20:04:17.557 I/vpinball(29900): 2026-02-13 20:04:17.557 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@342] GetTextFileFromDirectory: searching for '/data/user/0/com.retroeki.app.debug/files/scripts/VPMKeys.vbs'
+02-13 20:04:17.559 I/vpinball(29900): 2026-02-13 20:04:17.559 INFO  [30051] [ScriptGlobalTable::GetTextFileFromDirectory@347] GetTextFileFromDirectory: found at '/data/user/0/com.retroeki.app.debug/files/scripts/VPMKeys.vbs'
+02-13 20:04:17.562 I/vpinball(29900): 2026-02-13 20:04:17.562 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] PinmameSetConfig(): sampleRate=44100, vpmPath=/storage/75D7-DC5F/Emptygames/Vpx/pinmame/
+02-13 20:04:17.609 I/vpinball(29900): 2026-02-13 20:04:17.609 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] Game found: name=gnr_300, description=Guns N' Roses (3.00), manufacturer=Data East, year=1994
+02-13 20:04:17.609 E/vpinball(29900): 2026-02-13 20:04:17.609 ERROR [30051] [VPXPluginAPIImpl::PluginLog@227] ShowTitle is deprecated
+02-13 20:04:17.609 E/vpinball(29900): 2026-02-13 20:04:17.609 ERROR [30051] [VPXPluginAPIImpl::PluginLog@227] ShowDMDOnly is deprecated
+02-13 20:04:17.609 E/vpinball(29900): 2026-02-13 20:04:17.609 ERROR [30051] [VPXPluginAPIImpl::PluginLog@227] ShowFrame is deprecated
+02-13 20:04:17.611 I/vpinball(29900): 2026-02-13 20:04:17.611 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnrcpua.300 ...
+02-13 20:04:17.614 I/vpinball(29900): 2026-02-13 20:04:17.614 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnrdispa.300...
+02-13 20:04:17.621 I/vpinball(29900): 2026-02-13 20:04:17.621 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnru7.snd   ...
+02-13 20:04:17.627 I/vpinball(29900): 2026-02-13 20:04:17.626 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnru17.snd  ...
+02-13 20:04:17.632 I/vpinball(29900): 2026-02-13 20:04:17.632 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnru21.snd  ...
+02-13 20:04:17.637 I/vpinball(29900): 2026-02-13 20:04:17.637 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnru36.snd  ...
+02-13 20:04:17.642 I/vpinball(29900): 2026-02-13 20:04:17.642 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message(): loading gnru37.snd  ...
+02-13 20:04:17.647 I/vpinball(29900): 2026-02-13 20:04:17.647 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_display_loading_rom_message():
+02-13 20:04:17.651 I/vpinball(29900): 2026-02-13 20:04:17.651 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] osd_create_display: 60.00 fps
+02-13 20:04:17.657 I/vpinball(29900): 2026-02-13 20:04:17.657 INFO  [30201] [VPXPluginAPIImpl::PluginLog@225] format=0, channels=2, sampleRate=44100.00, framesPerSecond=60.00, samplesPerFrame=735, bufferSize=16384
+02-13 20:04:17.695 I/vpinball(29900): 2026-02-13 20:04:17.695 INFO  [30051] [Player::Player@715] Prerendering static parts
+02-13 20:04:17.695 I/vpinball(29900): 2026-02-13 20:04:17.695 INFO  [30051] [Renderer::RenderFrame@2790] Renderer: viewMode=0 vrDevice=0 noBackdrop=0
+02-13 20:04:17.695 I/vpinball(29900): 2026-02-13 20:04:17.695 INFO  [30051] [Renderer::RenderStaticPrepass@1573] Performing prerendering of static parts.
+02-13 20:04:17.695 I/vpinball(29900): 2026-02-13 20:04:17.695 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 70%
+02-13 20:04:17.910 D/VPinballLauncherActivity(29678): VPinball event: 5, progress: 1%
+02-13 20:04:17.943 I/vpinball(29900): 2026-02-13 20:04:17.943 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 71%
+02-13 20:04:17.948 I/vpinball(29900): 2026-02-13 20:04:17.948 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 72%
+02-13 20:04:17.956 I/vpinball(29900): 2026-02-13 20:04:17.956 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 73%
+02-13 20:04:17.966 I/vpinball(29900): 2026-02-13 20:04:17.966 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 74%
+02-13 20:04:17.974 I/vpinball(29900): 2026-02-13 20:04:17.974 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 75%
+02-13 20:04:17.981 I/vpinball(29900): 2026-02-13 20:04:17.981 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 76%
+02-13 20:04:17.989 I/vpinball(29900): 2026-02-13 20:04:17.989 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 77%
+02-13 20:04:17.999 I/vpinball(29900): 2026-02-13 20:04:17.999 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 78%
+02-13 20:04:18.007 I/vpinball(29900): 2026-02-13 20:04:18.007 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 79%
+02-13 20:04:18.015 I/vpinball(29900): 2026-02-13 20:04:18.015 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 80%
+02-13 20:04:18.023 I/vpinball(29900): 2026-02-13 20:04:18.023 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 81%
+02-13 20:04:18.033 I/vpinball(29900): 2026-02-13 20:04:18.033 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 82%
+02-13 20:04:18.041 I/vpinball(29900): 2026-02-13 20:04:18.041 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 83%
+02-13 20:04:18.049 I/vpinball(29900): 2026-02-13 20:04:18.049 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 84%
+02-13 20:04:18.057 I/vpinball(29900): 2026-02-13 20:04:18.057 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 85%
+02-13 20:04:18.060 D/VPinballLauncherActivity(29678): VPinball event: 5, progress: 50%
+02-13 20:04:18.067 I/vpinball(29900): 2026-02-13 20:04:18.067 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 86%
+02-13 20:04:18.075 I/vpinball(29900): 2026-02-13 20:04:18.074 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 87%
+02-13 20:04:18.082 I/vpinball(29900): 2026-02-13 20:04:18.082 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 88%
+02-13 20:04:18.092 I/vpinball(29900): 2026-02-13 20:04:18.092 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 89%
+02-13 20:04:18.100 I/vpinball(29900): 2026-02-13 20:04:18.100 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 90%
+02-13 20:04:18.108 I/vpinball(29900): 2026-02-13 20:04:18.108 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 91%
+02-13 20:04:18.116 I/vpinball(29900): 2026-02-13 20:04:18.116 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 92%
+02-13 20:04:18.126 I/vpinball(29900): 2026-02-13 20:04:18.126 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 93%
+02-13 20:04:18.134 I/vpinball(29900): 2026-02-13 20:04:18.134 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 94%
+02-13 20:04:18.142 I/vpinball(29900): 2026-02-13 20:04:18.142 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 95%
+02-13 20:04:18.149 I/vpinball(29900): 2026-02-13 20:04:18.149 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 96%
+02-13 20:04:18.159 I/vpinball(29900): 2026-02-13 20:04:18.159 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 97%
+02-13 20:04:18.167 I/vpinball(29900): 2026-02-13 20:04:18.167 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 98%
+02-13 20:04:18.175 I/vpinball(29900): 2026-02-13 20:04:18.175 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 99%
+02-13 20:04:18.183 I/vpinball(29900): 2026-02-13 20:04:18.183 INFO  [30051] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 100%
+02-13 20:04:18.184 D/VPinballLauncherActivity(29678): VPinball event: 5, progress: 100%
+02-13 20:04:18.187 I/vpinball(29900): 2026-02-13 20:04:18.187 INFO  [30051] [Renderer::RenderStaticPrepass@1760] Starting Reflection Probe prerendering
+02-13 20:04:18.511 I/vpinball(29900): 2026-02-13 20:04:18.511 INFO  [30051] [Renderer::RenderStaticPrepass@1769] Static PreRender done
+02-13 20:04:19.245 I/vpinball(29900): 2026-02-13 20:04:19.245 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] No pupvideos folder found, not initializing PUP
+02-13 20:04:19.246 I/vpinball(29900): 2026-02-13 20:04:19.246 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView: Loading layouts from table path: /storage/75D7-DC5F/Emptygames/Vpx/tables/
+02-13 20:04:19.247 I/vpinball(29900): 2026-02-13 20:04:19.247 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView: No table layouts, loading defaults from: /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/
+02-13 20:04:19.251 I/vpinball(29900): 2026-02-13 20:04:19.251 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-alpha2x16.scv (302x75, 2 visuals)
+02-13 20:04:19.252 I/vpinball(29900): 2026-02-13 20:04:19.252 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-alpha2x20.scv (50x12, 2 visuals)
+02-13 20:04:19.252 I/vpinball(29900): 2026-02-13 20:04:19.252 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-alpha4x6CB.scv (280x70, 6 visuals)
+02-13 20:04:19.253 I/vpinball(29900): 2026-02-13 20:04:19.253 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-alpha4x7.scv (320x64, 4 visuals)
+02-13 20:04:19.255 I/vpinball(29900): 2026-02-13 20:04:19.255 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-alpha4x7CB.scv (280x70, 6 visuals)
+02-13 20:04:19.255 I/vpinball(29900): 2026-02-13 20:04:19.255 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-dmd128x16.scv (128x16, 1 visuals)
+02-13 20:04:19.255 I/vpinball(29900): 2026-02-13 20:04:19.255 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-dmd128x32.scv (128x32, 1 visuals)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Parse: Loaded layout from /data/user/0/com.retroeki.app.debug/files//plugins/scoreview/layouts/lay4x1-dmd192x64.scv (192x64, 1 visuals)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView: 1 layouts loaded
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Render: Re-selecting layout (outWidth=1920, outHeight=1080)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: output=1920x1080 AR=1.78, 8 layouts
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 302x75 -> matched=0 unmatched=2 unfitted=0.442
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 50x12 -> matched=0 unmatched=2 unfitted=0.444
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 280x70 -> matched=0 unmatched=6 unfitted=0.444
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 320x64 -> matched=0 unmatched=4 unfitted=0.356
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 280x70 -> matched=0 unmatched=6 unfitted=0.444
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 128x16 visual DMD 'ctrl://default/display' dmdSize=128x16 -> source=128x32 (AR mismatch: 128*16 != 128*32)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 128x16 -> matched=0 unmatched=1 unfitted=0.222
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 128x32 visual DMD 'ctrl://default/display' dmdSize=128x32 -> source=128x32 (MATCHED)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 128x32 -> matched=10 unmatched=0 unfitted=0.444
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 192x64 visual DMD 'ctrl://default/display' dmdSize=192x64 -> source=128x32 (AR mismatch: 128*64 != 192*32)
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: layout 192x64 -> matched=0 unmatched=1 unfitted=0.593
+02-13 20:04:19.257 I/vpinball(29900): 2026-02-13 20:04:19.257 INFO  [30051] [VPXPluginAPIImpl::PluginLog@225] ScoreView::Select: Selected layout 128x32 (matched=10)
+02-13 20:04:19.271 I/vpinball(29900): 2026-02-13 20:04:19.270 INFO  [30051] [Player::Player@728] Startup done
+02-13 20:04:19.271 I/VPinballPlayerActivity(29900): PLAYER_STARTED event received, removing loading overlay
+02-13 20:04:19.271 I/vpinball(29900): 2026-02-13 20:04:19.271 INFO  [30051] [Player::OnFocusChanged@1113] Playfield window gained focus
+02-13 20:04:19.274 I/VPinballPlayerActivity(29900): Captured initial view: FOV=50.0, LookAt=25.0, Layback=0.0, ViewMode=0, Emission=0.43, Bloom=0.0
+02-13 20:04:19.275 I/VPinballPlayerActivity(29900): Loaded ScoreView state: 0
+02-13 20:04:19.278 I/VPinballPlayerActivity(29900): ScoreView source: 0x0, aspect ratio: 4.0
+02-13 20:04:19.279 I/VPinballPlayerActivity(29900): Applied ScoreView state: 0
+02-13 20:04:19.284 V/SDL     (29900): onTrimMemory()
+02-13 20:04:19.285 I/VPinballService(29900): VPinballService destroyed
+02-13 20:04:19.297 I/VPinballPlayerActivity(29900): Loading overlay removed
+02-13 20:04:19.327 I/OpenGLRenderer(29900): Davey! duration=5319ms; Flags=0, FrameTimelineVsyncId=1255839, IntendedVsync=8345120606866, Vsync=8350403939988, InputEventId=0, HandleInputStart=8350420263427, AnimationStart=8350420265822, PerformTraversalsStart=8350420677645, DrawStart=8350420810822, FrameDeadline=8345136606866, FrameInterval=8350420184885, FrameStartTime=16666666, SyncQueued=8350421002593, SyncStart=8350421056187, IssueDrawCommandsStart=8350422395927, SwapBuffers=8350439282802, FrameCompleted=8350440541864, DequeueBufferDuration=13385, QueueBufferDuration=260782, GpuCompleted=8350440541864, SwapBuffersCompleted=8350440148895, DisplayPresentTime=287953290698490876, CommandSubmissionCompleted=8350439282802, 
+02-13 20:04:19.648 V/SDL     (29900): onTrimMemory()
+02-13 20:04:21.402 W/roeki.app.debug(30431): DexFile /data/data/com.retroeki.app.debug/code_cache/.studio/instruments-76719913.jar is in boot class path but is not in a known location
+02-13 20:04:21.416 W/ziparchive(30431): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dm': No such file or directory
+02-13 20:04:21.416 W/ziparchive(30431): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dm': No such file or directory
+02-13 20:04:21.418 W/ziparchive(30431): Unable to open '/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dm': No such file or directory
+02-13 20:04:21.419 W/ziparchive(30431): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:04:21.419 W/ziparchive(30431): Unable to open '/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.dm': No such file or directory
+02-13 20:04:21.552 V/GraphicsEnvironment(30431): ANGLE Developer option for 'com.retroeki.app.debug' set to: 'default'
+02-13 20:04:21.552 V/GraphicsEnvironment(30431): ANGLE GameManagerService for com.retroeki.app.debug: false
+02-13 20:04:21.552 V/GraphicsEnvironment(30431): Updatable production driver is not supported on the device.
+02-13 20:04:21.608 I/FirebaseCrashlytics(30431): Initializing Firebase Crashlytics 20.0.4 for com.retroeki.app.debug
+02-13 20:04:21.651 W/roeki.app.debug(30431): ClassLoaderContext classpath size mismatch. expected=15, found=23 (DLC[];PCL[base.apk*1947944633:base.apk!classes2.dex*3363074376:base.apk!classes3.dex*1338959545:base.apk!classes4.dex*2440263476:base.apk!classes5.dex*1923706355:base.apk!classes6.dex*3175291108:base.apk!classes7.dex*3796035266:base.apk!classes8.dex*2666962906:base.apk!classes9.dex*2070953282:base.apk!classes10.dex*2203888622:base.apk!classes11.dex*2561949965:base.apk!classes12.dex*987284249:base.apk!classes13.dex*2715393093:base.apk!classes14.dex*2211608738:base.apk!classes15.dex*1734879872]{PCL[/system/framework/org.apache.http.legacy.jar*1601893743]#PCL[/system/framework/com.android.location.provider.jar*989331188]#PCL[/system/framework/com.android.media.remotedisplay.jar*373201995]} | DLC[];PCL[/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes12.dex*81089958:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes3.dex*3946435001:/data/data/com.retroeki.app.debug/code_cache/.overlay/base.apk/classes5.dex*1327106092:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk*3450176052:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes2.dex*75973370:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes3.dex*1186234399:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes4.dex*1272603360:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes5.dex*4029162541:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes6.dex*16967813:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes7.dex*789641879:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes8.dex*1814127319:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes9.dex*2113280446:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes10.dex*3462507385:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes11.dex*1481996434:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes12.dex*1010130844:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes13.dex*4069982282:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes14.dex*2918330331:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes15.dex*1007834727:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes16.dex*176797770:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes17.dex*1807909916:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes18.dex*222393799:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes19.dex*2559357448:/data/app/~~Dmr3CLXGm1GguFO8xfR25g==/com.retroeki.app.debug-TzXVcZLqkiTdnTaUk8ot5g==/base.apk!classes20.dex*1689192988])
+02-13 20:04:21.668 D/RetroEkiApplication$Companion(30431): Device check - Manufacturer: AYN, Model: ODIN2, Device: KALAMA
+02-13 20:04:21.693 I/FA      (30431):   adb shell setprop debug.firebase.analytics.app com.retroeki.app.debug
+02-13 20:04:21.800 D/FirebaseSessions(30431): App foregrounded on com.retroeki.app.debug
+02-13 20:04:21.800 D/FirebaseSessions(30431): Process com.retroeki.app.debug is stale
+02-13 20:04:21.802 D/FirebaseSessions(30431): Process com.retroeki.app.debug is stale
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): QUALCOMM build                   : 1a285a84ae, I2991b7e11e
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Build Date                       : 06/04/23
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): OpenGL ES Shader Compiler Version: E031.41.03.36
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Local Branch                     : 
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Remote Branch                    : 
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Remote Branch                    : 
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Reconstruct Branch               : 
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Build Config                     : S P 14.1.4 AArch64
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+02-13 20:04:21.831 I/AdrenoGLES-0(30431): Driver Version                   : 0676.32
+02-13 20:04:21.833 I/AdrenoGLES-0(30431): PFP: 0x01740158, ME: 0x00000000
+02-13 20:04:21.839 I/AdrenoUtils(30431): <ReadGpuID:408>: Reading chip ID through GSL
+02-13 20:04:21.846 E/OpenGLRenderer(30431): Unable to match the desired swap behavior.
+02-13 20:04:22.184 W/roeki.app.debug(30431): Accessing hidden method Landroid/database/sqlite/SQLiteSession;->beginTransaction(ILandroid/database/sqlite/SQLiteTransactionListener;ILandroid/os/CancellationSignal;)V (unsupported, reflection, allowed)
+02-13 20:04:22.349 W/FlagRegistrar(30431): Failed to register com.google.android.gms.providerinstaller#com.retroeki.app.debug
+02-13 20:04:22.457 D/GridImageGenerator$generateGridImage(30431): 🎨 Grid image saved: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png (40KB)
+02-13 20:04:22.458 D/GridImageGenerator$generateGridImage(30431): 🎨 Grid image saved: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png (40KB)
+02-13 20:04:22.460 D/GamesViewModel$loadGamesV2(30431): 🎨 ✅ Grid generated: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png
+02-13 20:04:22.460 D/GamesViewModel$loadGamesV2(30431): 🎨 ✅ Grid generated: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png
+02-13 20:04:22.473 D/GridImageGenerator$generateGridImage(30431): 🎨 Grid image saved: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png (44KB)
+02-13 20:04:22.475 D/GamesViewModel$loadGamesV2(30431): 🎨 ✅ Grid generated: /data/user/0/com.retroeki.app.debug/cache/grid_images/pinball.png
+02-13 20:04:27.159 D/ProfileInstaller(30431): Installing profile for com.retroeki.app.debug
+02-13 20:04:39.519 D/SettingsView$calculateCacheSize$1$sizeBytes(30431): SettingsView: Cache directory: /data/user/0/com.retroeki.app.debug/cache/image_manager_disk_cache
+
+=== MEMORY TIMELINE (at crash time) ===
+02-13 20:04:14.849 W/VPinball_Mem(29900): === TEXTURE LOADING START === 55 images, 8 threads | AvailMem: 3884MB
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-20' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-40' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-30' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.850 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-80' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~16MB)
+02-13 20:04:14.851 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-10' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~17MB)
+02-13 20:04:14.851 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-70' (256x16, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~19MB)
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'flippers_shadow' (256x512, ~1MB needed) | AvailMem: 3884MB | InProgress: 6 (~20MB)
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'ballshadow' (249x252, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~19MB)
+02-13 20:04:14.852 W/VPinball_Mem(29900): Loaded 'ScratchesTT10' (256x256, ~0MB needed) | AvailMem: 3884MB | InProgress: 6 (~146MB)
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-50' (256x16, ~0MB needed) | AvailMem: 3880MB | InProgress: 7 (~335MB)
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-90' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~591MB)
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-60' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~710MB)
+02-13 20:04:14.853 W/VPinball_Mem(29900): Loaded 'Plunger Bake' (256x256, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~724MB)
+02-13 20:04:14.854 W/VPinball_Mem(29900): Loaded 'colorgradelut256x16-100' (256x16, ~0MB needed) | AvailMem: 3879MB | InProgress: 8 (~787MB)
+02-13 20:04:14.854 W/VPinball_Mem(29900): Loaded 'shinyenvironment3blur4' (1024x512, ~15MB needed) | AvailMem: 3876MB | InProgress: 8 (~791MB)
+02-13 20:04:14.860 W/VPinball_Mem(29900): Loaded 'VRBeerNormal' (1024x513, ~8MB needed) | AvailMem: 3822MB | InProgress: 8 (~783MB)
+02-13 20:04:14.878 W/VPinball_Mem(29900): Loaded 'VRBeerFoam' (512x512, ~3MB needed) | AvailMem: 3754MB | InProgress: 8 (~836MB)
+02-13 20:04:14.892 W/VPinball_Mem(29900): Loaded 'VRBaseBoard' (300x3000, ~13MB needed) | AvailMem: 3727MB | InProgress: 8 (~859MB)
+02-13 20:04:14.912 W/VPinball_Mem(29900): Loaded 'VRChairShadow' (936x666, ~9MB needed) | AvailMem: 3695MB | InProgress: 8 (~854MB)
+02-13 20:04:14.929 W/VPinball_Mem(29900): Loaded 'VRBasketball' (2048x2048, ~63MB needed) | AvailMem: 3642MB | InProgress: 8 (~875MB)
+02-13 20:04:14.947 W/VPinball_Mem(29900): Loaded 'VRCabShadow' (999x1742, ~26MB needed) | AvailMem: 3613MB | InProgress: 8 (~836MB)
+02-13 20:04:14.970 W/VPinball_Mem(29900): Loaded 'VRboxes' (2000x2000, ~61MB needed) | AvailMem: 3577MB | InProgress: 8 (~874MB)
+02-13 20:04:14.979 W/VPinball_Mem(29900): Loaded 'blueprint' (2048x4096, ~127MB needed) | AvailMem: 3537MB | InProgress: 8 (~965MB)
+02-13 20:04:14.982 W/VPinball_Mem(29900): Loaded 'VRCouchShadow' (1046x1573, ~25MB needed) | AvailMem: 3522MB | InProgress: 8 (~1061MB)
+02-13 20:04:14.983 W/VPinball_Mem(29900): Loaded 'VRCouch' (2000x1000, ~30MB needed) | AvailMem: 3515MB | InProgress: 8 (~1100MB)
+02-13 20:04:15.040 W/VPinball_Mem(29900): Loaded 'VRBackWall' (2000x3900, ~119MB needed) | AvailMem: 3381MB | InProgress: 8 (~1098MB)
+02-13 20:04:15.063 W/VPinball_Mem(29900): Loaded 'VRLamp' (2048x2048, ~63MB needed) | AvailMem: 3359MB | InProgress: 8 (~1043MB)
+02-13 20:04:15.067 W/VPinball_Mem(29900): Loaded 'VRManual' (1199x1571, ~28MB needed) | AvailMem: 3340MB | InProgress: 8 (~1043MB)
+02-13 20:04:15.083 W/VPinball_Mem(29900): Loaded 'VRDresser' (2048x2048, ~63MB needed) | AvailMem: 3295MB | InProgress: 8 (~1022MB)
+02-13 20:04:15.084 W/VPinball_Mem(29900): Loaded 'VRshadow' (249x252, ~0MB needed) | AvailMem: 3294MB | InProgress: 8 (~959MB)
+02-13 20:04:15.099 W/VPinball_Mem(29900): Loaded 'VRWallLamp' (1024x1024, ~15MB needed) | AvailMem: 3266MB | InProgress: 8 (~974MB)
+02-13 20:04:15.108 W/VPinball_Mem(29900): Loaded 'VRRug' (944x568, ~8MB needed) | AvailMem: 3265MB | InProgress: 8 (~978MB)
+02-13 20:04:15.109 W/VPinball_Mem(29900): Loaded 'Pincab_Backbox' (2500x5000, ~190MB needed) | AvailMem: 3270MB | InProgress: 8 (~971MB)
+02-13 20:04:15.109 W/VPinball_Mem(29900): Loaded 'VRPlant' (2048x2048, ~63MB needed) | AvailMem: 3271MB | InProgress: 8 (~784MB)
+02-13 20:04:15.110 W/VPinball_Mem(29900): Loaded 'Black' (249x252, ~0MB needed) | AvailMem: 3270MB | InProgress: 8 (~784MB)
+02-13 20:04:15.119 W/VPinball_Mem(29900): Loaded 'aluminum' (512x512, ~3MB needed) | AvailMem: 3258MB | InProgress: 8 (~789MB)
+02-13 20:04:15.128 W/VPinball_Mem(29900): Loaded 'VRFlyer' (1000x1308, ~19MB needed) | AvailMem: 3248MB | InProgress: 8 (~1721MB)
+02-13 20:04:15.129 W/VPinball_Mem(29900): Loaded 'ball_with_parts' (600x300, ~5MB needed) | AvailMem: 3245MB | InProgress: 8 (~3733MB)
+02-13 20:04:15.157 W/VPinball_Mem(29900): Loaded 'VRPhone' (2048x2048, ~63MB needed) | AvailMem: 3165MB | InProgress: 8 (~5760MB)
+02-13 20:04:15.239 W/VPinball_Mem(29900): Loaded 'Guitar_Texture' (2048x2048, ~63MB needed) | AvailMem: 2819MB | InProgress: 8 (~7616MB)
+02-13 20:04:15.343 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap4' (448x2432, ~16MB needed) | AvailMem: 2408MB | InProgress: 8 (~7568MB)
+02-13 20:04:15.367 W/VPinball_Mem(29900): Loaded 'VRHardwoodFloor' (3826x3828, ~223MB needed) | AvailMem: 2298MB | InProgress: 8 (~7568MB)
+02-13 20:04:15.372 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap4 - NM' (448x2432, ~16MB needed) | AvailMem: 2270MB | InProgress: 8 (~7346MB)
+02-13 20:04:15.407 W/VPinball_Mem(29900): Loaded 'fcw' (512x512, ~3MB needed) | AvailMem: 2113MB | InProgress: 8 (~7333MB)
+02-13 20:04:15.414 W/VPinball_Mem(29900): Loaded '_defglowtrans' (293x282, ~1MB needed) | AvailMem: 2083MB | InProgress: 8 (~7401MB)
+02-13 20:04:15.428 W/VPinball_Mem(29900): Loaded 'VRFloorShadow' (4000x2500, ~152MB needed) | AvailMem: 2064MB | InProgress: 8 (~7471MB)
+02-13 20:04:15.482 W/VPinball_Mem(29900): Loaded 'Pincab_Cabinet' (4096x4096, ~255MB needed) | AvailMem: 1830MB | InProgress: 8 (~7334MB)
+02-13 20:04:15.494 W/VPinball_Mem(29900): Loaded 'cabrails' (2048x512, ~15MB needed) | AvailMem: 1775MB | InProgress: 8 (~7126MB)
+02-13 20:04:15.582 W/VPinball_Mem(29900): Loaded 'Zon' (2500x1869, ~71MB needed) | AvailMem: 1467MB | InProgress: 7 (~7110MB)
+02-13 20:04:15.595 W/VPinball_Mem(29900): Loaded 'GNR-SS' (1300x2430, ~48MB needed) | AvailMem: 1400MB | InProgress: 6 (~7039MB)
+02-13 20:04:15.601 W/VPinball_Mem(29900): Loaded 'backglass' (2500x1869, ~71MB needed) | AvailMem: 1372MB | InProgress: 5 (~6991MB)
+02-13 20:04:16.731 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap0' (7488x8192, ~936MB needed) | AvailMem: 1263MB | InProgress: 4 (~6919MB)
+02-13 20:04:17.311 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap3' (7680x8192, ~1920MB needed) | AvailMem: 1216MB | InProgress: 3 (~5983MB)
+02-13 20:04:17.412 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap2' (8128x8192, ~2031MB needed) | AvailMem: 1592MB | InProgress: 2 (~4063MB)
+02-13 20:04:17.455 W/VPinball_Mem(29900): Loaded 'VLM.Nestmap1' (8128x8192, ~2031MB needed) | AvailMem: 2355MB | InProgress: 1 (~2031MB)
+02-13 20:04:17.455 W/VPinball_Mem(29900): === TEXTURE LOADING DONE === AvailMem: 2355MB | 0 failed preloads
+
+=== EVENTS LOG ===
+(no matching events found)
+
+=== SYSTEM + CRASH LOG ===
+(no matching entries found)
+
+=== MEMORY INFO (post-crash) ===
+NOTE: This is memory AFTER crash (native process already dead/freed).
+See MEMORY TIMELINE section above for memory state AT crash time.
+
+MemTotal:        7372100 kB
+MemFree:         1897304 kB
+MemAvailable:    5278356 kB
+Buffers:             772 kB
+Cached:           732988 kB
+SwapTotal:       4194300 kB
+SwapFree:        3532072 kB
+
+ActivityManager:
+  totalMem: 7199MB
+  availMem: 2568MB
+  threshold: 216MB
+  lowMemory: false

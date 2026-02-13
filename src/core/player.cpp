@@ -28,6 +28,28 @@
 #include <array>
 #include <filesystem>
 #include "renderer/Shader.h"
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define MEM_LOG(...) __android_log_print(ANDROID_LOG_WARN, "VPinball_Mem", __VA_ARGS__)
+static size_t getAvailableMemoryMB() {
+   size_t availMB = 0;
+   FILE* f = fopen("/proc/meminfo", "r");
+   if (f) {
+      char line[256];
+      while (fgets(line, sizeof(line), f)) {
+         if (strncmp(line, "MemAvailable:", 13) == 0) {
+            unsigned long kB = 0;
+            sscanf(line + 13, " %lu", &kB);
+            availMB = kB / 1024;
+            break;
+         }
+      }
+      fclose(f);
+   }
+   return availMB;
+}
+#endif
 #include "renderer/Anaglyph.h"
 #include "renderer/VRDevice.h"
 #include "renderer/typedefs3D.h"
@@ -542,10 +564,19 @@ Player::Player(PinTable *const table, const int playMode)
                         m_liveUI->PushNotification("Image '" + image->m_name + "' was downsized due to low memory", 5000);
                   }
                   PLOGI << "Image '" << image->m_name << "' loaded to " << (uploaded ? "GPU" : "RAM");
+#if defined(__ANDROID__)
+               MEM_LOG("Loaded '%s' (%zux%zu, ~%zuMB needed) | AvailMem: %zuMB | InProgress: %d (~%zuMB)",
+                  image->m_name.c_str(), (size_t)image->m_width, (size_t)image->m_height, neededMem / (1024*1024),
+                  getAvailableMemoryMB(), nLoadInProgress, estimatedInProgressMem / (1024*1024));
+#endif
                }
                else if (resizeOnLowMem)
                {
                   PLOGE << "Image '" << image->m_name << "' could not be loaded, skipping it";
+#if defined(__ANDROID__)
+               MEM_LOG("FAILED to load '%s' (~%zuMB needed) | AvailMem: %zuMB",
+                  image->m_name.c_str(), neededMem / (1024*1024), getAvailableMemoryMB());
+#endif
                   m_liveUI->PushNotification("Image '" + image->m_name + "' could not be loaded", 5000);
                   m_renderer->m_renderDevice->m_texMan.AddPlaceHolder(image);
                }
@@ -566,11 +597,19 @@ Player::Player(PinTable *const table, const int playMode)
       #ifdef ENABLE_BGFX
       m_renderer->m_renderDevice->m_frameMutex.unlock();
       #endif
+#if defined(__ANDROID__)
+      MEM_LOG("=== TEXTURE LOADING START === %zu images, %d threads | AvailMem: %zuMB",
+         m_ptable->m_vimage.size(), g_pvp->GetLogicalNumberOfProcessors(), getAvailableMemoryMB());
+#endif
       ThreadPool pool(g_pvp->GetLogicalNumberOfProcessors());
       for (auto image : m_ptable->m_vimage)
          pool.enqueue(loadImage, image, false);
       pool.wait_until_empty();
       pool.wait_until_nothing_in_flight();
+#if defined(__ANDROID__)
+      MEM_LOG("=== TEXTURE LOADING DONE === AvailMem: %zuMB | %zu failed preloads",
+         getAvailableMemoryMB(), failedPreloads.size());
+#endif
       #ifdef ENABLE_BGFX
       m_renderer->m_renderDevice->m_frameMutex.lock();
       #endif
