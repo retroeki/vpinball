@@ -112,6 +112,8 @@ void ScoreView::Parse(const std::filesystem::path& path, std::istream& content)
    while (std::getline(content, line))
    {
       lineIndex++;
+      if (!line.empty() && line.back() == '\r')
+         line.pop_back();
       line = TrimTrailing(line, whitespace);
       if (line.empty())
          continue;
@@ -140,7 +142,7 @@ void ScoreView::Parse(const std::filesystem::path& path, std::istream& content)
       const auto colon = line.find(':');
       if (colon == string::npos)
       {
-         LOGE("Field is missing ':' separator at line %s in ScoreView file %s", lineIndex, path.c_str());
+         LOGE("Field is missing ':' separator at line %d in ScoreView file %s", lineIndex, path.c_str());
          return;
       }
       if (colon == afterIndent)

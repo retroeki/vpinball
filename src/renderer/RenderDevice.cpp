@@ -158,7 +158,15 @@ static void* crash_watchdog_thread(void* arg)
          CRASH_LOG("Watchdog sent FATAL_ERROR, now sending PLAYER_CLOSED");
          VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_PLAYER_CLOSED, nullptr);
 
-         CRASH_LOG("Watchdog finished sending events");
+         CRASH_LOG("Watchdog finished sending events, chaining to old handler for Crashlytics");
+
+         // Re-raise signal with old handler so Crashlytics NDK captures the crash
+         // Restore the old handler first, then re-raise the signal
+         if (sig > 0 && sig < 32 && (s_oldHandlers[sig].sa_sigaction != nullptr || s_oldHandlers[sig].sa_handler != SIG_DFL)) {
+            sigaction(sig, &s_oldHandlers[sig], nullptr);
+            raise(sig);
+         }
+
          break;
       }
    }
@@ -215,11 +223,11 @@ static void install_crash_handler()
       sa.sa_sigaction = vpinball_sigsegv_handler;
       sa.sa_flags = SA_SIGINFO;  // Use SA_SIGINFO to get siginfo_t and context
 
-      // Install handlers - we capture stack trace ourselves, no chaining
-      sigaction(SIGSEGV, &sa, nullptr);
-      sigaction(SIGABRT, &sa, nullptr);
-      sigaction(SIGFPE, &sa, nullptr);
-      sigaction(SIGBUS, &sa, nullptr);
+      // Install handlers - save old handlers so we can chain to Crashlytics after user responds
+      sigaction(SIGSEGV, &sa, &s_oldHandlers[SIGSEGV]);
+      sigaction(SIGABRT, &sa, &s_oldHandlers[SIGABRT]);
+      sigaction(SIGFPE, &sa, &s_oldHandlers[SIGFPE]);
+      sigaction(SIGBUS, &sa, &s_oldHandlers[SIGBUS]);
 
       CRASH_LOG("Crash handler system installed (captures stack trace, blocks for error screen)");
    }

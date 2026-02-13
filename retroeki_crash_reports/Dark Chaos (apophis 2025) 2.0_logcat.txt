@@ -1,0 +1,106 @@
+02-08 12:00:14.920 E/vpinball( 6186): 2026-02-08 12:00:14.920 ERROR [6461] [CodeViewer::OnScriptError@1186] Script Error at line 60147 : Description unavailable
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1213] === Script context around line 60147 ===
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60142: 
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60143:     Public Property Get Show()
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60144:         If IsNull(m_show) Then
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60145:             Show = Null
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60146:         Else
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217] >>> 60147:             Set Show = m_show
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60148:         End If
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60149:     End Property
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60150: 	Public Property Let Show(input)
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60151:         'msgbox "input:" & input
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1217]     60152:         If glf_shows.Exists(input) Then
+02-08 12:00:14.931 I/vpinball( 6186): 2026-02-08 12:00:14.931 INFO  [6461] [CodeViewer::OnScriptError@1219] === End script context ===
+02-08 12:00:14.931 E/VPinballPlayerActivity( 6186): SCRIPT_ERROR event received: {"description":"Description unavailable","error":1,"line":60147,"position":12}
+02-08 12:00:14.931 E/vpinball( 6186): 2026-02-08 12:00:14.931 ERROR [6461] [CodeViewer::AppendLastErrorTextW@3876] Runtime error: Line: 60147, Character: 12, Description unavailable
+02-08 12:00:14.932 E/VPinballLauncherActivity( 4390): Script error received: {"description":"Description unavailable","error":1,"line":60147,"position":12}
+02-08 12:00:14.933 I/VPinballLauncherActivity$Companion( 4390): Releasing table lock (was: /storage/75D7-DC5F/Games/VisualPinballX/tables/Dark Chaos (apophis 2025) 2.0.vpx)
+02-08 12:00:14.934 E/VPinballLauncherActivity( 4390): Script error details: RUNTIME ERROR at line 60147, pos 12: Description unavailable
+02-08 12:00:14.935 D/PinballDMDView( 4390): [bca1a03] showScriptError: code=RUNTIME ERROR, overlay disabled
+02-08 12:00:14.962 I/vpinball( 6186): 2026-02-08 12:00:14.962 INFO  [6461] [Player::Player@651] Prerendering static parts
+02-08 12:00:14.962 I/vpinball( 6186): 2026-02-08 12:00:14.962 INFO  [6461] [Renderer::RenderFrame@2790] Renderer: viewMode=0 vrDevice=0 noBackdrop=0
+02-08 12:00:14.962 I/vpinball( 6186): 2026-02-08 12:00:14.962 INFO  [6461] [Renderer::RenderStaticPrepass@1573] Performing prerendering of static parts.
+02-08 12:00:14.962 I/vpinball( 6186): 2026-02-08 12:00:14.962 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 70%
+02-08 12:00:15.104 D/VPinballLauncherActivity( 4390): VPinball event: 5, progress: 1%
+02-08 12:00:15.117 I/vpinball( 6186): 2026-02-08 12:00:15.117 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 71%
+02-08 12:00:15.133 I/vpinball( 6186): 2026-02-08 12:00:15.133 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 72%
+02-08 12:00:15.149 I/vpinball( 6186): 2026-02-08 12:00:15.149 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 73%
+02-08 12:00:15.168 I/vpinball( 6186): 2026-02-08 12:00:15.168 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 74%
+02-08 12:00:15.181 I/vpinball( 6186): 2026-02-08 12:00:15.181 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 75%
+02-08 12:00:15.193 I/vpinball( 6186): 2026-02-08 12:00:15.193 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 76%
+02-08 12:00:15.205 I/vpinball( 6186): 2026-02-08 12:00:15.205 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 77%
+02-08 12:00:15.219 I/vpinball( 6186): 2026-02-08 12:00:15.219 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 78%
+02-08 12:00:15.230 I/vpinball( 6186): 2026-02-08 12:00:15.230 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 79%
+02-08 12:00:15.242 I/vpinball( 6186): 2026-02-08 12:00:15.242 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 80%
+02-08 12:00:15.253 I/vpinball( 6186): 2026-02-08 12:00:15.253 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 81%
+02-08 12:00:15.268 I/vpinball( 6186): 2026-02-08 12:00:15.268 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 82%
+02-08 12:00:15.279 I/vpinball( 6186): 2026-02-08 12:00:15.279 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 83%
+02-08 12:00:15.291 I/vpinball( 6186): 2026-02-08 12:00:15.291 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 84%
+02-08 12:00:15.302 I/vpinball( 6186): 2026-02-08 12:00:15.302 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 85%
+02-08 12:00:15.306 D/VPinballLauncherActivity( 4390): VPinball event: 5, progress: 50%
+02-08 12:00:15.316 I/vpinball( 6186): 2026-02-08 12:00:15.316 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 86%
+02-08 12:00:15.328 I/vpinball( 6186): 2026-02-08 12:00:15.328 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 87%
+02-08 12:00:15.339 I/vpinball( 6186): 2026-02-08 12:00:15.339 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 88%
+02-08 12:00:15.354 I/vpinball( 6186): 2026-02-08 12:00:15.354 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 89%
+02-08 12:00:15.365 I/vpinball( 6186): 2026-02-08 12:00:15.365 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 90%
+02-08 12:00:15.377 I/vpinball( 6186): 2026-02-08 12:00:15.377 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 91%
+02-08 12:00:15.388 I/vpinball( 6186): 2026-02-08 12:00:15.388 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 92%
+02-08 12:00:15.402 I/vpinball( 6186): 2026-02-08 12:00:15.402 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 93%
+02-08 12:00:15.414 I/vpinball( 6186): 2026-02-08 12:00:15.414 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 94%
+02-08 12:00:15.425 I/vpinball( 6186): 2026-02-08 12:00:15.425 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 95%
+02-08 12:00:15.437 I/vpinball( 6186): 2026-02-08 12:00:15.437 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 96%
+02-08 12:00:15.451 I/vpinball( 6186): 2026-02-08 12:00:15.451 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 97%
+02-08 12:00:15.462 I/vpinball( 6186): 2026-02-08 12:00:15.462 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 98%
+02-08 12:00:15.474 I/vpinball( 6186): 2026-02-08 12:00:15.474 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 99%
+02-08 12:00:15.485 I/vpinball( 6186): 2026-02-08 12:00:15.485 INFO  [6461] [ProgressDialog::SetProgress@56] Prerendering Static Parts... 100%
+02-08 12:00:15.486 D/VPinballLauncherActivity( 4390): VPinball event: 5, progress: 100%
+02-08 12:00:15.491 I/vpinball( 6186): 2026-02-08 12:00:15.491 INFO  [6461] [Renderer::RenderStaticPrepass@1760] Starting Reflection Probe prerendering
+02-08 12:00:15.578 I/vpinball( 6186): 2026-02-08 12:00:15.578 INFO  [6461] [Renderer::RenderStaticPrepass@1769] Static PreRender done
+02-08 12:00:15.720 I/vpinball( 6186): 2026-02-08 12:00:15.720 INFO  [6461] [Player::Player@664] Startup done
+02-08 12:00:15.720 I/vpinball( 6186): 2026-02-08 12:00:15.720 INFO  [6461] [Player::OnFocusChanged@1049] Playfield window gained focus
+02-08 12:00:15.720 E/vpinball( 6186): 2026-02-08 12:00:15.720 ERROR [6461] [Player::FinishFrame@1889] Script error detected, closing player
+02-08 12:00:15.723 I/VPinballPlayerActivity( 6186): Captured initial view: FOV=72.4, LookAt=32.9, Layback=0.0, ViewMode=0, Emission=0.5, Bloom=0.04
+02-08 12:00:15.724 I/VPinballPlayerActivity( 6186): Loaded ScoreView state: 0
+02-08 12:00:15.726 I/VPinballPlayerActivity( 6186): ScoreView source: 0x0, aspect ratio: 4.0
+02-08 12:00:15.726 I/vpinball( 6186): 2026-02-08 12:00:15.726 INFO  [6461] [DebuggerModule::Print@4106] Script.Print '---------- FrameTime = 615'
+02-08 12:00:15.729 E/vpinball( 6186): 2026-02-08 12:00:15.729 ERROR [6461] [CodeViewer::OnScriptError@1186] Script Error at line 168 : Description unavailable
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1213] === Script context around line 168 ===
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      163: ' Temp variable for GetRef(name)(args) decomposition
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      164: Dim ssp_ref
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      165: 
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      166: ' Helper to index into a function/array return value
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      167: ' Replaces arr(x)(y) -> ssp_idx(arr(x), y) to avoid Wine parser )( limitation
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217] >>>  168: Function ssp_idx(ssp_a, ssp_i) : ssp_idx = ssp_a(ssp_i) : End Function
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      169: 
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      170: ' End Wine VBScript Compatibility Helpers
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      171: ' ============================================================================
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      172: 
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1217]      173: Randomize
+02-08 12:00:15.729 I/vpinball( 6186): 2026-02-08 12:00:15.729 INFO  [6461] [CodeViewer::OnScriptError@1219] === End script context ===
+02-08 12:00:15.729 E/VPinballPlayerActivity( 6186): SCRIPT_ERROR event received: {"description":"Description unavailable","error":1,"line":168,"position":33}
+02-08 12:00:15.729 E/vpinball( 6186): 2026-02-08 12:00:15.729 ERROR [6461] [CodeViewer::AppendLastErrorTextW@3876] Runtime error: Line: 168, Character: 33, Description unavailable
+02-08 12:00:15.730 I/vpinball( 6186): 2026-02-08 12:00:15.730 INFO  [6461] [VPinballLib::VPinballLib::AppIterate@202] Game Loop stopping, close state: 3
+02-08 12:00:15.730 I/vpinball( 6186): 2026-02-08 12:00:15.730 INFO  [6461] [Player::~Player@728] Closing player...
+02-08 12:00:15.730 E/VPinballLauncherActivity( 4390): Script error received: {"description":"Description unavailable","error":1,"line":168,"position":33}
+02-08 12:00:15.730 I/VPinballLauncherActivity$Companion( 4390): Releasing table lock (was: null)
+02-08 12:00:15.731 E/VPinballLauncherActivity( 4390): Script error details: RUNTIME ERROR at line 168, pos 33: Description unavailable
+02-08 12:00:15.732 D/PinballDMDView( 4390): [bca1a03] showScriptError: code=RUNTIME ERROR, overlay disabled
+02-08 12:00:15.737 I/vpinball( 6186): 2026-02-08 12:00:15.737 INFO  [6461] [CodeViewer::CleanUpScriptEngine@724] Sending Close to script interpreter #0xb400007488291800
+02-08 12:00:15.760 I/vpinball( 6186): 2026-02-08 12:00:15.760 INFO  [6461] [CodeViewer::CleanUpScriptEngine@743] Script interpreter state is now closed. Releasing interpreter #0xb400007488291800
+02-08 12:00:15.970 I/vpinball( 6186): 2026-02-08 12:00:15.969 INFO  [6461] [Player::~Player@982] Player closed.
+02-08 12:00:15.970 I/VPinballPlayerActivity( 6186): PLAYER_CLOSED event received
+02-08 12:00:15.970 I/VPinballPlayerActivity( 6186): Error received/displayed or submitting, waiting before closing
+02-08 12:00:16.048 I/vpinball( 6186): 2026-02-08 12:00:16.048 INFO  [6461] [VPinballLib::VPinballLib::AppIterate@213] AppIterate: Closing table after player exit: /storage/75D7-DC5F/Games/VisualPinballX/tables/Dark Chaos (apophis 2025) 2.0.vpx
+02-08 12:00:16.085 I/vpinball( 6186): 2026-02-08 12:00:16.085 INFO  [6461] [CodeViewer::CleanUpScriptEngine@724] Sending Close to script interpreter #0xb400007488290f40
+02-08 12:00:16.085 I/vpinball( 6186): 2026-02-08 12:00:16.085 INFO  [6461] [CodeViewer::CleanUpScriptEngine@743] Script interpreter state is now closed. Releasing interpreter #0xb400007488290f40
+02-08 12:00:16.086 I/vpinball( 6186): 2026-02-08 12:00:16.086 INFO  [6461] [VPinballLib::VPinballLib::AppIterate@215] AppIterate: Table closed successfully
+02-08 12:00:16.087 I/VPinballPlayerActivity( 6186): Applied ScoreView state: 0
+02-08 12:00:16.090 I/VPinballService( 6186): VPinballService destroyed
+02-08 12:00:16.091 E/VPinballPlayerActivity( 6186): Script error details: RUNTIME ERROR at line 60147, pos 12: Description unavailable
+02-08 12:00:16.147 I/VPinballPlayerActivity( 6186): Error DMD overlay added and focused
+02-08 12:00:16.147 D/PinballDMDView( 6186): [ad6eb8b] showScriptError: code=RUNTIME ERROR, overlay disabled
+02-08 12:00:16.151 E/VPinballPlayerActivity( 6186): Script error details: RUNTIME ERROR at line 168, pos 33: Description unavailable
+02-08 12:00:16.151 D/PinballDMDView( 6186): [ad6eb8b] showScriptError: code=RUNTIME ERROR, overlay disabled
+02-08 12:01:01.519 E/VPinballPlayerActivity( 6186): *** VPINBALL KEY EVENT *** keyCode: 96, keyName: KEYCODE_BUTTON_A, errorShowing: true, settingsShowing: false
+02-08 12:01:01.519 I/VPinballPlayerActivity( 6186): User chose to submit error report
