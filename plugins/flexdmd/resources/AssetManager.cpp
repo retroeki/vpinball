@@ -325,7 +325,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
       Bitmap* pCachedBitmap = new Bitmap(itwo->second);
       pCachedBitmap->AddRef();
       m_cachedBitmaps[pSrc->GetId()] = pCachedBitmap;
-      LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
+      // LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
       if (pSrc->GetAssetType() == AssetType_Image) {
          for (BitmapFilter* pFilter : pSrc->GetBitmapFilters())
             pFilter->Filter(pCachedBitmap);
@@ -339,7 +339,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
           Bitmap* pCachedBitmap = new Bitmap(pData, pSrc->GetAssetType());
           pCachedBitmap->AddRef();
           m_cachedBitmaps[pSrc->GetIdWithoutOptions()] = pCachedBitmap;
-          LOGI("Bitmap added to cache: %s", pSrc->GetIdWithoutOptions().c_str());
+          // LOGI("Bitmap added to cache: %s", pSrc->GetIdWithoutOptions().c_str());
           if (pSrc->GetAssetType() == AssetType_Image) {
              if (!pSrc->GetBitmapFilters().empty()) {
                 pCachedBitmap = new Bitmap(pCachedBitmap);
@@ -347,7 +347,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
                 m_cachedBitmaps[pSrc->GetId()] = pCachedBitmap;
                 for (BitmapFilter* pFilter : pSrc->GetBitmapFilters())
                    pFilter->Filter(pCachedBitmap);
-                LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
+                // LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
              }
           }
           return pCachedBitmap;
@@ -370,7 +370,7 @@ Font* AssetManager::GetFont(AssetSrc* pSrc)
    Font* pFont = new Font(this, pSrc);
    pFont->AddRef();
    m_cachedFonts[pSrc->GetId()] = pFont;
-   LOGI("Font added to cache: %s", pSrc->GetId().c_str());
+   // LOGI("Font added to cache: %s", pSrc->GetId().c_str());
    return pFont;
 }
 

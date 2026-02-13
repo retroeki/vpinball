@@ -563,11 +563,11 @@ Player::Player(PinTable *const table, const int playMode)
                      if (isError)
                         m_liveUI->PushNotification("Image '" + image->m_name + "' was downsized due to low memory", 5000);
                   }
-                  PLOGI << "Image '" << image->m_name << "' loaded to " << (uploaded ? "GPU" : "RAM");
+                  // PLOGI << "Image '" << image->m_name << "' loaded to " << (uploaded ? "GPU" : "RAM");
 #if defined(__ANDROID__)
-               MEM_LOG("Loaded '%s' (%zux%zu, ~%zuMB needed) | AvailMem: %zuMB | InProgress: %d (~%zuMB)",
-                  image->m_name.c_str(), (size_t)image->m_width, (size_t)image->m_height, neededMem / (1024*1024),
-                  getAvailableMemoryMB(), nLoadInProgress, estimatedInProgressMem / (1024*1024));
+               // MEM_LOG("Loaded '%s' (%zux%zu, ~%zuMB needed) | AvailMem: %zuMB | InProgress: %d (~%zuMB)",
+               //    image->m_name.c_str(), (size_t)image->m_width, (size_t)image->m_height, neededMem / (1024*1024),
+               //    getAvailableMemoryMB(), nLoadInProgress, estimatedInProgressMem / (1024*1024));
 #endif
                }
                else if (resizeOnLowMem)
@@ -600,8 +600,8 @@ Player::Player(PinTable *const table, const int playMode)
 #if defined(__ANDROID__)
       // Cap threads to reduce peak memory from parallel texture decoding
       const int nThreads = min(g_pvp->GetLogicalNumberOfProcessors(), 4);
-      MEM_LOG("=== TEXTURE LOADING START === %zu images, %d threads (capped from %d) | AvailMem: %zuMB",
-         m_ptable->m_vimage.size(), nThreads, g_pvp->GetLogicalNumberOfProcessors(), getAvailableMemoryMB());
+      // MEM_LOG("=== TEXTURE LOADING START === %zu images, %d threads (capped from %d) | AvailMem: %zuMB",
+      //    m_ptable->m_vimage.size(), nThreads, g_pvp->GetLogicalNumberOfProcessors(), getAvailableMemoryMB());
 #else
       const int nThreads = g_pvp->GetLogicalNumberOfProcessors();
 #endif
@@ -611,8 +611,8 @@ Player::Player(PinTable *const table, const int playMode)
       pool.wait_until_empty();
       pool.wait_until_nothing_in_flight();
 #if defined(__ANDROID__)
-      MEM_LOG("=== TEXTURE LOADING DONE === AvailMem: %zuMB | %zu failed preloads",
-         getAvailableMemoryMB(), failedPreloads.size());
+      // MEM_LOG("=== TEXTURE LOADING DONE === AvailMem: %zuMB | %zu failed preloads",
+      //    getAvailableMemoryMB(), failedPreloads.size());
 #endif
       #ifdef ENABLE_BGFX
       m_renderer->m_renderDevice->m_frameMutex.lock();
@@ -725,8 +725,8 @@ Player::Player(PinTable *const table, const int playMode)
       {
          totalFreed += image->ReleaseSourceData();
       }
-      MEM_LOG("=== RELEASED COMPRESSED IMAGE DATA === Freed %zuMB | AvailMem: %zuMB",
-         totalFreed / (1024 * 1024), getAvailableMemoryMB());
+      // MEM_LOG("=== RELEASED COMPRESSED IMAGE DATA === Freed %zuMB | AvailMem: %zuMB",
+      //    totalFreed / (1024 * 1024), getAvailableMemoryMB());
    }
 #endif
 

@@ -339,12 +339,12 @@ bool ScriptGlobalTable::GetTextFileFromDirectory(const string &filename, const s
    // else: use current directory
    szPath += filename;
    #ifdef __STANDALONE__
-   PLOGI << "GetTextFileFromDirectory: searching for '" << szPath << "'";
+   // PLOGI << "GetTextFileFromDirectory: searching for '" << szPath << "'";
    szPath = find_case_insensitive_file_path(szPath);
    if (szPath.empty()) {
-      PLOGW << "GetTextFileFromDirectory: case-insensitive search returned empty for original path";
+      // PLOGW << "GetTextFileFromDirectory: case-insensitive search returned empty for original path";
    } else {
-      PLOGI << "GetTextFileFromDirectory: found at '" << szPath << "'";
+      // PLOGI << "GetTextFileFromDirectory: found at '" << szPath << "'";
    }
    #endif
    if (!szPath.empty()) {

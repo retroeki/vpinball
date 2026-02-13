@@ -42,7 +42,7 @@ ScoreView::~ScoreView()
 
 void ScoreView::OnResChanged(const unsigned int msgId, void* userData, void* msgData)
 {
-   LOGI("ScoreView::OnResChanged: Display source changed, invalidating layout selection");
+   // LOGI("ScoreView::OnResChanged: Display source changed, invalidating layout selection");
    static_cast<ScoreView*>(userData)->m_invalidBestLayout = true;
 }
 
@@ -462,7 +462,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
 
    // Evaluate output aspect ratio
    const float rtAR = scoreW / scoreH;
-   LOGI("ScoreView::Select: output=%.0fx%.0f AR=%.2f, %d layouts", scoreW, scoreH, rtAR, (int)m_layouts.size());
+   // LOGI("ScoreView::Select: output=%.0fx%.0f AR=%.2f, %d layouts", scoreW, scoreH, rtAR, (int)m_layouts.size());
 
    // Evaluate layouts against current context
    ResURIResolver::SegDisplayState segDisplay;
@@ -482,23 +482,23 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             if (display.source == nullptr)
             {
                layout.unmatchedVisuals++;
-               LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=NULL (unmatched)",
-                  layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y);
+               // LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=NULL (unmatched)",
+               //    layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y);
             }
             else if (display.source->width * visual.dmdSize.y != visual.dmdSize.x * display.source->height)
             {
                layout.unmatchedVisuals++;
-               LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=%ux%u (AR mismatch: %u*%d != %d*%u)",
-                  layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y,
-                  display.source->width, display.source->height,
-                  display.source->width, visual.dmdSize.y, visual.dmdSize.x, display.source->height);
+               // LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=%ux%u (AR mismatch: %u*%d != %d*%u)",
+               //    layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y,
+               //    display.source->width, display.source->height,
+               //    display.source->width, visual.dmdSize.y, visual.dmdSize.x, display.source->height);
             }
             else
             {
                layout.matchedVisuals += 10; // To favor DMD over alphanumeric seg displays
-               LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=%ux%u (MATCHED)",
-                  layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y,
-                  display.source->width, display.source->height);
+               // LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=%ux%u (MATCHED)",
+               //    layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y,
+               //    display.source->width, display.source->height);
             }
             break;
          case VisualType::SegDisplay:
@@ -512,8 +512,8 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             break;
          }
       }
-      LOGI("ScoreView::Select: layout %.0fx%.0f -> matched=%d unmatched=%d unfitted=%.3f",
-         layout.width, layout.height, layout.matchedVisuals, layout.unmatchedVisuals, layout.unfittedPixels);
+      // LOGI("ScoreView::Select: layout %.0fx%.0f -> matched=%d unmatched=%d unfitted=%.3f",
+      //    layout.width, layout.height, layout.matchedVisuals, layout.unmatchedVisuals, layout.unfittedPixels);
    }
 
    // Select the best matching layout:
@@ -541,8 +541,8 @@ void ScoreView::Select(const float scoreW, const float scoreH)
    }
    else
    {
-      LOGI("ScoreView::Select: Selected layout %.0fx%.0f (matched=%d)",
-         m_bestLayout->width, m_bestLayout->height, m_bestLayout->matchedVisuals);
+      // LOGI("ScoreView::Select: Selected layout %.0fx%.0f (matched=%d)",
+      //    m_bestLayout->width, m_bestLayout->height, m_bestLayout->matchedVisuals);
    }
 }
 
@@ -551,7 +551,7 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
    if (m_invalidBestLayout)
    {
       m_invalidBestLayout = false;
-      LOGI("ScoreView::Render: Re-selecting layout (outWidth=%.0f, outHeight=%.0f)", ctx->outWidth, ctx->outHeight);
+      // LOGI("ScoreView::Render: Re-selecting layout (outWidth=%.0f, outHeight=%.0f)", ctx->outWidth, ctx->outHeight);
       Select(ctx->outWidth, ctx->outHeight);
    }
 

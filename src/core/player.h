@@ -53,7 +53,7 @@ public:
       }
       #else
       if (value != -1 && m_progress != value) {
-         PLOGI.printf("%s %d%%", text.c_str(), value);
+         // PLOGI.printf("%s %d%%", text.c_str(), value);
          m_progress = value;
       }
       #endif

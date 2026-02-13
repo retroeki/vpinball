@@ -458,28 +458,28 @@ void PUPLabel::Render(VPXRenderContext2D* const ctx, SDL_Rect& rect, int pagenum
       dest.y -= height;
 
    // Non-repeating diagnostic log: fires once per label, resets when content/position changes (m_dirty)
-   if (!m_positionLogged)
-   {
-      const char* typeStr = (m_type == PUP_LABEL_TYPE_TEXT) ? "TEXT" : (m_type == PUP_LABEL_TYPE_IMAGE) ? "IMAGE" : "GIF";
-      const char* xAlignStr = (m_xAlign == PUP_LABEL_XALIGN_LEFT) ? "LEFT" : (m_xAlign == PUP_LABEL_XALIGN_CENTER) ? "CENTER" : "RIGHT";
-      const char* yAlignStr = (m_yAlign == PUP_LABEL_YALIGN_TOP) ? "TOP" : (m_yAlign == PUP_LABEL_YALIGN_CENTER) ? "CENTER" : "BOTTOM";
-      LOGI("PUP LABEL POS: screen=%d(%s) name='%s' type=%s caption='%s' path='%s' "
-         "pos%%=(%.1f,%.1f) align=(%s,%s) imgSize%%=(%.1f,%.1f) fontSize%%=%.1f "
-         "screenRect=(%d,%d,%d,%d) dest=(%.1f,%.1f,%.1f,%.1f) "
-         "outputArea=(%.0f,%.0f) page=%d",
-         m_pScreen ? m_pScreen->GetScreenNum() : -1,
-         m_pScreen ? m_pScreen->GetScreenDes().c_str() : "?",
-         m_szName.c_str(), typeStr,
-         m_szCaption.substr(0, 60).c_str(),
-         m_szPath.substr(0, 80).c_str(),
-         m_xPos, m_yPos, xAlignStr, yAlignStr,
-         m_imageWidth, m_imageHeight, m_size,
-         rect.x, rect.y, rect.w, rect.h,
-         dest.x, dest.y, dest.w, dest.h,
-         ctx->srcWidth, ctx->srcHeight,
-         m_pagenum);
-      m_positionLogged = true;
-   }
+   // if (!m_positionLogged)
+   // {
+   //    const char* typeStr = (m_type == PUP_LABEL_TYPE_TEXT) ? "TEXT" : (m_type == PUP_LABEL_TYPE_IMAGE) ? "IMAGE" : "GIF";
+   //    const char* xAlignStr = (m_xAlign == PUP_LABEL_XALIGN_LEFT) ? "LEFT" : (m_xAlign == PUP_LABEL_XALIGN_CENTER) ? "CENTER" : "RIGHT";
+   //    const char* yAlignStr = (m_yAlign == PUP_LABEL_YALIGN_TOP) ? "TOP" : (m_yAlign == PUP_LABEL_YALIGN_CENTER) ? "CENTER" : "BOTTOM";
+   //    LOGI("PUP LABEL POS: screen=%d(%s) name='%s' type=%s caption='%s' path='%s' "
+   //       "pos%%=(%.1f,%.1f) align=(%s,%s) imgSize%%=(%.1f,%.1f) fontSize%%=%.1f "
+   //       "screenRect=(%d,%d,%d,%d) dest=(%.1f,%.1f,%.1f,%.1f) "
+   //       "outputArea=(%.0f,%.0f) page=%d",
+   //       m_pScreen ? m_pScreen->GetScreenNum() : -1,
+   //       m_pScreen ? m_pScreen->GetScreenDes().c_str() : "?",
+   //       m_szName.c_str(), typeStr,
+   //       m_szCaption.substr(0, 60).c_str(),
+   //       m_szPath.substr(0, 80).c_str(),
+   //       m_xPos, m_yPos, xAlignStr, yAlignStr,
+   //       m_imageWidth, m_imageHeight, m_size,
+   //       rect.x, rect.y, rect.w, rect.h,
+   //       dest.x, dest.y, dest.w, dest.h,
+   //       ctx->srcWidth, ctx->srcHeight,
+   //       m_pagenum);
+   //    m_positionLogged = true;
+   // }
 
    if (m_animation)
    {

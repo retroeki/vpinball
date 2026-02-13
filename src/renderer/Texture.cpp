@@ -148,8 +148,8 @@ static std::shared_ptr<BaseTexture> JpegScaledDecode(const void* data, const siz
    tex->m_realHeight = imgH;
 
    const size_t savedMB = ((size_t)imgW * imgH * channels - (size_t)outW * outH * channels) / (1024 * 1024);
-   TEX_LOG("JPEG scaled decode: %ux%u -> %ux%u (1/%u) | Peak RAM saved: ~%zuMB",
-      imgW, imgH, outW, outH, scale_denom, savedMB);
+   // TEX_LOG("JPEG scaled decode: %ux%u -> %ux%u (1/%u) | Peak RAM saved: ~%zuMB",
+   //    imgW, imgH, outW, outH, scale_denom, savedMB);
 
    return tex;
 }
@@ -318,8 +318,8 @@ static std::shared_ptr<BaseTexture> PngScaledDecode(const void* data, const size
 
    const size_t fullMB = (size_t)imgW * imgH * channels / (1024 * 1024);
    const size_t outMB = (size_t)outW * outH * channels / (1024 * 1024);
-   TEX_LOG("PNG scaled decode: %ux%u -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
-      imgW, imgH, outW, outH, scale_denom, channels, fullMB, outMB);
+   // TEX_LOG("PNG scaled decode: %ux%u -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
+   //    imgW, imgH, outW, outH, scale_denom, channels, fullMB, outMB);
 
    return tex;
 }
@@ -465,8 +465,8 @@ static std::shared_ptr<BaseTexture> ExrScaledDecode(const void* data, const size
 
       const size_t fullMB = (size_t)imgW * imgH * numCh * sizeof(half) / (1024 * 1024);
       const size_t outMB = (size_t)outW * outH * numCh * sizeof(half) / (1024 * 1024);
-      TEX_LOG("EXR scaled decode: %dx%d -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
-         imgW, imgH, outW, outH, scale_denom, numCh, fullMB, outMB);
+      // TEX_LOG("EXR scaled decode: %dx%d -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
+      //    imgW, imgH, outW, outH, scale_denom, numCh, fullMB, outMB);
 
       return tex;
 
@@ -653,8 +653,8 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
       // Debug: log format for large textures that bypassed our scaled decoders
       if (size > 1024 * 1024) {
          const uint8_t* hdr = static_cast<const uint8_t*>(data);
-         TEX_LOG("FreeImage fallback: fif=%d size=%zuMB magic=[%02x %02x %02x %02x %02x %02x %02x %02x]",
-            (int)fif, size / (1024*1024), hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7]);
+         // TEX_LOG("FreeImage fallback: fif=%d size=%zuMB magic=[%02x %02x %02x %02x %02x %02x %02x %02x]",
+         //    (int)fif, size / (1024*1024), hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], hdr[6], hdr[7]);
       }
 #endif
       // Load

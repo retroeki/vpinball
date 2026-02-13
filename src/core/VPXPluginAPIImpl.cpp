@@ -300,7 +300,7 @@ string VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides(const string& script) con
       const auto& overrideEntry = m_scriptCOMObjectOverrides.find(className);
       if (overrideEntry != m_scriptCOMObjectOverrides.end())
       {
-         PLOGI << "COM script object " << className << " overriden to be provided by a plugin";
+         // PLOGI << "COM script object " << className << " overriden to be provided by a plugin";
          result << "CreatePluginObject(\"" << className << "\")";
       }
       else
