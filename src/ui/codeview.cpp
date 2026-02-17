@@ -4077,6 +4077,12 @@ STDMETHODIMP DebuggerModule::Print(VARIANT *pvar)
    if (g_pplayer->m_ptable->IsLocked())
       return S_OK;
 
+#ifdef __LIBVPINBALL__
+   // On Android/iOS there is no debugger window, and Script.Print output
+   // floods logcat with noise (e.g. physics values every frame). Skip entirely.
+   return S_OK;
+#endif
+
    const bool enableLog = g_pvp->m_settings.GetEditor_EnableLog();
    const bool logScript = enableLog && g_pvp->m_settings.GetEditor_LogScriptOutput();
 

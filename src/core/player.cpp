@@ -1643,6 +1643,13 @@ void Player::MultithreadedGameLoop()
          m_logicProfiler.ExitProfileSection();
       }
 #else
+      else
+      {
+         // Render thread is busy - yield CPU to prevent starving it.
+         // Without this, the game logic thread spin-waits at 40kHz+ burning a full core,
+         // which causes frame drops and sluggish visual feedback on faster devices.
+         uOverSleep(100000); // ~100us target, gives render thread CPU time
+      }
       // Android and iOS use SDL main callbacks and use SDL_AppIterate
       break;
 #endif
