@@ -112,7 +112,7 @@ vec3 ReinhardToneMap(vec3 color)
 	#define CRTS_MASK_SHADOW 1
 	// Setup the function which returns input image color
 	vec3 CrtsFetch(vec2 uv) {
-		return InvGamma(texelFetch(displayTex, uv * crtSize, 0).rgb);
+		return InvGamma(texture2DLod(displayTex, uv, 0.0).rgb);
 	}
 	
 	#include "fs_crt_lottes.fs"
@@ -211,7 +211,7 @@ void main()
 		vec3 litLum;
 		if (crtMode == 0.0) // Pixelated
 		{
-			litLum = texelFetch(displayTex,  displayUv * crtSize, 0).rgb;
+			litLum = texture2DLod(displayTex, displayUv, 0.0).rgb;
 		}
 		else if (crtMode == 1.0) // Smoothed
 		{

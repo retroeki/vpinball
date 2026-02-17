@@ -998,7 +998,11 @@ void Shader::ApplyUniform(const ShaderUniforms uniformName)
    if ((ShaderUniform::coreUniforms[uniformName].type != SUT_Sampler) && memcmp(dst, src, ShaderUniform::coreUniforms[uniformName].stateSize) == 0)
    {
       #if defined(ENABLE_BGFX)
-      return;
+      // BGFX's OpenGL, OpenGLES & Vulkan backends do not persist uniform state correctly, so we need to re-set them every time
+      if (bgfx::getRendererType() != bgfx::RendererType::OpenGL
+       && bgfx::getRendererType() != bgfx::RendererType::OpenGLES
+       && bgfx::getRendererType() != bgfx::RendererType::Vulkan)
+         return;
 
       #elif defined(ENABLE_OPENGL)
       if (ShaderUniform::coreUniforms[uniformName].type == SUT_DataBlock)
