@@ -631,8 +631,10 @@ void PhysicsEngine::UpdatePhysics()
       //const uint32_t sim_msec = (uint32_t)(m_curPhysicsFrameTime / 1000);
       const uint32_t cur_time_msec = (uint32_t)(cur_time_usec / 1000);
 
-      #if !defined(ENABLE_BGFX)
-      // FIXME remove ? To be done correctly, we should process OS messages and sync back controller
+      #if !defined(ENABLE_BGFX) || defined(__LIBVPINBALL__)
+      // On PC BGFX, the outer MultithreadedGameLoop spins at ~1000Hz+ so input is polled frequently there.
+      // On Android/iOS (__LIBVPINBALL__), the outer loop only runs once per SDL_AppIterate (VSync-aligned, ~120Hz),
+      // so we must poll input inside the physics loop to maintain sub-ms flipper response.
       g_pplayer->m_pininput.ProcessInput();
       #endif
 
