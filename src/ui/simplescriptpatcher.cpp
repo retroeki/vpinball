@@ -1600,7 +1600,7 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
         return indent + "Dim " + forVar + ", " + tempIdx + collDecl + "\r\n" +
                indent + "If IsArray(" + collVar + ") Then\r\n" +
                indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
-               indent + "\t\tSet " + forVar + " = " + collVar + "(" + tempIdx + ")\r\n" +
+               indent + "\t\tIf IsObject(" + collVar + "(" + tempIdx + ")) Then : Set " + forVar + " = " + collVar + "(" + tempIdx + ") : Else : " + forVar + " = " + collVar + "(" + tempIdx + ") : End If\r\n" +
                indent + "\t\t" + body + "\r\n" +
                indent + "\tNext\r\n" +
                indent + "End If";
@@ -1630,7 +1630,7 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
                indent + "Dim " + tempIdx + "\r\n" +
                indent + "If IsArray(" + collVar + ") Then\r\n" +
                indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
-               indent + "\t\tSet " + varName + " = " + collVar + "(" + tempIdx + ")\r\n" +
+               indent + "\t\tIf IsObject(" + collVar + "(" + tempIdx + ")) Then : Set " + varName + " = " + collVar + "(" + tempIdx + ") : Else : " + varName + " = " + collVar + "(" + tempIdx + ") : End If\r\n" +
                indent + "\t\t" + body + "\r\n" +
                indent + "\tNext\r\n" +
                indent + "End If";
@@ -1655,7 +1655,7 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
             count++;
             PLOGI.printf("PatchSingleLineForEach: Converting multi-line For Each to For loop");
             return indent + "Dim " + tempIdx + " : If IsArray(" + collection + ") Then : For " + tempIdx + " = 0 To UBound(" + collection + ")\r\n" +
-                   indent + "\tSet " + varName + " = " + collection + "(" + tempIdx + ")\r\n" +
+                   indent + "\tIf IsObject(" + collection + "(" + tempIdx + ")) Then : Set " + varName + " = " + collection + "(" + tempIdx + ") : Else : " + varName + " = " + collection + "(" + tempIdx + ") : End If\r\n" +
                    body +
                    nextIndent + "Next : End If";
         });
