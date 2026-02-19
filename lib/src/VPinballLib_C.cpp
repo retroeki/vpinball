@@ -281,6 +281,20 @@ VPINBALLAPI VPINBALL_STATUS VPinballGetScoreViewSourceSize(int* width, int* heig
    return status;
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballCaptureScoreView()
+{
+   return VPinballLib::VPinballLib::Instance().CaptureScoreView();
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballGetScoreViewCapture(int* width, int* height, uint32_t* pixels, int maxPixels)
+{
+   int w = 0, h = 0;
+   VPINBALL_STATUS status = VPinballLib::VPinballLib::Instance().GetScoreViewCapture(w, h, pixels, maxPixels);
+   if (width) *width = w;
+   if (height) *height = h;
+   return status;
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetMusicVolume(int volume)
 {
    if (!g_pplayer)

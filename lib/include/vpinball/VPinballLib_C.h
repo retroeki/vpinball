@@ -119,6 +119,10 @@ VPINBALLAPI VPINBALL_STATUS VPinballCycleViewMode();
 VPINBALLAPI VPINBALL_STATUS VPinballToggleScoreView(bool enable, int x, int y, int width, int height);
 VPINBALLAPI VPINBALL_STATUS VPinballGetScoreViewSourceSize(int* width, int* height);
 
+// ScoreView capture (async: call Capture, then poll Get until it returns SUCCESS)
+VPINBALLAPI VPINBALL_STATUS VPinballCaptureScoreView();
+VPINBALLAPI VPINBALL_STATUS VPinballGetScoreViewCapture(int* width, int* height, uint32_t* pixels, int maxPixels);
+
 // Audio Volume (0-100)
 
 VPINBALLAPI VPINBALL_STATUS VPinballSetMusicVolume(int volume);

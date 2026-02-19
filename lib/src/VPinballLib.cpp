@@ -1172,6 +1172,125 @@ VPINBALL_STATUS VPinballLib::GetScoreViewSourceSize(int& width, int& height)
    return VPINBALL_STATUS_SUCCESS;
 }
 
+VPINBALL_STATUS VPinballLib::CaptureScoreView()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return VPINBALL_STATUS_FAILURE;
+
+   // ScoreView must be in embedded mode
+   if (g_pplayer->m_scoreViewOutput.GetMode() != VPX::RenderOutput::OM_EMBEDDED)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Calculate crop rect from ScoreView embedded window position
+   VPX::EmbeddedWindow* embedWnd = g_pplayer->m_scoreViewOutput.GetEmbeddedWindow();
+   if (!embedWnd)
+      return VPINBALL_STATUS_FAILURE;
+
+   VPX::Window* containerWnd = g_pplayer->m_renderer->m_renderDevice->m_outputWnd[0];
+   const float displayScaleX = static_cast<float>(containerWnd->GetPixelWidth()) / static_cast<float>(containerWnd->GetWidth());
+   const float displayScaleY = static_cast<float>(containerWnd->GetPixelHeight()) / static_cast<float>(containerWnd->GetHeight());
+
+   int wndX, wndY;
+   embedWnd->GetPos(wndX, wndY);
+   const int wndW = embedWnd->GetWidth();
+   const int wndH = embedWnd->GetHeight();
+
+   {
+      std::lock_guard<std::mutex> lock(m_scoreViewCapture.mutex);
+      m_scoreViewCapture.cropX = static_cast<int>((float)wndX * displayScaleX);
+      m_scoreViewCapture.cropY = static_cast<int>((float)wndY * displayScaleY);
+      m_scoreViewCapture.cropW = static_cast<int>((float)wndW * displayScaleX);
+      m_scoreViewCapture.cropH = static_cast<int>((float)wndH * displayScaleY);
+      m_scoreViewCapture.ready = false;
+   }
+
+   // Request screenshot on main thread — the marker filename tells the callback to crop
+   return SDL_RunOnMainThread([](void* userdata) {
+      if (!g_pplayer || !g_pplayer->m_renderer || !g_pplayer->m_renderer->m_renderDevice)
+         return;
+      g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot("__scoreview_capture__",
+         [](bool success) {
+            if (!success)
+               PLOGE << "ScoreView capture failed";
+         });
+   }, nullptr, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+VPINBALL_STATUS VPinballLib::GetScoreViewCapture(int& width, int& height, uint32_t* pixels, int maxPixels)
+{
+   if (!m_scoreViewCapture.ready)
+      return VPINBALL_STATUS_FAILURE;
+
+   std::lock_guard<std::mutex> lock(m_scoreViewCapture.mutex);
+   width = m_scoreViewCapture.capturedWidth;
+   height = m_scoreViewCapture.capturedHeight;
+   const int totalPixels = width * height;
+   if (totalPixels > maxPixels || totalPixels <= 0)
+      return VPINBALL_STATUS_FAILURE;
+
+   memcpy(pixels, m_scoreViewCapture.pixels.data(), totalPixels * sizeof(uint32_t));
+   m_scoreViewCapture.ready = false;
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+bool VPinballLib::IsScoreViewCapture(const char* filePath) const
+{
+   return filePath && strcmp(filePath, "__scoreview_capture__") == 0;
+}
+
+void VPinballLib::DeliverScoreViewCapture(const uint32_t* framePixels, uint32_t frameWidth, uint32_t frameHeight, bool yflip, bool swapRB)
+{
+   std::lock_guard<std::mutex> lock(m_scoreViewCapture.mutex);
+
+   int cx = m_scoreViewCapture.cropX;
+   int cy = m_scoreViewCapture.cropY;
+   int cw = m_scoreViewCapture.cropW;
+   int ch = m_scoreViewCapture.cropH;
+
+   // Clamp crop rect to frame bounds
+   if (cx < 0) cx = 0;
+   if (cy < 0) cy = 0;
+   if (cx + cw > (int)frameWidth) cw = (int)frameWidth - cx;
+   if (cy + ch > (int)frameHeight) ch = (int)frameHeight - cy;
+   if (cw <= 0 || ch <= 0)
+   {
+      m_scoreViewCapture.ready = false;
+      return;
+   }
+
+   m_scoreViewCapture.capturedWidth = cw;
+   m_scoreViewCapture.capturedHeight = ch;
+   m_scoreViewCapture.pixels.resize(cw * ch);
+
+   for (int row = 0; row < ch; row++)
+   {
+      // Handle Y-flip: if yflip, row 0 in crop maps to bottom of frame
+      int srcRow = yflip ? ((int)frameHeight - 1 - (cy + row)) : (cy + row);
+      const uint32_t* srcLine = framePixels + srcRow * frameWidth + cx;
+      uint32_t* dstLine = m_scoreViewCapture.pixels.data() + row * cw;
+
+      if (swapRB)
+      {
+         // Swap R and B channels (Metal BGRA → RGBA)
+         for (int col = 0; col < cw; col++)
+         {
+            uint32_t p = srcLine[col];
+            uint8_t b = (p >> 0) & 0xFF;
+            uint8_t g = (p >> 8) & 0xFF;
+            uint8_t r = (p >> 16) & 0xFF;
+            uint8_t a = (p >> 24) & 0xFF;
+            dstLine[col] = (a << 24) | (b << 16) | (g << 8) | r;
+         }
+      }
+      else
+      {
+         memcpy(dstLine, srcLine, cw * sizeof(uint32_t));
+      }
+   }
+
+   m_scoreViewCapture.ready = true;
+}
+
 VPINBALL_STATUS VPinballLib::ResetTable()
 {
    if (!g_pplayer)

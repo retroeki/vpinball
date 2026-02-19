@@ -347,6 +347,16 @@ void RenderDevice::tBGFXCallback::traceVargs(const char* _filePath, uint16_t _li
 
 void RenderDevice::tBGFXCallback::screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t _size, bool _yflip)
 {
+   // Check if this is a ScoreView capture request (marker filename)
+   if (VPinballLib::VPinballLib::Instance().IsScoreViewCapture(_filePath))
+   {
+      bool swapRB = (bgfx::getCaps()->rendererType == bgfx::RendererType::Metal);
+      VPinballLib::VPinballLib::Instance().DeliverScoreViewCapture(
+         reinterpret_cast<const uint32_t*>(_data), _width, _height, _yflip, swapRB);
+      m_rd.m_screenshotCallback(true);
+      return;
+   }
+
    bool success = false;
    auto tex = BaseTexture::Create(_width, _height, BaseTexture::SRGBA);
    if (tex)

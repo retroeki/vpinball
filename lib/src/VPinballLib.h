@@ -107,6 +107,14 @@ public:
    VPINBALL_STATUS CycleViewMode();
    VPINBALL_STATUS ToggleScoreView(bool enable, int x, int y, int width, int height);
    VPINBALL_STATUS GetScoreViewSourceSize(int& width, int& height);
+   VPINBALL_STATUS CaptureScoreView();
+   VPINBALL_STATUS GetScoreViewCapture(int& width, int& height, uint32_t* pixels, int maxPixels);
+
+   // Called by screenShot() callback to check if this is a ScoreView capture request
+   bool IsScoreViewCapture(const char* filePath) const;
+   // Called by screenShot() callback to deliver cropped ScoreView pixels
+   void DeliverScoreViewCapture(const uint32_t* framePixels, uint32_t frameWidth, uint32_t frameHeight, bool yflip, bool swapRB);
+
    VPINBALL_STATUS ResetTable();
    void SetGameLoop(std::function<void()> gameLoop) { m_gameLoop = gameLoop; }
 
@@ -129,6 +137,16 @@ private:
    std::mutex m_eventMutex;
    bool m_captureInProgress = false;
    bool m_initialized = false;
+
+   // ScoreView capture state
+   struct {
+      std::atomic<bool> requested{false};
+      std::atomic<bool> ready{false};
+      int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
+      std::vector<uint32_t> pixels;
+      int capturedWidth = 0, capturedHeight = 0;
+      std::mutex mutex;
+   } m_scoreViewCapture;
 
    // Suspend/resume synchronization for safe surface lifecycle handling
    std::atomic<bool> m_suspended{false};           // Request to suspend rendering

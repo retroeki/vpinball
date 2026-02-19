@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL_system.h>
 #include <jni.h>
+#include <vector>
 
 #ifdef ENABLE_XR
 #define XR_USE_PLATFORM_ANDROID
@@ -370,6 +371,37 @@ JNIEXPORT jintArray JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetSco
    jintArray result = env->NewIntArray(2);
    jint values[2] = { width, height };
    env->SetIntArrayRegion(result, 0, 2, values);
+   return result;
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballCaptureScoreView(JNIEnv* env, jobject obj)
+{
+   return VPinballCaptureScoreView();
+}
+
+JNIEXPORT jintArray JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetScoreViewCapture(JNIEnv* env, jobject obj)
+{
+   // First, probe dimensions with a small buffer to check if ready
+   int width = 0, height = 0;
+   // Use a two-pass approach: first call with null-like to get dimensions, but our API needs pixels buffer
+   // Instead, allocate a reasonable max buffer (4K = 3840x2160 = ~8M pixels, but ScoreView is typically small)
+   // ScoreView is usually DMD-sized, so 1920x1080 max is very generous
+   const int maxPixels = 1920 * 1080;
+   std::vector<uint32_t> pixels(maxPixels);
+
+   VPINBALL_STATUS status = VPinballGetScoreViewCapture(&width, &height, pixels.data(), maxPixels);
+   if (status != VPINBALL_STATUS_SUCCESS || width <= 0 || height <= 0)
+      return nullptr;
+
+   // Pack as [width, height, pixel0, pixel1, ...]
+   const int totalPixels = width * height;
+   jintArray result = env->NewIntArray(2 + totalPixels);
+   if (!result)
+      return nullptr;
+
+   jint header[2] = { width, height };
+   env->SetIntArrayRegion(result, 0, 2, header);
+   env->SetIntArrayRegion(result, 2, totalPixels, reinterpret_cast<const jint*>(pixels.data()));
    return result;
 }
 
