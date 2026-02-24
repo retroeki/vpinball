@@ -1,0 +1,331 @@
+#include "core/stdafx.h"
+
+#include "CrashHandler.h"
+#include "BlackBox.h"
+#include "MemoryStatus.h"
+#include "StackTrace.h"
+#include <cstdio>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <dbghelp.h>
+#include <cassert>
+#include "core/vpversion.h"
+
+namespace
+{
+   static string s_miniDumpFileName = "crash.dmp"s;
+   static string s_reportFileName = "crash.txt"s;
+
+   void WriteProcessName(FILE* f)
+   {
+      fprintf(f, "Process: ");
+      const string buffer = GetExecutablePath();
+      const char* lastSeparatorPos = strrchr(buffer.c_str(), PATH_SEPARATOR_CHAR);
+      if (lastSeparatorPos != nullptr)
+         fprintf(f, "%s", lastSeparatorPos + 1); // +1 -> skip over separator
+      else
+         fprintf(f, "%s", buffer.c_str());
+   }
+
+   typedef HRESULT(STDAPICALLTYPE *pRGV)(LPOSVERSIONINFOEXW osi);
+   static pRGV mRtlGetVersion = nullptr;
+
+   void WriteSystemInfo(FILE* f)
+   {
+      if (mRtlGetVersion == nullptr)
+         mRtlGetVersion = (pRGV)GetProcAddress(GetModuleHandle(TEXT("ntdll")), "RtlGetVersion"); // apparently the only really reliable solution to get the OS version (as of Win10 1803)
+
+      DWORD major, minor, build;
+      BYTE product;
+      if (mRtlGetVersion != nullptr) // Windows 10 1803 and above
+      {
+         OSVERSIONINFOEXW osInfo;
+         osInfo.dwOSVersionInfoSize = sizeof(osInfo);
+         mRtlGetVersion(&osInfo);
+
+         major = osInfo.dwMajorVersion;
+         minor = osInfo.dwMinorVersion;
+         build = osInfo.dwBuildNumber;
+         product = osInfo.wProductType;
+      }
+      else
+      {
+         OSVERSIONINFOEX sysInfo = {};
+         sysInfo.dwOSVersionInfoSize = sizeof(sysInfo);
+         #pragma warning(disable: 4996) // warning C4996: 'GetVersionExA': is unadvised but needed for Windows before 8.1 (we support 7)
+         ::GetVersionEx((OSVERSIONINFO*)&sysInfo);
+
+         major = sysInfo.dwMajorVersion;
+         minor = sysInfo.dwMinorVersion;
+         build = sysInfo.dwBuildNumber;
+         product = sysInfo.wProductType;
+      }
+
+      // We're mainly interested in rough info and latest systems
+      fprintf(f, "System: ");
+      if (major == 10)
+      {
+         fprintf(f, "Windows 10 (%lu.%lu %lu%s)\n", major, minor, build, VER_NT_WORKSTATION ? "" : " Server");
+      }
+      else if (major == 6 && minor == 2)
+      {
+         if (product != VER_NT_WORKSTATION)
+            fprintf(f, "Windows Server 2012 (or above)\n"); //!! as otherwise the manifest should be adapted to target 8.1 or 10
+         else
+            fprintf(f, "Windows 8 (or above)\n"); //!! as otherwise the manifest should be adapted to target 8.1 or 10
+      }
+      else if (major == 6 && minor == 1)
+      {
+         if (product != VER_NT_WORKSTATION)
+            fprintf(f, "Windows Server 2008 R2\n");
+         else
+            fprintf(f, "Windows 7\n");
+      }
+      else if (major == 6 && minor == 0)
+      {
+         if (product != VER_NT_WORKSTATION)
+            fprintf(f, "Windows Server 2008\n");
+         else
+            fprintf(f, "Windows Vista\n");
+      }
+      else if (major == 5)
+      {
+         if (minor == 2)
+            fprintf(f, "Windows Server 2003\n");
+         else if (minor == 1)
+            fprintf(f, "Windows XP\n");
+         else if (minor == 0)
+            fprintf(f, "Windows 2000\n");
+      }
+      else
+         fprintf(f, "Unknown Windows version - %lu.%lu (%lu)\n", major, minor, build);
+   }
+
+   void WriteProcessorInfo(FILE* f)
+   {
+      SYSTEM_INFO sysInfo = {};
+      GetSystemInfo(&sysInfo);
+      fprintf(f, "Number of CPUs: %lu\nProcessor type: %lu\n",
+         sysInfo.dwNumberOfProcessors, sysInfo.dwProcessorType);
+   }
+
+   void WriteDateTime(FILE* f)
+   {
+      SYSTEMTIME st;
+      ::GetLocalTime(&st);
+      fprintf(f, "Date/time: %u/%u/%u, %02u:%02u:%02u:%u\n",
+         st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute,
+         st.wSecond, st.wMilliseconds);
+   }
+
+   void WriteHeader(FILE* f)
+   {
+      fprintf(f, "Crash report VPX - %s\n============\n", VP_VERSION_STRING_FULL_LITERAL);
+   }
+
+   const char* GetExceptionString(DWORD exc)
+   {
+#define EXC_CASE(EXC)	case EXCEPTION_##EXC : return "EXCEPTION_" #EXC
+      switch (exc)
+      {
+         EXC_CASE(ACCESS_VIOLATION);
+         EXC_CASE(DATATYPE_MISALIGNMENT);
+         EXC_CASE(BREAKPOINT);
+         EXC_CASE(SINGLE_STEP);
+         EXC_CASE(ARRAY_BOUNDS_EXCEEDED);
+         EXC_CASE(FLT_DENORMAL_OPERAND);
+         EXC_CASE(FLT_DIVIDE_BY_ZERO);
+         EXC_CASE(FLT_INEXACT_RESULT);
+         EXC_CASE(FLT_INVALID_OPERATION);
+         EXC_CASE(FLT_OVERFLOW);
+         EXC_CASE(FLT_STACK_CHECK);
+         EXC_CASE(FLT_UNDERFLOW);
+         EXC_CASE(INT_DIVIDE_BY_ZERO);
+         EXC_CASE(INT_OVERFLOW);
+         EXC_CASE(PRIV_INSTRUCTION);
+         EXC_CASE(IN_PAGE_ERROR);
+         EXC_CASE(ILLEGAL_INSTRUCTION);
+         EXC_CASE(NONCONTINUABLE_EXCEPTION);
+         EXC_CASE(STACK_OVERFLOW);
+         EXC_CASE(INVALID_DISPOSITION);
+         EXC_CASE(GUARD_PAGE);
+         EXC_CASE(INVALID_HANDLE);
+      default:
+         return "UNKNOWN";
+      }
+#undef EXC_CASE
+   }
+
+   void WriteExceptionInfo(FILE* f, const EXCEPTION_POINTERS* exceptionPtrs)
+   {
+      WriteProcessName(f);
+      fprintf(f, "\n");
+
+      fprintf(f, "Reason: 0x%X - %s", exceptionPtrs->ExceptionRecord->ExceptionCode,
+         GetExceptionString(exceptionPtrs->ExceptionRecord->ExceptionCode));
+#if defined(_M_ARM64)
+#pragma message ( "Warning: No CPU exception debug output implemented yet" )
+#else
+      fprintf(f, " at %04X:%p\n", exceptionPtrs->ContextRecord->SegCs,
+         exceptionPtrs->ExceptionRecord->ExceptionAddress);
+#endif
+
+      if (exceptionPtrs->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
+      {
+         fprintf(f, "Attempt to %s 0x%08X\n",
+            (exceptionPtrs->ExceptionRecord->ExceptionInformation[0] == 1 ?
+            "write to" : "read from"), (unsigned int) exceptionPtrs->ExceptionRecord->ExceptionInformation[1]);
+      }
+      const DWORD threadId = ::GetCurrentThreadId();
+      fprintf(f, "Thread ID: 0x%X [%lu]\n\n", threadId, threadId);
+   }
+
+   void WriteEnvironmentInfo(FILE* f)
+   {
+      fprintf(f, "Environment\n===========\n");
+      WriteDateTime(f);
+      WriteProcessorInfo(f);
+      WriteSystemInfo(f);
+      fprintf(f, "\n");
+   }
+
+   bool WriteMiniDump(EXCEPTION_POINTERS* exceptionPtrs, const string& filename)
+   {
+      const HANDLE hDump = ::CreateFile(filename.c_str(), GENERIC_WRITE, FILE_SHARE_READ, 0,
+         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+      if (hDump != INVALID_HANDLE_VALUE)
+      {
+         MINIDUMP_EXCEPTION_INFORMATION dumpInfo = {};
+         dumpInfo.ClientPointers = TRUE;
+         dumpInfo.ExceptionPointers = exceptionPtrs;
+         dumpInfo.ThreadId = ::GetCurrentThreadId();
+
+         constexpr MINIDUMP_TYPE dumpType = (MINIDUMP_TYPE)(MiniDumpWithPrivateReadWriteMemory |
+            MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules);
+
+         const BOOL success = ::MiniDumpWriteDump(
+            ::GetCurrentProcess(), ::GetCurrentProcessId(), hDump,
+            dumpType, &dumpInfo, 0, 0);
+         ::CloseHandle(hDump);
+         return success == TRUE;
+      }
+      return false;
+   }
+
+   void WriteBlackBoxMessages(FILE* f)
+   {
+      const int numMessages = rde::BlackBox::GetNumMessages();
+      if (numMessages <= 0)
+         return;
+
+      fprintf(f, "BlackBox messages\n=================\n");
+      for (int i = 0; i < numMessages; ++i)
+      {
+         int threadId;
+         const char* message = rde::BlackBox::GetBoxMessage(i, threadId);
+         fprintf(f, "%d: Thread 0x%X: %s\n", i, threadId, message);
+      }
+   }
+
+   void WriteMemoryStatus(FILE* f, const rde::MemoryStatus& status)
+   {
+      fprintf(f, "Memory status\n=============\n");
+      fprintf(f, "Total Reserved: %uK (%uM) bytes\n", (unsigned int)status.totalReserved >> 10, (unsigned int)status.totalReserved >> 20);
+      fprintf(f, "Total Commited: %uK (%uM) bytes\n", (unsigned int)status.totalCommited >> 10, (unsigned int)status.totalCommited >> 20);
+      fprintf(f, "Total Free: %uK (%uM) bytes\n", (unsigned int)status.totalFree >> 10, (unsigned int)status.totalFree >> 20);
+      fprintf(f, "Largest Free: %uK (%uM) bytes\n\n", (unsigned int)status.largestFree >> 10, (unsigned int)status.largestFree >> 20);
+   }
+
+   void WriteRegisters(FILE* f, const EXCEPTION_POINTERS* exceptionPtrs)
+   {
+      if (IsBadReadPtr(exceptionPtrs, sizeof(EXCEPTION_POINTERS)))
+         return;
+
+      const CONTEXT* ctx = exceptionPtrs->ContextRecord;
+      fprintf(f, "Registers\n=========\n");
+#if defined(_M_ARM64)
+#pragma message ( "Warning: No CPU state debug output implemented yet" )
+#else
+#ifdef _WIN64
+      fprintf(f, "RAX=%08X RBX=%08X RCX=%08X RDX=%08X\n" \
+         "RSI=%08X RDI=%08X RBP=%08X RSP=%08X RIP=%08X\n" \
+         "FLG=%08X CS=%04X DS=%04X SS=%04X ES=%04X FS=%04X GS=%04X\n\n",
+         (unsigned int)ctx->Rax, (unsigned int)ctx->Rbx, (unsigned int)ctx->Rcx, (unsigned int)ctx->Rdx, 
+         (unsigned int)ctx->Rsi, (unsigned int)ctx->Rdi, (unsigned int)ctx->Rbp, (unsigned int)ctx->Rsp, (unsigned int)ctx->Rip,
+         (unsigned int)ctx->EFlags, (unsigned int)ctx->SegCs, (unsigned int)ctx->SegDs, (unsigned int)ctx->SegSs, (unsigned int)ctx->SegEs, (unsigned int)ctx->SegFs, (unsigned int)ctx->SegGs);
+#else
+      fprintf(f, "EAX=%08X EBX=%08X ECX=%08X EDX=%08X\n" \
+         "ESI=%08X EDI=%08X EBP=%08X ESP=%08X EIP=%08X\n" \
+         "FLG=%08X CS=%04X DS=%04X SS=%04X ES=%04X FS=%04X GS=%04X\n\n",
+         ctx->Eax, ctx->Ebx, ctx->Ecx, ctx->Edx, ctx->Esi, ctx->Edi,
+         ctx->Ebp, ctx->Esp, ctx->Eip, ctx->EFlags, ctx->SegCs,
+         ctx->SegDs, ctx->SegSs, ctx->SegEs, ctx->SegFs, ctx->SegGs);
+#endif
+#endif
+   }
+
+   void WriteCallStack(FILE* f, PCONTEXT context)
+   {
+      char callStack[2048] = {};
+      rde::StackTrace::GetCallStack(context, true, callStack, sizeof(callStack) - 1);
+      fprintf(f, "Call stack\n==========\n%s\n", callStack);
+   }
+
+   volatile unsigned long s_inFilter = 0;
+
+   LONG __stdcall MyExceptionFilter(EXCEPTION_POINTERS* exceptionPtrs)
+   {
+      constexpr LONG returnCode = EXCEPTION_CONTINUE_SEARCH;
+
+      // Ignore multiple calls.
+      if (s_inFilter != 0)
+         return EXCEPTION_CONTINUE_EXECUTION;
+      s_inFilter = 1;
+
+      // Cannot really do much in case of stack overflow, it'll probably bomb soon 
+      // anyway.
+      if (exceptionPtrs->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW)
+      {
+         OutputDebugString("*** FATAL ERROR: EXCEPTION_STACK_OVERFLOW detected!");
+      }
+      const bool miniDumpOK = WriteMiniDump(exceptionPtrs, s_miniDumpFileName);
+
+      FILE* f;
+      if ((fopen_s(&f, s_reportFileName.c_str(), "wt") == 0) && f)
+	  {
+		  WriteHeader(f);
+		  WriteExceptionInfo(f, exceptionPtrs);
+		  WriteCallStack(f, exceptionPtrs->ContextRecord);
+
+		  WriteEnvironmentInfo(f);
+		  const rde::MemoryStatus memStatus = rde::MemoryStatus::GetCurrent();
+		  WriteMemoryStatus(f, memStatus);
+		  WriteRegisters(f, exceptionPtrs);
+		  WriteBlackBoxMessages(f);
+
+		  fprintf(f, (miniDumpOK ? "\nMini dump saved successfully.\n" : "\nFailed to save minidump.\n"));
+		  ::fclose(f);
+	  }
+
+      return returnCode;
+   }
+} // namespace
+
+namespace rde
+{
+   void CrashHandler::Init()
+   {
+      SetUnhandledExceptionFilter(MyExceptionFilter);
+   }
+
+   void CrashHandler::SetMiniDumpFileName(const string& name)
+   {
+      s_miniDumpFileName = name;
+   }
+
+   void CrashHandler::SetCrashReportFileName(const string& name)
+   {
+      s_reportFileName = name;
+   }
+}

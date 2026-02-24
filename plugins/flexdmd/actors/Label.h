@@ -1,0 +1,40 @@
+#pragma once
+
+#include "Actor.h"
+#include "resources/Font.h"
+
+namespace Flex {
+
+class Label final : public Actor
+{
+public:
+   Label(const FlexDMD* pFlexDMD, Font* pFont, const string& text, const string& name);
+   ~Label() override;
+
+   ActorType GetType() const override { return AT_Label; }
+
+   Alignment GetAlignment() const { return m_alignment; }
+   void SetAlignment(Alignment alignment) { m_alignment = alignment; }
+   Font* GetFont() const { m_pFont->AddRef(); return m_pFont; }
+   void SetFont(Font* pFont) { m_pFont->Release(); m_pFont = pFont; m_pFont->AddRef(); UpdateBounds(); }
+   const string& GetText() const { return m_text; }
+   void SetText(const string& szText);
+   bool GetAutoPack() const { return m_autopack; }
+   void SetAutoPack(bool autopack) { m_autopack = autopack; }
+   int GetPrefWidth() const override { return m_textWidth; }
+   int GetPrefHeight() const override { return m_textHeight; }
+   void Draw(Flex::SurfaceGraphics* pGraphics) override;
+
+private:
+   void UpdateBounds();
+
+   Font* m_pFont;
+   string m_text;
+   bool m_autopack;
+   int m_textWidth;
+   int m_textHeight;
+   Alignment m_alignment;
+   vector<string> m_lines;
+};
+
+}

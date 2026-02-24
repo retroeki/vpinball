@@ -1,0 +1,106 @@
+#pragma once
+
+#include "common.h"
+#include "Layout.h"
+#include "plugins/ScriptablePlugin.h"
+#include "SurfaceGraphics.h"
+
+#include <SDL3/SDL_surface.h>
+
+namespace Flex {
+
+class Group;
+class FlexDMD;
+class Action;
+class ActionFactory;
+
+class Actor
+{
+public:
+   Actor(const FlexDMD *pFlexDMD, const string& name);
+   virtual ~Actor();
+
+   PSC_IMPLEMENT_REFCOUNT()
+
+   enum ActorType
+   {
+      AT_Actor,
+      AT_Group,
+      AT_Frame,
+      AT_Label,
+      AT_Image,
+      AT_AnimatedActor
+   };
+   virtual ActorType GetType() const { return AT_Actor; }
+
+   const FlexDMD *GetFlexDMD() const { return m_pFlexDMD; }
+
+   void SetName(const string &szName) { m_name = szName; }
+   const string &GetName() const { return m_name; }
+
+   void SetBounds(float x, float y, int Width, int Height) { m_x = x; m_y = y; m_width = Width; m_height = Height; }
+   void SetPosition(float x, float y) { m_x = x; m_y = y; }
+   void SetAlignedPosition(float x, float y, Alignment alignment) { m_x = x; m_y = y; Layout::ApplyAlign(alignment, m_width, m_height, m_x, m_y); }
+
+   void SetSize(int Width, int Height) { m_width = Width; m_height = Height; }
+   void Pack() { m_width = GetPrefWidth(); m_height = GetPrefHeight(); }
+   float GetX() const { return m_x; }
+   void SetX(float x) { m_x = x; }
+   float GetY() const { return m_y; }
+   void SetY(float y) { m_y = y; }
+   int GetWidth() const { return m_width; }
+   void SetWidth(int width) { m_width = width; }
+   int GetHeight() const { return m_height; }
+   void SetHeight(int height) { m_height = height; }
+   virtual int GetPrefWidth() const { return m_prefWidth; }
+   void SetPrefWidth(int prefWidth) { m_prefWidth = prefWidth; }
+   virtual int GetPrefHeight() const { return m_prefHeight; }
+   void SetPrefHeight(int prefHeight) { m_prefHeight = prefHeight; }
+
+   ActionFactory* GetActionFactory() const;
+   void AddAction(Action *action);
+   void ClearActions();
+
+   bool GetVisible() const { return m_visible; }
+   virtual void SetVisible(bool visible) { m_visible = visible; }
+
+   bool GetClearBackground() const { return m_clearBackground; }
+   void SetClearBackground(bool v) { m_clearBackground = v; }
+
+   bool GetOnStage() const { return m_onStage; }
+   void SetOnStage(bool onStage) { m_onStage = onStage; OnStageStateChanged(); }
+
+   bool GetFillParent() const { return m_fillParent; }
+   void SetFillParent(bool fillParent) { m_fillParent = fillParent; }
+
+   Group *GetParent() const { return m_parent; }
+   void SetParent(Group *parent) { m_parent = parent; }
+   void Remove();
+
+   virtual void OnStageStateChanged() { }
+
+   virtual void Update(float secondsElapsed);
+
+   virtual void Draw(Flex::SurfaceGraphics *pGraphics);
+
+protected:
+   ActionFactory* m_pActionFactory;
+
+private:
+   const FlexDMD *const m_pFlexDMD; // Weak pointer, to avoid circular references
+   Group *m_parent = nullptr; // Weak pointer, to avoid circular references
+   string m_name;
+   vector<Action*> m_actions;
+   bool m_onStage = false;
+   float m_x = 0.f;
+   float m_y = 0.f;
+   int m_width = 0;
+   int m_height = 0;
+   bool m_fillParent = false;
+   bool m_clearBackground = false;
+   int m_prefWidth = 0;
+   int m_prefHeight = 0;
+   bool m_visible = true;
+};
+
+}

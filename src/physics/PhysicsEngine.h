@@ -1,0 +1,172 @@
+// license:GPLv3+
+
+#pragma once
+
+#include "physics/kdtree.h"
+#include "physics/quadtree.h"
+#include "physics/AsyncDynamicQuadTree.h"
+
+class PhysicsEngine final
+{
+public:
+   PhysicsEngine(PinTable *const table);
+   ~PhysicsEngine();
+
+   void SetGravity(float slopeDeg, float strength);
+   const Vertex3Ds& GetGravity() const { return m_gravity; } // Gravity expressed in VP units. Earth gravity 9.81 m.s^-2 is approximately 1.81751 VPU.VPT^-2 (see physconst.h)
+
+   // Only supported for UI for the time being
+   void SetDynamic(IEditable *editable) { GetUIQuadTree()->SetDynamic(editable); }
+   void Update(IEditable *editable) { GetUIQuadTree()->Update(editable); }
+   void SetStatic(IEditable *editable) { GetUIQuadTree()->SetStatic(editable); }
+
+   // Allow to add/remove parts after initial setup
+   void Remove(IEditable *editable);
+
+   // Add or remove a collider, as a consequence of PhysicSetup/Release
+   // Colliders are given to the physics engine which owns them, except for balls which always owns their HitBall (therefore, being the only one using RemoveCollider)
+   void AddCollider(HitObject * collider, const bool isUI);
+   void RemoveCollider(HitObject * collider, const bool isUI);
+   void CollectColliders(IEditable *editable, vector<HitObject *> *hitObjects, bool isUI);
+
+   void OnFinishFrame();
+
+   void StartPhysics();
+   void UpdatePhysics();
+
+   bool IsBallCollisionHandlingSwapped() const { return m_swap_ball_collision_handling; }
+   bool RecordContact(const CollisionEvent& newColl);
+
+   void Nudge(float angle, float force);
+   Vertex3Ds GetNudgeAcceleration() const { return m_tableAcceleration + m_nudgeAcceleration; } // Table acceleration (due to nudge) expressed in VP units
+   Vertex2D GetScreenNudge() const; // Table displacement
+   bool IsLegacyKeyboardNudge() const { return m_legacyNudge; }
+   void SetLegacyKeyboardNudge(bool legacyNudge) { m_legacyNudge = legacyNudge; }
+   float GetLegacyKeyboardNudgeStrength() const { return m_legacyNudgeStrength; }
+   void SetLegacyKeyboardNudgeStrength(float strength) { m_legacyNudgeStrength = strength; }
+   void ReadNudgeSettings(const Settings &settings);
+
+   bool IsPlumbSimulated() const { return m_enablePlumbTilt; }
+   void EnablePlumbSimulation(bool enable) { m_enablePlumbTilt = enable; }
+   const Vertex3Ds &GetPlumbPos() const { return m_plumbPos; }
+   const Vertex3Ds &GetPlumbVel() const { return m_plumbVel; }
+   float GetPlumbPoleLength() const { return m_plumbPoleLength; }
+   float GetPlumbTiltThreshold() const { return m_plumbTiltThreshold; }
+   void SetPlumbTiltThreshold(float v) { m_plumbTiltThreshold = v; }
+   float GetPlumbInertia() const { return m_plumbMassFactor; }
+   void SetPlumbInertia(float v) { m_plumbMassFactor = v; }
+   int GetPlumbTiltIndex() const { return m_plumbTiltIndex; }
+
+   void RayCast(const Vertex3Ds &source, const Vertex3Ds &target, const bool uiCast, vector<HitTestResult> &vhoHit);
+
+   void ResetStats() { m_phys_max = 0; m_phys_max_iterations = 0; m_count = 0; m_phys_total_iterations = 0; }
+   void ResetPerFrameStats();
+   int GetPerfNIterations() const { return m_phys_iterations; }
+   int GetPerfLengthMax() const { return m_phys_max; }
+   string GetPerfInfo(bool resetMax);
+
+   const vector<HitObject *>& GetHitObjects() const { return m_hitoctree.GetHitObjects(); }
+   vector<HitObject *> GetUIHitObjects(IEditable *editable);
+
+private:
+   void AddCabinetBoundingHitShapes(PinTable *const table);
+   void PhysicsSimulateCycle(float dtime); // Perform continuous collision detection for the given amount of delta time
+
+   void ReleaseVHO(const vector<HitObject *> &vho, bool isUI);
+
+   Vertex3Ds m_gravity;
+
+   unsigned int m_physicsMaxLoops;
+
+   bool m_swap_ball_collision_handling = false; // Swaps the order of ball-ball collision handling around each physics cycle (in regard to the RLC comment block in quadtree.cpp (hopefully ;)))
+
+   bool m_recordContacts = false; // flag for DoHitTest()
+   vector<CollisionEvent> m_contacts;
+
+   uint64_t m_startTime_usec; // Time when the simulation started (creation of this object)
+   uint64_t m_curPhysicsFrameTime; // Time where the last machine simulation (physics, timers, scripts,...) stopped
+   uint64_t m_nextPhysicsFrameTime; // Time at which the next physics update should be
+   uint64_t m_lastFlipTime = 0;
+
+   unsigned int m_onUpdatePhysicsMsgId;
+
+   vector<HitFlipper *> m_vFlippers;
+   HitPlane m_hitPlayfield; // HitPlanes cannot be part of octree (infinite size)
+   HitPlane m_hitTopGlass;
+
+   vector<MoverObject *> m_vmover; // moving objects for physics simulation
+
+   vector<HitObject *>* m_pendingHitObjects = nullptr; // Hit objects pending insertion in quadtree, only defined while collecting through AddCollider callback method
+
+   /*HitKD*/ HitQuadtree m_hitoctree;
+#ifdef USE_EMBREE
+   HitQuadtree m_hitoctree_dynamic; // should be generated from scratch each time something changes
+#else
+   HitKD m_hitoctree_dynamic; // should be generated from scratch each time something changes
+#endif
+
+   AsyncDynamicQuadTree *GetUIQuadTree(); // Trigger UI quadtree creation/update
+   AsyncDynamicQuadTree* m_UIQuadTtree = nullptr;
+
+#pragma region Nudge & Tilt Plumb
+   void UpdateNudge(float dtime);
+
+   // Legacy nudge: apply a given acceleration for a given amount of time
+   // Hardware nudge: acquire acceleration and apply it (eventually deriving it from acquired velocity)
+   Vertex3Ds m_nudgeAcceleration; // used by both hardware nudge and legacy keyboard nudge
+   // External accelerometer velocity input.  This is for newer
+   // pin cab I/O controllers that can integrate acceleration
+   // samples on the device side to compute the instantaneous
+   // cabinet velocity, and pass the velocity data to the host.
+   Vertex3Ds m_prevSensorTableVelocity; // Used to compute acceleration from acquired velocities
+
+   // legacy/VP9 style keyboard nudging
+   bool m_legacyNudge = false;
+   float m_legacyNudgeStrength = 0.f;
+   Vertex2D m_legacyNudgeBack;
+   int m_legacyNudgeTime = 0;
+
+   // New keyboard nudge: the table is modeled as a spring, Nudge(x,y) apply an initial velocity (m_tableVel) which results in some oscillations
+   Vertex3Ds m_tableVel;
+   Vertex3Ds m_tableDisplacement;
+   Vertex3Ds m_tableVelOld;
+   Vertex3Ds m_tableAcceleration;
+   float m_nudgeSpring;
+   float m_nudgeDamping;
+
+   // Tilt plumb
+   bool m_enablePlumbTilt = false;
+   bool m_plumbTiltHigh = false;
+   int m_plumbTiltInputSlot = -1;
+   int m_plumbTiltIndex = 0;
+   float m_plumbTiltThreshold;
+   float m_plumbPoleLength;
+   float m_plumbMassFactor;
+   Vertex3Ds m_plumbPos;
+   Vertex3Ds m_plumbVel;
+
+#pragma endregion
+
+   // Physics stats
+   uint32_t m_phys_iterations;
+   uint32_t m_phys_max_iterations;
+   uint32_t m_phys_max;
+   uint64_t m_phys_total_iterations;
+   uint64_t m_count; // Number of frames included in the total variant of the counters
+
+#ifdef DEBUGPHYSICS
+public:
+   uint32_t c_hitcnts;
+   uint32_t c_collisioncnt;
+   uint32_t c_contactcnt;
+   #ifdef C_DYNAMIC
+   uint32_t c_staticcnt;
+   #endif
+   uint32_t c_embedcnts;
+   uint32_t c_timesearch;
+
+   uint32_t c_traversed;
+   uint32_t c_tested;
+   uint32_t c_deepTested;
+#endif
+};

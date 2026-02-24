@@ -1,0 +1,288 @@
+// license:GPLv3+
+
+// Implementation of WinMain (Windows with UI) or main (Standalone)
+
+#include "core/stdafx.h"
+
+#include "vpversion.h"
+
+#include "plugins/VPXPlugin.h"
+#include "core/VPXPluginAPIImpl.h"
+
+#include "core/VPApp.h"
+
+#include "ui/resource.h"
+#include <initguid.h>
+
+#define SET_CRT_DEBUG_FIELD(a) _CrtSetDbgFlag((a) | _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG))
+
+#include <locale>
+#include <codecvt>
+
+#ifdef __STANDALONE__
+#include <SDL3_ttf/SDL_ttf.h>
+#include <filesystem>
+#endif
+
+#if defined(__STANDALONE__) && defined(__linux__) && !defined(__ANDROID__)
+#include <csignal>
+
+void OnSignalHandler(int signum)
+{
+   PLOGI.printf("Exiting from signal: %d", signum);
+   exit(-9999);
+}
+#endif
+
+#ifndef OVERRIDE
+#ifndef __STANDALONE__
+   #define OVERRIDE override
+#else
+   #define OVERRIDE
+#endif
+#endif
+
+
+
+
+#if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
+// The OpenGL implementation will fail on NVIDIA drivers when Threaded Optimization is enabled so we disable it for this app
+// Note: There are quite a lot of applications doing this, but I think this may hide an incorrect OpenGL call somewhere
+// that the threaded optimization of NVIDIA drivers ends up to crash. This would be good to find the root cause, if any.
+
+#include "nvapi/nvapi.h"
+#include "nvapi/NvApiDriverSettings.h"
+#pragma warning(push)
+#pragma warning(disable : 4838)
+#include "nvapi/NvApiDriverSettings.c"
+#pragma warning(pop)
+
+enum NvThreadOptimization
+{
+   NV_THREAD_OPTIMIZATION_AUTO = 0,
+   NV_THREAD_OPTIMIZATION_ENABLE = 1,
+   NV_THREAD_OPTIMIZATION_DISABLE = 2,
+   NV_THREAD_OPTIMIZATION_NO_SUPPORT = 3
+};
+
+static bool NvAPI_OK_Verify(NvAPI_Status status)
+{
+   if (status == NVAPI_OK)
+      return true;
+
+   NvAPI_ShortString szDesc = {};
+   NvAPI_GetErrorMessage(status, szDesc);
+
+   PLOGI << "NVAPI error: " << szDesc;
+
+   return false;
+}
+
+static NvThreadOptimization GetNVIDIAThreadOptimization()
+{
+   NvThreadOptimization threadOptimization = NV_THREAD_OPTIMIZATION_NO_SUPPORT;
+
+   NvAPI_Status status;
+   status = NvAPI_Initialize();
+   if (!NvAPI_OK_Verify(status))
+      return threadOptimization;
+
+   NvDRSSessionHandle hSession;
+   status = NvAPI_DRS_CreateSession(&hSession);
+   if (!NvAPI_OK_Verify(status))
+      return threadOptimization;
+
+   status = NvAPI_DRS_LoadSettings(hSession);
+   if (!NvAPI_OK_Verify(status))
+   {
+      NvAPI_DRS_DestroySession(hSession);
+      return threadOptimization;
+   }
+
+   NvDRSProfileHandle hProfile;
+   status = NvAPI_DRS_GetBaseProfile(hSession, &hProfile);
+   if (!NvAPI_OK_Verify(status))
+   {
+      NvAPI_DRS_DestroySession(hSession);
+      return threadOptimization;
+   }
+
+   NVDRS_SETTING originalSetting = {};
+   originalSetting.version = NVDRS_SETTING_VER;
+   status = NvAPI_DRS_GetSetting(hSession, hProfile, OGL_THREAD_CONTROL_ID, &originalSetting);
+   if (NvAPI_OK_Verify(status))
+   {
+      threadOptimization = (NvThreadOptimization)originalSetting.u32CurrentValue;
+   }
+
+   NvAPI_DRS_DestroySession(hSession);
+
+   return threadOptimization;
+}
+
+static void SetNVIDIAThreadOptimization(NvThreadOptimization threadedOptimization)
+{
+   if (threadedOptimization == NV_THREAD_OPTIMIZATION_NO_SUPPORT)
+      return;
+
+   NvAPI_Status status;
+   status = NvAPI_Initialize();
+   if (!NvAPI_OK_Verify(status))
+      return;
+
+   NvDRSSessionHandle hSession;
+   status = NvAPI_DRS_CreateSession(&hSession);
+   if (!NvAPI_OK_Verify(status))
+      return;
+
+   status = NvAPI_DRS_LoadSettings(hSession);
+   if (!NvAPI_OK_Verify(status))
+   {
+      NvAPI_DRS_DestroySession(hSession);
+      return;
+   }
+
+   NvDRSProfileHandle hProfile;
+   status = NvAPI_DRS_GetBaseProfile(hSession, &hProfile);
+   if (!NvAPI_OK_Verify(status))
+   {
+      NvAPI_DRS_DestroySession(hSession);
+      return;
+   }
+
+   NVDRS_SETTING setting = {};
+   setting.version = NVDRS_SETTING_VER;
+   setting.settingId = OGL_THREAD_CONTROL_ID;
+   setting.settingType = NVDRS_DWORD_TYPE;
+   setting.u32CurrentValue = (EValues_OGL_THREAD_CONTROL)threadedOptimization;
+
+   status = NvAPI_DRS_SetSetting(hSession, hProfile, &setting);
+   if (!NvAPI_OK_Verify(status))
+   {
+      NvAPI_DRS_DestroySession(hSession);
+      return;
+   }
+
+   status = NvAPI_DRS_SaveSettings(hSession);
+   NvAPI_OK_Verify(status);
+
+   NvAPI_DRS_DestroySession(hSession);
+}
+#endif
+
+extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPTSTR /*lpCmdLine*/, int /*nShowCmd*/)
+{
+   #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
+   static NvThreadOptimization s_OriginalNVidiaThreadOptimization = NV_THREAD_OPTIMIZATION_NO_SUPPORT;
+   #endif
+
+   Logger::Init();
+
+   int retval;
+   try
+   {
+      #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
+      s_OriginalNVidiaThreadOptimization = GetNVIDIAThreadOptimization();
+      if (s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_NO_SUPPORT && s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_DISABLE)
+      {
+         PLOGI << "Disabling NVIDIA Threaded Optimization";
+         SetNVIDIAThreadOptimization(NV_THREAD_OPTIMIZATION_DISABLE);
+      }
+      #endif
+      // Start Win32++
+      VPApp theApp(hInstance);
+      theApp.ProcessCommandLine();
+      theApp.InitInstance();
+
+      class SDLModuleLoader final : public MsgPI::MsgModuleLoader
+      {
+      public:
+         ~SDLModuleLoader() override { }
+         void* Link(const std::string& directory, const std::string& file) override {
+            #if defined(_MSC_VER)
+               SetDllDirectory(directory.c_str());
+            #endif
+            void* module = static_cast<void*>(SDL_LoadObject(file.c_str()));
+            #if defined(_MSC_VER)
+               SetDllDirectory(NULL);
+            #endif
+            return module;
+         }
+         void Unlink(void* module) override
+         {
+            SDL_UnloadObject(static_cast<SDL_SharedObject*>(module));
+         }
+         void* GetFunction(void* module, const std::string& functionName) override
+         {
+            return reinterpret_cast<void*>(SDL_LoadFunction(static_cast<SDL_SharedObject*>(module), functionName.c_str()));
+         }
+      };
+      MsgPI::MsgPluginManager::GetInstance().ScanPluginFolder(std::make_shared<SDLModuleLoader>(), g_pvp->m_myPath + "plugins",
+         [](MsgPI::MsgPlugin& plugin)
+         {
+            VPX::Properties::PropertyRegistry::PropId enableId;
+            if (auto existing = Settings::GetRegistry().GetPropertyId("Plugin." + plugin.m_id, "Enable"s); existing.has_value())
+               enableId = existing.value();
+            else
+               enableId = Settings::GetRegistry().Register(
+                  std::make_unique<VPX::Properties::BoolPropertyDef>("Plugin." + plugin.m_id, "Enable"s, "Enable"s, "Enable/Disable plugin '" + plugin.m_name + '\'', true, false));
+            if (g_pvp->m_settings.GetBool(enableId))
+            {
+               plugin.Load(&MsgPI::MsgPluginManager::GetInstance().GetMsgAPI());
+            }
+            else
+            {
+               PLOGI << "Plugin " << plugin.m_id << " was found but is disabled (" << plugin.m_library << ')';
+            }
+         });
+
+      // Run the application
+      retval = theApp.Run();
+   }
+
+   // catch all CException types
+   catch (const CException &e)
+   {
+      // Display the exception and quit
+      MessageBox(nullptr, e.GetText(), AtoT(e.what()), MB_ICONERROR);
+
+      retval = -1;
+   }
+
+   MsgPI::MsgPluginManager::GetInstance().UnloadPlugins();
+
+   SDL_QuitSubSystem(SDL_INIT_VIDEO);
+
+   #ifdef __STANDALONE__
+      TTF_Quit();
+   #endif
+
+   #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__) 
+   if (s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_NO_SUPPORT && s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_DISABLE)
+   {
+      PLOGI << "Restoring NVIDIA Threaded Optimization";
+      SetNVIDIAThreadOptimization(s_OriginalNVidiaThreadOptimization);
+   }
+   #endif
+
+   SDL_Quit();
+
+   PLOGI << "Closing VPX...\n\n";
+   return retval;
+}
+
+#if defined(__STANDALONE__) && defined(__linux__) && !defined(__ANDROID__)
+extern int g_argc;
+extern char **g_argv;
+int main(int argc, char** argv) {
+   struct sigaction sigIntHandler;
+   sigIntHandler.sa_handler = OnSignalHandler;
+   sigemptyset(&sigIntHandler.sa_mask);
+   sigIntHandler.sa_flags = 0;
+   sigaction(SIGINT, &sigIntHandler, nullptr);
+
+   g_argc = argc;
+   g_argv = argv;
+   return WinMain(NULL, NULL, NULL, 0);
+}
+#endif
