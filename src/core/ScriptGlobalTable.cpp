@@ -127,7 +127,7 @@ STDMETHODIMP ScriptGlobalTable::PlayMusic(BSTR str, float volume)
       if (!musicNameStr.empty())
       {
          bool success = false;
-         for (int i = 0; !success && i < 5; ++i)
+         for (int i = 0; !success && i < 6; ++i)
          {
             string path;
             switch (i)
@@ -136,7 +136,8 @@ STDMETHODIMP ScriptGlobalTable::PlayMusic(BSTR str, float volume)
             case 1: path = g_pvp->m_myPath + "music" + PATH_SEPARATOR_CHAR; break;
             case 2: path = g_pvp->m_currentTablePath; break;
             case 3: path = g_pvp->m_currentTablePath + "music" + PATH_SEPARATOR_CHAR; break;
-            case 4: path = PATH_MUSIC; break;
+            case 4: path = g_pvp->m_currentTablePath + ".." + PATH_SEPARATOR_CHAR + "music" + PATH_SEPARATOR_CHAR; break;
+            case 5: path = PATH_MUSIC; break;
             }
             path = find_case_insensitive_file_path(path + musicNameStr);
             if (!path.empty())
@@ -483,9 +484,14 @@ STDMETHODIMP ScriptGlobalTable::get_MusicDirectory(VARIANT pSubDir, BSTR *pVal)
       szPath = m_vpinball->m_currentTablePath + "music" + PATH_SEPARATOR_CHAR + endPath;
       if (!DirExists(szPath))
       {
-         szPath = PATH_MUSIC + endPath;
+         // Check parent of tables directory (VPX base folder, e.g. /sdcard/Games/VisualPinballX/music/)
+         szPath = m_vpinball->m_currentTablePath + ".." + PATH_SEPARATOR_CHAR + "music" + PATH_SEPARATOR_CHAR + endPath;
          if (!DirExists(szPath))
-            return E_FAIL;
+         {
+            szPath = PATH_MUSIC + endPath;
+            if (!DirExists(szPath))
+               return E_FAIL;
+         }
       }
    }
    *pVal = MakeWideBSTR(szPath);

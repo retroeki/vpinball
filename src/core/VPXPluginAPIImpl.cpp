@@ -688,6 +688,11 @@ VPXPluginAPIImpl::VPXPluginAPIImpl() : m_apiThread(std::this_thread::get_id())
 
 void VPXPluginAPIImpl::OnGetVPXPluginAPI(const unsigned int msgId, void* userData, void* msgData)
 {
+   if (!msgData)
+   {
+      PLOGW << "OnGetVPXPluginAPI called with null msgData (msgId=" << msgId << ")";
+      return;
+   }
    VPXPluginAPIImpl& pi = VPXPluginAPIImpl::GetInstance();
    VPXPluginAPI** pResult = static_cast<VPXPluginAPI**>(msgData);
    *pResult = &pi.m_api;
@@ -695,6 +700,7 @@ void VPXPluginAPIImpl::OnGetVPXPluginAPI(const unsigned int msgId, void* userDat
 
 void VPXPluginAPIImpl::OnGetScriptablePluginAPI(const unsigned int msgId, void* userData, void* msgData)
 {
+   if (!msgData) return;
    VPXPluginAPIImpl& pi = VPXPluginAPIImpl::GetInstance();
    ScriptablePluginAPI** pResult = static_cast<ScriptablePluginAPI**>(msgData);
    *pResult = &pi.m_scriptableApi;
@@ -702,6 +708,7 @@ void VPXPluginAPIImpl::OnGetScriptablePluginAPI(const unsigned int msgId, void* 
 
 void VPXPluginAPIImpl::OnGetLoggingPluginAPI(const unsigned int msgId, void* userData, void* msgData)
 {
+   if (!msgData) return;
    VPXPluginAPIImpl& pi = VPXPluginAPIImpl::GetInstance();
    LoggingPluginAPI** pResult = static_cast<LoggingPluginAPI**>(msgData);
    *pResult = &pi.m_loggingApi;
