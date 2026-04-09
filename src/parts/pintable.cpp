@@ -6780,11 +6780,6 @@ void PinTable::UpdateCurrentBGSet()
    }
    else
    {
-#if defined(__ANDROID__)
-      // Force desktop mode on Android handheld devices (not VR)
-      m_viewMode = BG_DESKTOP;
-      PLOGI << "UpdateCurrentBGSet: Android forced to BG_DESKTOP";
-#else
       switch (m_settings.GetPlayer_BGSet())
       {
       case 0: m_viewMode = m_isFSSViewModeEnabled ? BG_FSS : BG_DESKTOP; break; // Desktop mode (FSS if table supports it, usual dekstop otherwise)
@@ -6792,7 +6787,6 @@ void PinTable::UpdateCurrentBGSet()
       case 2: m_viewMode = BG_DESKTOP; break; // Desktop mode with FSS disabled (forced desktop)
       }
       PLOGI << "UpdateCurrentBGSet: BGSet=" << m_settings.GetPlayer_BGSet() << " viewMode=" << (int)m_viewMode;
-#endif
    }
    if (previousMode != m_viewMode) {
       PLOGI << "UpdateCurrentBGSet: viewMode changed from " << (int)previousMode << " to " << (int)m_viewMode;

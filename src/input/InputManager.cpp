@@ -41,22 +41,25 @@ InputManager::InputManager()
    }
    if (touchDevices)
       SDL_free(touchDevices);
+   PLOGI << "Touch support: nTouchDevices=" << nTouchDevices << " m_supportsTouch=" << m_supportsTouch;
+   PLOGI << "TouchZonesEnabled setting=" << settings.GetPlayer_TouchZonesEnabled();
    auto addTouchRegion = [this](const RECT& region, unsigned int actionId) { m_touchRegionMap.emplace_back(region, actionId, m_inputActions[actionId]->NewDirectStateSlot()); };
    // RECT definition is left, top, right, bottom in % of screen
-   // RETROEKI: Disabled all touch zones - we use our own controls
-   /*
-   addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
-   addTouchRegion(RECT { 50, 0, 100, 10 }, GetExitInteractiveActionId());
-   addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
-   addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
-   addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
-   addTouchRegion(RECT { 50, 30, 100, 60 }, GetRightNudgeActionId());
-   addTouchRegion(RECT { 0, 60, 30, 90 }, GetLeftFlipperActionId());
-   addTouchRegion(RECT { 30, 60, 70, 100 }, GetCenterNudgeActionId());
-   addTouchRegion(RECT { 70, 60, 100, 90 }, GetRightFlipperActionId());
-   addTouchRegion(RECT { 0, 90, 30, 100 }, GetStartActionId());
-   addTouchRegion(RECT { 70, 90, 100, 100 }, GetLaunchBallActionId());
-   */
+   if (settings.GetPlayer_TouchZonesEnabled())
+   {
+      PLOGI << "Registering " << 11 << " touch zones";
+      addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
+      addTouchRegion(RECT { 50, 0, 100, 10 }, GetExitInteractiveActionId());
+      addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
+      addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
+      addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
+      addTouchRegion(RECT { 50, 30, 100, 60 }, GetRightNudgeActionId());
+      addTouchRegion(RECT { 0, 60, 30, 90 }, GetLeftFlipperActionId());
+      addTouchRegion(RECT { 30, 60, 70, 100 }, GetCenterNudgeActionId());
+      addTouchRegion(RECT { 70, 60, 100, 90 }, GetRightFlipperActionId());
+      addTouchRegion(RECT { 0, 90, 30, 100 }, GetStartActionId());
+      addTouchRegion(RECT { 70, 90, 100, 100 }, GetLaunchBallActionId());
+   }
 
    // Analog sensors for plunger and nudge
    for (int i = 0; i < 2; i++)
@@ -602,9 +605,14 @@ void InputManager::PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t ti
 
 void InputManager::PushTouchEvent(float relativeX, float relativeY, uint64_t timestampNs, bool isPressed)
 {
+   static int touchLogCount = 0;
    POINT point;
    point.x = (int)((float)g_pplayer->m_playfieldWnd->GetWidth() * relativeX);
    point.y = (int)((float)g_pplayer->m_playfieldWnd->GetHeight() * relativeY);
+   if (touchLogCount < 20) {
+      touchLogCount++;
+      PLOGI << "PushTouchEvent: rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
+   }
    for (auto& region : m_touchRegionMap)
    {
       if (const bool wasPressed = m_inputActions[region.actionId]->GetDirectState(region.directStateSlot); wasPressed == isPressed)

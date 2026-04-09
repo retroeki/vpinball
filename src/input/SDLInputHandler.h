@@ -84,9 +84,16 @@ public:
 
       case SDL_EVENT_FINGER_DOWN:
       case SDL_EVENT_FINGER_UP:
+      {
+         static int fingerLogCount = 0;
+         if (fingerLogCount < 20) {
+            fingerLogCount++;
+            PLOGI << "SDL_FINGER: windowID=" << e.tfinger.windowID << " expected=" << SDL_GetWindowID(g_pplayer->m_playfieldWnd->GetCore()) << " x=" << e.tfinger.x << " y=" << e.tfinger.y << " down=" << (e.type == SDL_EVENT_FINGER_DOWN);
+         }
          if (e.tfinger.windowID == SDL_GetWindowID(g_pplayer->m_playfieldWnd->GetCore()))
             m_pininput.PushTouchEvent(e.tfinger.x, e.tfinger.y, e.tfinger.timestamp, e.type == SDL_EVENT_FINGER_DOWN);
          break;
+      }
 
       default: break;
       }
