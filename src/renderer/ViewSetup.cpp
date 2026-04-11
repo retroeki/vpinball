@@ -259,9 +259,10 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
       // in landscape and portrait on the display
       camy += cam.y + 500.0f;
       inc += 0.2f;
-      const int width = GetSystemMetrics(SM_CXSCREEN);
-      const int height = GetSystemMetrics(SM_CYSCREEN);
-      if ((aspect > 1.f) && (height < width))
+      // Use aspect ratio to determine orientation (GetSystemMetrics returns 0 on Android)
+      const bool isLandscape = (aspect > 1.f);
+      const bool isPortrait = (aspect < 1.f);
+      if (isLandscape)
       {
          // layout landscape(game horz) in lanscape(LCD\LED horz)
          //inc += 0.1f;       // 0.05-best, 0.1-good, 0.2-bad > (0.2 terrible original)
@@ -277,7 +278,7 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
          else
             camz -= 800.0f;  // 480
       }
-      else if (height > width)
+      else if (isPortrait)
       {
          // layout portrait(game vert) in portrait(LCD\LED vert)
          if (aspect > 0.6f)

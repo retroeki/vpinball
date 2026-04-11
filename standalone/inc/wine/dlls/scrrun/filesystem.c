@@ -3541,6 +3541,14 @@ static HRESULT WINAPI filesys_GetExtensionName(IFileSystem3 *iface, BSTR path,
     return S_OK;
 }
 
+// TODO: RETROEKI - This function fails on phone when table is loaded from staging cache
+// (/data/user/0/com.retroeki.pinball/cache/vpx_staging/) because:
+// 1. getcwd() may return unexpected path for the :native_process
+// 2. The for loop starts at i=3 assuming Windows C:\ style paths - breaks on deep Unix paths
+// 3. FindFirstFileW walk may fail on Android internal storage paths
+// 4. The staging cache only has the .vpx file, not UltraDMD/asset subfolders
+// Works on Odin because tables are read directly from SD card raw path
+// Phone uses SAF -> staging cache copy because scoped storage blocks raw access
 static HRESULT WINAPI filesys_GetAbsolutePathName(IFileSystem3 *iface, BSTR path, BSTR *pbstrResult)
 {
     WCHAR buf[MAX_PATH], ch;

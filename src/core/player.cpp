@@ -1944,6 +1944,7 @@ void Player::FinishFrame()
    // Update FPS counter
    m_fps = (float) (1e6 / m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME));
 
+
    #ifndef ACCURATETIMERS
       ApplyDeferredTimerChanges();
       FireTimers(m_time_msec);

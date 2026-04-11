@@ -211,6 +211,11 @@ BackGlass::BackGlass(RenderDevice* const pd3dDevice, Texture * backgroundFallbac
       m_backgroundTexture = nullptr;
    }
    delete [] data;
+   // TODO: RETROEKI - Fix cabinet backglass renderer to handle portrait aspect ratios.
+   // Currently the backBoxSize height uses hardcoded 9/16 (landscape) ratio which causes
+   // the backglass DMD to render squashed on portrait phone displays (e.g. Flip 5 1080x2640).
+   // iOS avoids this by using Desktop/FSS mode (BGSet=0) instead of cabinet mode.
+   // Need to account for viewport aspect ratio when computing backglass box dimensions.
    float tableWidth, glassHeight;
    g_pplayer->m_ptable->get_Width(&tableWidth);
    g_pplayer->m_ptable->get_GlassHeight(&glassHeight);
