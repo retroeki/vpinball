@@ -176,6 +176,7 @@ PropString(Player, DecalImage, "Decal image override"s, "Image to use for the ba
 
 // Misc player settings
 PropBool(Player, TouchZonesEnabled, "Touch Zones"s, "Enable touch screen zones for flipper, nudge, and other actions"s, false);
+PropBool(Player, TouchZoneSettingsEnabled, "Touch Zone Settings"s, "Map top-right touch zone to open settings instead of coin door (debug)"s, false);
 PropBool(Player, TouchOverlay, "Touch Overlay"s, "Display an overlay showing touch regions"s, false);
 PropBool(Player, ShowNotifications, "Show Notifications"s, "Display notification messages on screen during gameplay"s, true);
 PropBool(Player, EnableCameraModeFlyAround, "Legacy Fly Over Mode"s, "Enable moving camera when using the Tweak menu (legacy, replaced by LiveUI fly mode)"s, false);
@@ -1356,6 +1357,7 @@ PropBoolDyn(PluginWMP, Enable, "Enable"s, "Enable WMP plugin"s, g_isStandalone);
 // Standalone
 PropEnumWithMin(Standalone, RenderingModeOverride, "Override rendering mode"s, ""s, int, -1, g_isMobile ? 0 : -1, "Default"s, "2D"s, "Stereo 3D"s, "VR"s); // Mobile defaults to 2D (was VR)
 PropBool(Standalone, Haptics, "Haptics"s, ""s, g_isMobile);
+PropBool(Standalone, TouchZonesForced, "Force Touch Zones"s, "Always use hardcoded touch zones, ignoring table overrides"s, false);
 PropBool(Standalone, ResetLogOnPlay, "Reset Log on Play"s, ""s, g_isMobile);
 PropString(Standalone, VPRegPath, "VPRegPath"s, ""s, ""s);
 

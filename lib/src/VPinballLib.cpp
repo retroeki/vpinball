@@ -1038,6 +1038,75 @@ float VPinballLib::GetLayback()
    return viewSetup.mLayback;
 }
 
+VPINBALL_STATUS VPinballLib::SetViewX(float x)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mViewX = CMTOVPU(x);
+
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetViewX()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 0.0f;
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return VPUTOCM(viewSetup.mViewX);
+}
+
+VPINBALL_STATUS VPinballLib::SetViewY(float y)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mViewY = CMTOVPU(y);
+
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetViewY()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 20.0f;  // Default 20cm
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return VPUTOCM(viewSetup.mViewY);
+}
+
+VPINBALL_STATUS VPinballLib::SetViewZ(float z)
+{
+   if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   viewSetup.mViewZ = CMTOVPU(z);
+
+   g_pplayer->m_renderer->DisableStaticPrePass(true);
+   g_pplayer->m_renderer->InitLayout();
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+float VPinballLib::GetViewZ()
+{
+   if (!g_pplayer || !g_pplayer->m_ptable)
+      return 70.0f;  // Default 70cm
+
+   const ViewSetup& viewSetup = g_pplayer->m_ptable->GetViewSetup();
+   return VPUTOCM(viewSetup.mViewZ);
+}
+
 string VPinballLib::GetTableName()
 {
    if (!g_pplayer || !g_pplayer->m_ptable)

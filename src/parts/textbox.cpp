@@ -440,6 +440,13 @@ void Textbox::Render(const unsigned int renderMask)
 
    if (is_dmd)
    {
+      static bool loggedOnce = false;
+      if (!loggedOnce) {
+         PLOGI << "Textbox DMD: rect=" << rect_left << "," << rect_top << " -> " << rect_right << "," << rect_bottom
+               << " normalized x=" << x << " y=" << y << " w=" << w << " h=" << h
+               << " name=" << MakeString(m_wzName);
+         loggedOnce = true;
+      }
 #ifdef EXT_CAPTURE
       const bool isExternalDMD = HasDMDCapture();
 #else
@@ -463,17 +470,52 @@ void Textbox::Render(const unsigned int renderMask)
       m_rd->m_DMDShader->SetTechnique(SHADER_TECHNIQUE_basic_DMD);
       #endif
 
-      Vertex3D_NoTex2 vertices[4] = { 
-         { 1.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f }, 
-         { 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f }, 
+      Vertex3D_NoTex2 vertices[4] = {
+         { 1.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f },
+         { 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f },
          { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f },
          { 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f } };
 
+#if defined(__ANDROID__)
+      // Portrait aspect ratio correction for textbox DMD rendering.
+      //
+      // The table author positions the DMD textbox within the backglass panel using
+      // the backdrop editor coordinate space (EDITOR_BG_WIDTH x EDITOR_BG_HEIGHT = 1000x750,
+      // a 4:3 landscape aspect ratio). These coordinates are normalized to [0..1] and then
+      // mapped directly to clip space [-1..1], which fills the entire screen.
+      //
+      // On a portrait phone (e.g. 1080x2640, ~9:22), clip space maps to a tall narrow
+      // rectangle. 1 unit in clip-y = 1320px, but 1 unit in clip-x = 540px. So a DMD
+      // that the author designed as a wide rectangle in the 4:3 backglass appears nearly
+      // square or even taller-than-wide on the portrait screen.
+      //
+      // The fix: multiply the y clip-space range by a correction factor so that the
+      // backdrop's 4:3 proportions are preserved:
+      //   yCorr = (screenW * BG_HEIGHT) / (screenH * BG_WIDTH)
+      //
+      // This compresses the backdrop into the top portion of the portrait screen,
+      // maintaining the correct DMD shape. On a 4:3 screen yCorr=1 (no change).
+      // On landscape devices (screenH <= screenW) yCorr is clamped to 1 so the
+      // Odin handheld app is completely unaffected.
+      {
+         const float scrW = (float)m_rd->m_outputWnd[0]->GetWidth();
+         const float scrH = (float)m_rd->m_outputWnd[0]->GetHeight();
+         const float yCorr = (scrH > scrW)
+            ? (scrW * (float)EDITOR_BG_HEIGHT) / (scrH * (float)EDITOR_BG_WIDTH)
+            : 1.0f;
+         for (unsigned int i = 0; i < 4; ++i)
+         {
+            vertices[i].x = (vertices[i].x * w + x) * 2.0f - 1.0f;
+            vertices[i].y = 1.0f - (vertices[i].y * h + y) * 2.0f * yCorr;
+         }
+      }
+#else
       for (unsigned int i = 0; i < 4; ++i)
       {
          vertices[i].x = (vertices[i].x * w + x) * 2.0f - 1.0f;
          vertices[i].y = 1.0f - (vertices[i].y * h + y) * 2.0f;
       }
+#endif
 
       ResURIResolver::DisplayState dmd = g_pplayer->m_resURIResolver.GetDisplayState("ctrl://default/display"s);
       if (dmd.state.frame == nullptr)

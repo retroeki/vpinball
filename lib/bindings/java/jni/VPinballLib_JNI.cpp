@@ -344,6 +344,36 @@ JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetLaybac
    return VPinballGetLayback();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetViewX(JNIEnv* env, jobject obj, jfloat x)
+{
+   return VPinballSetViewX(x);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewX(JNIEnv* env, jobject obj)
+{
+   return VPinballGetViewX();
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetViewY(JNIEnv* env, jobject obj, jfloat y)
+{
+   return VPinballSetViewY(y);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewY(JNIEnv* env, jobject obj)
+{
+   return VPinballGetViewY();
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetViewZ(JNIEnv* env, jobject obj, jfloat z)
+{
+   return VPinballSetViewZ(z);
+}
+
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewZ(JNIEnv* env, jobject obj)
+{
+   return VPinballGetViewZ();
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetViewMode(JNIEnv* env, jobject obj)
 {
    return VPinballGetViewMode();

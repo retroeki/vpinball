@@ -42,14 +42,19 @@ InputManager::InputManager()
    if (touchDevices)
       SDL_free(touchDevices);
    PLOGI << "Touch support: nTouchDevices=" << nTouchDevices << " m_supportsTouch=" << m_supportsTouch;
-   PLOGI << "TouchZonesEnabled setting=" << settings.GetPlayer_TouchZonesEnabled();
+   const bool touchZonesForced = settings.GetStandalone_TouchZonesForced();
+   const bool touchZonesEnabled = settings.GetPlayer_TouchZonesEnabled() || touchZonesForced;
+   PLOGI << "TouchZonesEnabled setting=" << settings.GetPlayer_TouchZonesEnabled() << " forced=" << touchZonesForced;
    auto addTouchRegion = [this](const RECT& region, unsigned int actionId) { m_touchRegionMap.emplace_back(region, actionId, m_inputActions[actionId]->NewDirectStateSlot()); };
    // RECT definition is left, top, right, bottom in % of screen
-   if (settings.GetPlayer_TouchZonesEnabled())
+   if (touchZonesEnabled)
    {
-      PLOGI << "Registering " << 11 << " touch zones";
+      // When forced, clear any existing touch zones to ensure hardcoded layout
+      if (touchZonesForced)
+         m_touchRegionMap.clear();
+      PLOGI << "Registering " << 11 << " touch zones (forced=" << touchZonesForced << ")";
       addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
-      addTouchRegion(RECT { 50, 0, 100, 10 }, GetExitInteractiveActionId());
+      addTouchRegion(RECT { 50, 0, 100, 10 }, settings.GetPlayer_TouchZoneSettingsEnabled() ? GetExitInteractiveActionId() : GetCoinDoorActionId());
       addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
       addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
       addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());

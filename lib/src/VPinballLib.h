@@ -100,6 +100,12 @@ public:
    float GetLookAt();
    VPINBALL_STATUS SetLayback(float layback);
    float GetLayback();
+   VPINBALL_STATUS SetViewX(float x);   // Camera X position in cm
+   float GetViewX();
+   VPINBALL_STATUS SetViewY(float y);   // Camera Y position in cm
+   float GetViewY();
+   VPINBALL_STATUS SetViewZ(float z);   // Camera Z position in cm
+   float GetViewZ();
    string GetTableName();
    string GetTableVersion();
    VPINBALL_VIEW_MODE GetViewMode();

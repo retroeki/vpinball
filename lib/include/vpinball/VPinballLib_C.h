@@ -106,6 +106,14 @@ VPINBALLAPI float VPinballGetLookAt();
 VPINBALLAPI VPINBALL_STATUS VPinballSetLayback(float layback);  // Layback distortion (-90 to 90 degrees, default 0)
 VPINBALLAPI float VPinballGetLayback();
 
+// Camera Position (in centimeters, relative to table bottom center)
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewX(float x);   // Camera X position (cm, default 0)
+VPINBALLAPI float VPinballGetViewX();
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewY(float y);   // Camera Y position (cm, default 20)
+VPINBALLAPI float VPinballGetViewY();
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewZ(float z);   // Camera Z / height (cm, default 70)
+VPINBALLAPI float VPinballGetViewZ();
+
 // Table Info
 
 VPINBALLAPI const char* VPinballGetTableName();

@@ -252,6 +252,36 @@ VPINBALLAPI float VPinballGetLayback()
    return VPinballLib::VPinballLib::Instance().GetLayback();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewX(float x)
+{
+   return VPinballLib::VPinballLib::Instance().SetViewX(x);
+}
+
+VPINBALLAPI float VPinballGetViewX()
+{
+   return VPinballLib::VPinballLib::Instance().GetViewX();
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewY(float y)
+{
+   return VPinballLib::VPinballLib::Instance().SetViewY(y);
+}
+
+VPINBALLAPI float VPinballGetViewY()
+{
+   return VPinballLib::VPinballLib::Instance().GetViewY();
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballSetViewZ(float z)
+{
+   return VPinballLib::VPinballLib::Instance().SetViewZ(z);
+}
+
+VPINBALLAPI float VPinballGetViewZ()
+{
+   return VPinballLib::VPinballLib::Instance().GetViewZ();
+}
+
 VPINBALLAPI VPINBALL_VIEW_MODE VPinballGetViewMode()
 {
    return VPinballLib::VPinballLib::Instance().GetViewMode();
