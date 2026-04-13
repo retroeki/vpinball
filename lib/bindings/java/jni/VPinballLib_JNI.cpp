@@ -9,6 +9,10 @@
 #include <jni.h>
 #include <vector>
 
+#include "lib/bindings/java/jni/AndroidSAFBridge.h"
+// Include the .cpp directly to avoid CMakeLists changes (it's compiled as part of this TU)
+#include "lib/bindings/java/jni/AndroidSAFBridge.cpp"
+
 #ifdef ENABLE_XR
 #define XR_USE_PLATFORM_ANDROID
 #include <openxr/openxr.h>
@@ -503,5 +507,10 @@ JNIEXPORT jboolean JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInitOpe
    return false;
 }
 #endif
+
+JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetSAFBridge(JNIEnv *env, jobject obj, jobject bridge)
+{
+   AndroidSAF::Init(env, bridge);
+}
 
 }

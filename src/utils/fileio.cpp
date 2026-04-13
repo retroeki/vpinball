@@ -9,6 +9,10 @@ static std::mutex mtx; //!! only used for Wine multithreading bug workaround
 #include <fstream>
 #endif
 
+#ifdef __ANDROID__
+#include "lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
+
 bool DirExists(const string& dirPath)
 {
 #ifdef _MSC_VER
@@ -18,7 +22,14 @@ bool DirExists(const string& dirPath)
 #else
    struct stat info;
    if (stat(dirPath.c_str(), &info) != 0)
+   {
+#ifdef __ANDROID__
+      // FUSE on internal storage denies stat() even with SAF permission.
+      // Fall back to JNI bridge which checks via ContentResolver.
+      return AndroidSAF::DirExists(dirPath);
+#endif
       return false;
+   }
    return (info.st_mode & S_IFDIR);
 #endif
 }
@@ -39,7 +50,12 @@ bool FileExists(const string& filePath)
    struct stat info;
 
    if (stat(filePath.c_str(), &info) != 0)
+   {
+#ifdef __ANDROID__
+      return AndroidSAF::FileExists(filePath);
+#endif
       return false;
+   }
    return !(info.st_mode & S_IFDIR);
 #endif
 }

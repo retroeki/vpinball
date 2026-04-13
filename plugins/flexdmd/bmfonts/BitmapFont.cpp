@@ -7,6 +7,10 @@
 
 #include <unordered_dense.h>
 
+#ifdef __ANDROID__
+#include "../../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
+
 namespace Flex {
 
 BitmapFont::BitmapFont()
@@ -66,13 +70,28 @@ void BitmapFont::Load(const string& filename)
    std::ifstream fontFile;
    fontFile.open(filename, std::ifstream::in);
 
+   std::stringstream safStream;
+   bool useSafStream = false;
+
    if (!fontFile.is_open()) {
-      LOGE("Failed to open bitmap font file: %s", filename.c_str());
-      return;
+#ifdef __ANDROID__
+      // Fall back to SAF bridge for files on external storage
+      auto bytes = AndroidSAF::ReadFile(filename);
+      if (!bytes.empty()) {
+         safStream.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+         useSafStream = true;
+      }
+#endif
+      if (!useSafStream) {
+         LOGE("Failed to open bitmap font file: %s", filename.c_str());
+         return;
+      }
    }
 
+   std::istream& stream = useSafStream ? static_cast<std::istream&>(safStream) : static_cast<std::istream&>(fontFile);
+
    string line;
-   while (std::getline(fontFile, line)) {
+   while (std::getline(stream, line)) {
       const ankerl::unordered_dense::map<string, string> parts = ParseParts(trim_string(line));
 
       if (parts.empty())
