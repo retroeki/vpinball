@@ -272,9 +272,25 @@ void PerfUI::RenderFPS()
    ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.5f);
    ImGui::BeginChild("FPSText", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
    const double frameLength = m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME);
-   ImGui::Text("Render: %5.1ffps %4.1fms (%4.1fms)\nLatency: %4.1fms (%4.1fms max)",
+   // Map Android PowerManager.THERMAL_STATUS_* to a short label. -1 = listener hasn't fired yet (non-Android build or pre-listener).
+   const int thermal = RuntimeStats::GetThermalStatus();
+   const char* thermalLabel = "--";
+   switch (thermal)
+   {
+      case 0: thermalLabel = "NONE"; break;
+      case 1: thermalLabel = "LIGHT"; break;
+      case 2: thermalLabel = "MODERATE"; break;
+      case 3: thermalLabel = "SEVERE"; break;
+      case 4: thermalLabel = "CRITICAL"; break;
+      case 5: thermalLabel = "EMERGENCY"; break;
+      case 6: thermalLabel = "SHUTDOWN"; break;
+      default: break;
+   }
+   const float batteryTempC = RuntimeStats::GetBatteryTempC();
+   ImGui::Text("Render: %5.1ffps %4.1fms (%4.1fms)\nLatency: %4.1fms (%4.1fms max)\nBattery: %4.1fC  Thermal: %s",
       1e6 / frameLength, 1e-3 * frameLength, 1e-3 * m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME),
-      1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(false), 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(true));
+      1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(false), 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(true),
+      batteryTempC, thermalLabel);
    ImGui::EndChild();
    #if defined(ENABLE_BGFX)
    if (pop)

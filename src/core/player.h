@@ -130,6 +130,7 @@ public:
 
    VideoSyncMode GetVideoSyncMode() const { return m_videoSyncMode; }
    void SetVideoSyncMode(VideoSyncMode mode) { m_videoSyncMode = mode; }
+   int GetTimerThrottleMs() const { return m_timerThrottleMs; }
    float GetTargetRefreshRate() const { return m_maxFramerate; }
    void SetTargetRefreshRate(float v) { m_maxFramerate = v < 0.f ? m_playfieldWnd->GetRefreshRate() : v == 0.f ? 10000.f : v < 24.f ? 24.f : v; }
    bool m_curFrameSyncOnFPS = false;
@@ -142,8 +143,10 @@ public:
 
 private:
    VideoSyncMode m_videoSyncMode = VideoSyncMode::VSM_FRAME_PACING;
+   int m_timerThrottleMs = 5;
    float m_maxFramerate = 0.f; // targeted refresh rate in Hz, if larger refresh rate it will limit FPS by uSleep() //!! currently does not work adaptively as it would require IDirect3DDevice9Ex which is not supported on WinXP
    uint64_t m_startFrameTick;  // System time in us when render frame was started (beginning of frame animation then collect,...)
+   uint64_t m_lastPrepareStartUs = 0; // Used by the Android fps-cap throttle to space PrepareFrame calls to m_maxFramerate cadence.
    unsigned int m_onPrepareFrameMsgId;
 
    void ProcessOSMessages();

@@ -36,6 +36,18 @@ double TheoreticRadiation(const unsigned int day, const unsigned int month, cons
 double MaxTheoreticRadiation(const unsigned int year, const double rlat);
 double SunsetSunriseLocalTime(const unsigned int day, const unsigned int month, const unsigned int year, const double rlong, const double rlat, const bool sunrise);
 
+// Runtime stats surfaced in the stats overlay (Android-oriented; safe on other platforms — reads return sentinels).
+// Thermal status values mirror android.os.PowerManager.THERMAL_STATUS_* (0=NONE … 6=SHUTDOWN); -1 = unknown / not yet reported.
+namespace RuntimeStats
+{
+   void SetThermalStatus(int status);
+   int GetThermalStatus();
+   // Battery temperature in °C. Pushed from the Android side via the ACTION_BATTERY_CHANGED broadcast
+   // (unprivileged /sys reads fail on Samsung due to SELinux — the broadcast is the reliable path).
+   void SetBatteryTempC(float tempC);
+   float GetBatteryTempC();
+}
+
 
 class FrameProfiler final
 {

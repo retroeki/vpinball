@@ -228,7 +228,7 @@ Player::Player(PinTable *const table, const int playMode)
       m_playfieldWnd = new VPX::Window("Visual Pinball Player"s, settings, stereo3D == STEREO_VR ? VPXWindowId::VPXWINDOW_VRPreview : VPXWindowId::VPXWINDOW_Playfield);
       g_pvp->ShowWindow(SW_HIDE);
 
-      const float pfRefreshRate = m_playfieldWnd->GetRefreshRate(); 
+      const float pfRefreshRate = m_playfieldWnd->GetRefreshRate();
       m_maxFramerate = static_cast<float>(m_ptable->m_settings.GetPlayer_MaxFramerate());
       if(m_maxFramerate > 0.f && m_maxFramerate < 24.f) // at least 24 fps
          m_maxFramerate = 24.f;
@@ -237,6 +237,7 @@ Player::Player(PinTable *const table, const int playMode)
       if (m_maxFramerate == 0.f) // 0 is unbound refresh rate
          m_maxFramerate = 10000.f;
       m_videoSyncMode = static_cast<VideoSyncMode>(m_ptable->m_settings.GetPlayer_SyncMode());
+      m_timerThrottleMs = m_ptable->m_settings.GetPlayer_TimerThrottleMs();
       if (m_videoSyncMode != VideoSyncMode::VSM_NONE)
       {
          if (m_maxFramerate > pfRefreshRate)
@@ -257,6 +258,14 @@ Player::Player(PinTable *const table, const int playMode)
          m_videoSyncMode = VideoSyncMode::VSM_NONE;
          m_maxFramerate = 10000.f;
       }
+#ifdef __ANDROID__
+      // Mobile clamp applied AFTER the vsync-divisor block — the existing divider loop
+      // (see above: `while (m_maxFramerate * divider > pfRefreshRate)`) is inverted and
+      // will snap the clamp back up to the panel refresh (120Hz). We override last so our cap wins.
+      // 120Hz panels running a 97%-GPU pinball scene burn heat for frames the small screen
+      // can't reliably resolve, then thermal throttle drags sustained fps below 30.
+      m_maxFramerate = min(m_maxFramerate, 60.f);
+#endif
       assert(24.f <= m_maxFramerate && m_maxFramerate <= 10000.f); // We guarantee a target framerate from 24 FPS to unbound, expressed as 10000 FPS
       PLOGI << "Synchronization mode: " << m_videoSyncMode << " with maximum FPS: " << m_maxFramerate << ", display FPS: " << pfRefreshRate;
    }
@@ -1634,6 +1643,24 @@ void Player::MultithreadedGameLoop()
       // If rendering thread is ready, push a new frame as soon as possible
       if (!m_renderer->m_renderDevice->m_framePending && m_renderer->m_renderDevice->m_frameMutex.try_lock())
       {
+#ifdef __ANDROID__
+         // Enforce m_maxFramerate in the BGFX path. The existing active-throttle at player.cpp:1719
+         // only runs in the DX9 GPUQueueStuffingGameLoop. Throttle BEFORE PrepareFrame so the
+         // cadence is measured between consecutive PrepareFrame starts — doing it after causes the
+         // next iteration's UpdateGameLogic to add ~3ms per cycle, dragging 60fps down to ~53.
+         if (m_lastPrepareStartUs != 0 && m_maxFramerate > 0.f && m_maxFramerate < 1000.f)
+         {
+            const uint64_t now = usec();
+            const uint64_t target = m_lastPrepareStartUs + static_cast<uint64_t>(1000000.0 / (double)m_maxFramerate);
+            if (now < target)
+            {
+               m_logicProfiler.EnterProfileSection(FrameProfiler::PROFILE_SLEEP);
+               uOverSleep((target - now) * 1000ull); // uOverSleep takes ns
+               m_logicProfiler.ExitProfileSection();
+            }
+         }
+         m_lastPrepareStartUs = usec();
+#endif
          FinishFrame();
          m_lastFrameSyncOnFPS = (m_videoSyncMode != VideoSyncMode::VSM_NONE) && ((m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME) - 100) * m_playfieldWnd->GetRefreshRate() < 1000000);
          PrepareFrame();
@@ -1658,7 +1685,10 @@ void Player::MultithreadedGameLoop()
          // Render thread is busy - yield CPU to prevent starving it.
          // Without this, the game logic thread spin-waits at 40kHz+ burning a full core,
          // which causes frame drops and sluggish visual feedback on faster devices.
+         // Instrument the sleep so the PerfUI Sleep row reflects real wait time on Android, matching the Windows branch above.
+         m_logicProfiler.EnterProfileSection(FrameProfiler::PROFILE_SLEEP);
          uOverSleep(100000); // ~100us target, gives render thread CPU time
+         m_logicProfiler.ExitProfileSection();
       }
       // Android and iOS use SDL main callbacks and use SDL_AppIterate
       break;

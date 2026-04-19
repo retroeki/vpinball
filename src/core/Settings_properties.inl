@@ -133,6 +133,9 @@ PropString(Player, GfxBackend, "Graphics Backend"s, "Graphics API/backend used f
 #endif
 #endif
 PropEnum(Player, ShowFPS, "Show FPS"s, "Performance overlay display mode"s, int /* PerfUI::PerfMode */, 0, "Disable"s, "FPS"s, "Full"s);
+PropInt(Player, TimerThrottleMs, "Timer Throttle (ms)"s,
+   "Max script time per frame before timers are throttled (BGFX). 0 disables throttling so timers always fire."s,
+   0, 50, 5);
 PropBool(Player, SSRefl, "Additive Screen Space Reflection"s, "Add global reflection to the entire scene"s, false);
 PropBool(Player, HDRDisableToneMapper, "Disable tonemapping on HDR display"s, "Do not perform tonemapping when rendering on a high dynamic range (HDR) capable monitor/gfxboard/OS"s, true);
 PropFloat(Player, HDRGlobalExposure, "HDR Display Global Exposure"s, "Global exposure scale multiplier for high dynamic range (HDR) capable monitors"s, 0.f, 5.f, 1.f);

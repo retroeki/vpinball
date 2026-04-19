@@ -90,6 +90,10 @@ public:
    VPINBALL_STATUS Resume();
    VPINBALL_STATUS SoftPause();   // Pause game logic only, keep rendering for live settings preview
    VPINBALL_STATUS SoftResume();
+   // Called from the Android PowerManager.OnThermalStatusChangedListener so the stats overlay can surface the current thermal state.
+   VPINBALL_STATUS SetThermalStatus(int status);
+   // Called from Android's ACTION_BATTERY_CHANGED receiver (EXTRA_TEMPERATURE / 10).
+   VPINBALL_STATUS SetBatteryTempC(float tempC);
    VPINBALL_STATUS SetBloomStrength(float strength);
    float GetBloomStrength();
    VPINBALL_STATUS SetEmissionScale(float scale);

@@ -838,6 +838,12 @@ VPINBALL_STATUS VPinballLib::Pause()
    // First pause the game logic
    g_pplayer->SetPlayState(false);
 
+   // Pause the audio devices so the SDL audio callback thread parks — without this,
+   // Samsung's Freecess sees an active audio thread and refuses to freeze the process
+   // (result:12), keeping the phone warm and draining battery while user is on menu.
+   if (g_pplayer->m_audioPlayer)
+      g_pplayer->m_audioPlayer->SetPaused(true);
+
    // Now suspend the render loop and wait for it to stop
    // This is critical for Android - we must stop rendering BEFORE the surface is destroyed
    m_suspendAcknowledged.store(false);
@@ -870,6 +876,10 @@ VPINBALL_STATUS VPinballLib::Resume()
    m_suspended.store(false);
    m_suspendAcknowledged.store(false);
 
+   // Unpause audio — matches Pause() above.
+   if (g_pplayer->m_audioPlayer)
+      g_pplayer->m_audioPlayer->SetPaused(false);
+
    // Then resume the game logic
    g_pplayer->SetPlayState(true);
 
@@ -898,6 +908,18 @@ VPINBALL_STATUS VPinballLib::SoftResume()
 
    g_pplayer->SetPlayState(true);
 
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::SetThermalStatus(int status)
+{
+   RuntimeStats::SetThermalStatus(status);
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+VPINBALL_STATUS VPinballLib::SetBatteryTempC(float tempC)
+{
+   RuntimeStats::SetBatteryTempC(tempC);
    return VPINBALL_STATUS_SUCCESS;
 }
 

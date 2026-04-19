@@ -202,6 +202,16 @@ VPINBALLAPI VPINBALL_STATUS VPinballSoftResume()
    return VPinballLib::VPinballLib::Instance().SoftResume();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status)
+{
+   return VPinballLib::VPinballLib::Instance().SetThermalStatus(status);
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballSetBatteryTempC(float tempC)
+{
+   return VPinballLib::VPinballLib::Instance().SetBatteryTempC(tempC);
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength)
 {
    return VPinballLib::VPinballLib::Instance().SetBloomStrength(strength);

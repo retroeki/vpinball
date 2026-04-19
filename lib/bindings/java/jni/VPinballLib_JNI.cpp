@@ -298,6 +298,16 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSoftResume(
    return VPinballSoftResume();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetThermalStatus(JNIEnv* env, jobject obj, jint status)
+{
+   return VPinballSetThermalStatus(status);
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetBatteryTempC(JNIEnv* env, jobject obj, jfloat tempC)
+{
+   return VPinballSetBatteryTempC(tempC);
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetBloomStrength(JNIEnv* env, jobject obj, jfloat strength)
 {
    return VPinballSetBloomStrength(strength);

@@ -345,6 +345,27 @@ AudioPlayer::~AudioPlayer()
    SDL_QuitSubSystem(SDL_INIT_AUDIO);
 }
 
+void AudioPlayer::SetPaused(bool paused)
+{
+   // Map to miniaudio start/stop which hits the SDL custom backend at
+   // AudioPlayer.cpp:165-177 (SDL_PauseAudioStreamDevice / SDL_ResumeAudioStreamDevice).
+   // On Android this parks the audio callback thread so the OS can freeze the process.
+   if (m_playfieldDevice)
+   {
+      if (paused)
+         ma_device_stop(&m_playfieldDevice->device);
+      else
+         ma_device_start(&m_playfieldDevice->device);
+   }
+   if (m_backglassDevice)
+   {
+      if (paused)
+         ma_device_stop(&m_backglassDevice->device);
+      else
+         ma_device_start(&m_backglassDevice->device);
+   }
+}
+
 void AudioPlayer::SetMainVolume(float backglassVolume, float playfieldVolume)
 {
    m_backglassVolume = backglassVolume;

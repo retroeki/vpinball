@@ -95,6 +95,8 @@ VPINBALLAPI VPINBALL_STATUS VPinballPause();
 VPINBALLAPI VPINBALL_STATUS VPinballResume();
 VPINBALLAPI VPINBALL_STATUS VPinballSoftPause();   // Pause game logic only, keep rendering
 VPINBALLAPI VPINBALL_STATUS VPinballSoftResume();
+VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status);
+VPINBALLAPI VPINBALL_STATUS VPinballSetBatteryTempC(float tempC);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);
 VPINBALLAPI float VPinballGetBloomStrength();
 VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale);

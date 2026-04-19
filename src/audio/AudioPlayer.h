@@ -71,6 +71,10 @@ public:
    void SetMainVolume(float backglassVolume, float playfieldVolume); // Overall gain, directly applied to all sounds, including the ones being played
    void SetMirrored(bool mirrored) { m_mirrored = mirrored; } // Whether the table is mirrored, affects sound panning
 
+   // Pause / resume the underlying miniaudio devices (maps to SDL_PauseAudioStreamDevice).
+   // Called from the lifecycle path so Android can freeze the process when the app is backgrounded.
+   void SetPaused(bool paused);
+
    // Audio stream, directly forwarded to audio device, respecting channel assignment, applying backglass global volume
    using AudioStreamID = std::shared_ptr<class AudioStreamPlayer>; // opaque pointer as objects are always owned by AudioPlayer without any public API
    AudioStreamID OpenAudioStream(const string& name, int frequency, int channels, bool isFloat);

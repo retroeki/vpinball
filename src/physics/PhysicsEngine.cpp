@@ -640,8 +640,10 @@ void PhysicsEngine::UpdatePhysics()
 
       #ifdef ACCURATETIMERS
       g_pplayer->ApplyDeferredTimerChanges();
-      if (g_pplayer->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING
-         || g_pplayer->m_logicProfiler.Get(FrameProfiler::PROFILE_SCRIPT) <= 1000 * MAX_TIMERS_MSEC_OVERALL) // if overall script time per frame exceeded, skip
+      const int throttleMs = g_pplayer->GetTimerThrottleMs();
+      if (throttleMs <= 0
+         || g_pplayer->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING
+         || g_pplayer->m_logicProfiler.Get(FrameProfiler::PROFILE_SCRIPT) <= 1000 * throttleMs) // if overall script time per frame exceeded, skip
          g_pplayer->FireTimers(g_pplayer->m_time_msec);
       #endif
 

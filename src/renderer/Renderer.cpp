@@ -55,13 +55,23 @@ Renderer::Renderer(PinTable* const table, VPX::Window* wnd, VideoSyncMode& syncM
 #endif
    m_sharpen = m_table->m_settings.GetPlayer_Sharpen();
    m_ss_refl = m_table->m_settings.GetPlayer_SSRefl();
+   // TEMP measurement: force-disable Screen Space Reflections to eliminate playfield-surface mirror effect on the ball and measure Submit savings.
+   m_ss_refl = false;
    m_bloomOff = m_table->m_settings.GetPlayer_ForceBloomOff();
    if (m_table->m_settings.GetPlayer_OverrideTableBloom())
       m_table->m_bloom_strength = m_table->m_settings.GetPlayer_BloomStrength();
    m_motionBlurOff = m_table->m_settings.GetPlayer_ForceMotionBlurOff();
+   // TEMP measurement: force-disable ball motion blur pass to eliminate residual ghosting close to the ball.
+   m_motionBlurOff = true;
    m_maxReflectionMode = (RenderProbe::ReflectionMode)m_table->m_settings.GetPlayer_PFReflection();
-   m_trailForBalls = m_table->m_settings.GetPlayer_BallTrail();
-   m_ballTrailStrength = m_table->m_settings.GetPlayer_BallTrailStrength();
+   // TEMP measurement: force-disable ball effects (trail + ball reflection) to quantify Submit-cost savings on GPU-bound tables like Last Action Hero.
+   // Any mode >= REFL_STATIC_N_BALLS renders balls per RenderProbe.cpp:405, so clamp all ball-rendering modes to REFL_STATIC.
+   if (m_maxReflectionMode == RenderProbe::REFL_BALLS)
+      m_maxReflectionMode = RenderProbe::REFL_NONE;
+   else if (m_maxReflectionMode >= RenderProbe::REFL_STATIC_N_BALLS)
+      m_maxReflectionMode = RenderProbe::REFL_STATIC;
+   m_trailForBalls = false;
+   m_ballTrailStrength = 0.0f;
    m_ballAntiStretch = m_table->m_settings.GetPlayer_BallAntiStretch();
    m_ballImage = nullptr;
    m_decalImage = nullptr;
@@ -129,7 +139,14 @@ Renderer::Renderer(PinTable* const table, VPX::Window* wnd, VideoSyncMode& syncM
       m_renderWidth = wnd->GetPixelWidth();
       m_renderHeight = wnd->GetPixelHeight();
    }
-   const float AAfactor = m_table->m_settings.GetPlayer_AAFactor();
+   float AAfactor = m_table->m_settings.GetPlayer_AAFactor();
+#ifdef __ANDROID__
+   // On Android the Performance Preset (VPinballPlayerActivity.onCreate) writes the ini value
+   // directly — Battery=0.5, Balanced=0.75, Quality=1.0. Apply a safety net against garbage
+   // values (malformed ini, table override) but otherwise trust what Kotlin wrote.
+   if (AAfactor <= 0.0f || AAfactor > 2.0f)
+      AAfactor = 0.75f;
+#endif
    const int renderWidthAA = (int)((float)m_renderWidth * AAfactor);
    const int renderHeightAA = (int)((float)m_renderHeight * AAfactor);
 

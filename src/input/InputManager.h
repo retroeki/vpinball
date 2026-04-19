@@ -43,6 +43,7 @@ public:
    unsigned int GetSlamTiltActionId() const { return m_slamTiltActionId; }
    unsigned int GetCoinDoorActionId() const { return m_coinDoorActionId; }
    unsigned int GetResetActionId() const { return m_resetActionId; }
+   unsigned int GetInGameUIActionId() const { return m_inGameUIActionId; }
    unsigned int GetServiceActionId(int idx) const { assert(0 <= idx && idx < 8); return m_serviceActionId[idx]; }
    bool IsPressed(int actionId) const;
    int GetWindowVirtualKeyForAction(unsigned int actionId) const;
@@ -222,6 +223,7 @@ private:
    unsigned int m_slamTiltActionId;
    unsigned int m_coinDoorActionId;
    unsigned int m_resetActionId;
+   unsigned int m_inGameUIActionId;
    unsigned int m_serviceActionId[8];
    ankerl::unordered_dense::map<uint32_t, vector<ButtonMapping*>> m_buttonMappings;
    vector<InputAction*> m_onUpdateActions;

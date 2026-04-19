@@ -54,7 +54,9 @@ InputManager::InputManager()
          m_touchRegionMap.clear();
       PLOGI << "Registering " << 11 << " touch zones (forced=" << touchZonesForced << ")";
       addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
-      addTouchRegion(RECT { 50, 0, 100, 10 }, settings.GetPlayer_TouchZoneSettingsEnabled() ? GetExitInteractiveActionId() : GetCoinDoorActionId());
+      // Top-right zone opens the Android app settings dialog (fires VPINBALL_EVENT_MENU_PRESSED via InGameUI action).
+      // Coin-door toggle is now available as an action inside the settings dialog itself.
+      addTouchRegion(RECT { 50, 0, 100, 10 }, GetInGameUIActionId());
       addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
       addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
       addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
@@ -754,7 +756,13 @@ void InputManager::CreateInputActions()
             #endif
          }))->GetActionId();
 
+#ifdef __LIBVPINBALL__
+   // On Android, this action is surfaced as the top-right touch zone labelled "Settings".
+   // Display name is shown by the Show Controls overlay.
+   auto inGameUI = AddAction(std::make_unique<InputAction>(this, "InGameUI"s, "Settings"s, keyMapping(SDL_SCANCODE_F12),
+#else
    auto inGameUI = AddAction(std::make_unique<InputAction>(this, "InGameUI"s, "Toggle InGame UI"s, keyMapping(SDL_SCANCODE_F12),
+#endif
       [](const InputAction&, bool, bool isPressed)
       {
          if (!isPressed)
@@ -769,6 +777,7 @@ void InputManager::CreateInputActions()
             g_pplayer->m_liveUI->OpenInGameUI();
 #endif
       }));
+   m_inGameUIActionId = inGameUI->GetActionId();
 
    auto volumeDown = AddAction(std::make_unique<InputAction>(this, "VolumeDown"s, "Volume Down"s, keyMapping(SDL_SCANCODE_MINUS),
       [this](const InputAction&, bool, bool isPressed)

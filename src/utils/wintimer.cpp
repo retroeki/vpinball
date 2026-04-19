@@ -1,10 +1,24 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include <atomic>
 #include <ctime>
+#include <fstream>
 //#ifndef _MSC_VER
 //#include <unistd.h>
 //#endif
+
+namespace RuntimeStats
+{
+   static std::atomic<int> s_thermalStatus{-1};
+   static std::atomic<float> s_batteryTempC{0.0f};
+
+   void SetThermalStatus(int status) { s_thermalStatus.store(status, std::memory_order_relaxed); }
+   int GetThermalStatus() { return s_thermalStatus.load(std::memory_order_relaxed); }
+
+   void SetBatteryTempC(float tempC) { s_batteryTempC.store(tempC, std::memory_order_relaxed); }
+   float GetBatteryTempC() { return s_batteryTempC.load(std::memory_order_relaxed); }
+}
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
