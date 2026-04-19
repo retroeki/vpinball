@@ -51,6 +51,12 @@ public:
    typedef int(CDECL* fn_avformat_open_input)(AVFormatContext** ps, const char* url, const AVInputFormat* fmt, AVDictionary** options);
    typedef void(CDECL* fn_avformat_close_input)(AVFormatContext** s);
    typedef int(CDECL* fn_avformat_find_stream_info)(AVFormatContext* ic, AVDictionary** options);
+   typedef AVFormatContext*(CDECL* fn_avformat_alloc_context)(void);
+   typedef AVIOContext*(CDECL* fn_avio_alloc_context)(unsigned char* buffer, int buffer_size, int write_flag, void* opaque,
+      int (*read_packet)(void* opaque, uint8_t* buf, int buf_size),
+      int (*write_packet)(void* opaque, const uint8_t* buf, int buf_size),
+      int64_t (*seek)(void* opaque, int64_t offset, int whence));
+   typedef void(CDECL* fn_avio_context_free)(AVIOContext** s);
 
    typedef AVPacket*(CDECL* fn_av_packet_alloc)(void);
    typedef void(CDECL* fn_av_packet_free)(AVPacket** pkt);
@@ -92,6 +98,9 @@ public:
    fn_avformat_open_input _avformat_open_input = nullptr;
    fn_avformat_close_input _avformat_close_input = nullptr;
    fn_avformat_find_stream_info _avformat_find_stream_info = nullptr;
+   fn_avformat_alloc_context _avformat_alloc_context = nullptr;
+   fn_avio_alloc_context _avio_alloc_context = nullptr;
+   fn_avio_context_free _avio_context_free = nullptr;
 
    fn_av_packet_alloc _av_packet_alloc = nullptr;
    fn_av_packet_free _av_packet_free = nullptr;
@@ -245,6 +254,9 @@ private:
       _avformat_open_input = &avformat_open_input;
       _avformat_close_input = &avformat_close_input;
       _avformat_find_stream_info = &avformat_find_stream_info;
+      _avformat_alloc_context = &avformat_alloc_context;
+      _avio_alloc_context = &avio_alloc_context;
+      _avio_context_free = &avio_context_free;
 
       _av_fast_malloc = &av_fast_malloc;
       _av_frame_alloc = &av_frame_alloc;

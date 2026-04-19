@@ -7,7 +7,39 @@
 
 #include "PUPMediaPlayer.h"
 
+#ifdef __ANDROID__
+#include <unistd.h>
+#include <sys/stat.h>
+#include <cerrno>
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
+
 namespace PUP {
+
+#ifdef __ANDROID__
+extern "C" {
+   static int SAFReadPacket(void* opaque, uint8_t* buf, int buf_size)
+   {
+      int fd = (int)(intptr_t)opaque;
+      ssize_t n = read(fd, buf, (size_t)buf_size);
+      if (n == 0) return AVERROR_EOF;
+      if (n < 0) return AVERROR(errno);
+      return (int)n;
+   }
+
+   static int64_t SAFSeek(void* opaque, int64_t offset, int whence)
+   {
+      int fd = (int)(intptr_t)opaque;
+      if (whence == AVSEEK_SIZE) {
+         struct stat st;
+         if (fstat(fd, &st) == 0) return (int64_t)st.st_size;
+         return -1;
+      }
+      // Mask AVSEEK_FORCE (not supported by lseek directly)
+      return (int64_t)lseek(fd, (off_t)offset, whence & 0xFFFF);
+   }
+}
+#endif
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -89,10 +121,64 @@ void PUPMediaPlayer::Play(const string& filename)
       m_loop = false;
       m_startTimestamp = SDL_GetTicks();
 
-      // Open file
-      if (m_libAv._avformat_open_input(&m_pFormatContext, filename.c_str(), NULL, NULL) != 0)
+      // Open file. On Android, try SAF first so files under content URIs can be
+      // streamed through a custom AVIOContext backed by a POSIX fd from the SAF bridge.
+      const char* szOpenPath = filename.c_str();
+#ifdef __ANDROID__
+      m_safFd = AndroidSAF::OpenFd(filename, "r");
+      if (m_safFd >= 0)
+      {
+         constexpr int bufSize = 32 * 1024;
+         uint8_t* pAvioBuf = (uint8_t*)m_libAv._av_malloc(bufSize);
+         if (pAvioBuf)
+         {
+            m_pSafAvioContext = m_libAv._avio_alloc_context(
+               pAvioBuf, bufSize, 0, (void*)(intptr_t)m_safFd,
+               &SAFReadPacket, nullptr, &SAFSeek);
+            if (m_pSafAvioContext)
+            {
+               m_pFormatContext = m_libAv._avformat_alloc_context();
+               if (m_pFormatContext)
+               {
+                  m_pFormatContext->pb = m_pSafAvioContext;
+                  szOpenPath = nullptr;
+               }
+               else
+               {
+                  m_libAv._avio_context_free(&m_pSafAvioContext);
+                  m_libAv._av_free(pAvioBuf);
+                  m_pSafAvioContext = nullptr;
+                  close(m_safFd);
+                  m_safFd = -1;
+               }
+            }
+            else
+            {
+               m_libAv._av_free(pAvioBuf);
+               close(m_safFd);
+               m_safFd = -1;
+            }
+         }
+         else
+         {
+            close(m_safFd);
+            m_safFd = -1;
+         }
+      }
+#endif
+
+      if (m_libAv._avformat_open_input(&m_pFormatContext, szOpenPath, NULL, NULL) != 0)
       {
          LOGE("Unable to open: filename=%s", filename.c_str());
+#ifdef __ANDROID__
+         if (m_pSafAvioContext)
+         {
+            if (m_pSafAvioContext->buffer) m_libAv._av_free(m_pSafAvioContext->buffer);
+            m_libAv._avio_context_free(&m_pSafAvioContext);
+            m_pSafAvioContext = nullptr;
+         }
+         if (m_safFd >= 0) { close(m_safFd); m_safFd = -1; }
+#endif
          return;
       }
 
@@ -218,6 +304,21 @@ void PUPMediaPlayer::StopBlocking()
    if (m_pFormatContext)
       m_libAv._avformat_close_input(&m_pFormatContext);
    m_pFormatContext = nullptr;
+
+#ifdef __ANDROID__
+   // avformat_close_input doesn't touch a caller-provided pb; free our custom AVIO now.
+   if (m_pSafAvioContext)
+   {
+      if (m_pSafAvioContext->buffer) m_libAv._av_free(m_pSafAvioContext->buffer);
+      m_libAv._avio_context_free(&m_pSafAvioContext);
+      m_pSafAvioContext = nullptr;
+   }
+   if (m_safFd >= 0)
+   {
+      close(m_safFd);
+      m_safFd = -1;
+   }
+#endif
 
    if (m_pVideoContext)
       m_libAv._avcodec_free_context(&m_pVideoContext);

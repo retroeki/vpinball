@@ -8,6 +8,9 @@
 #include <filesystem>
 #include <fstream>
 #ifdef __ANDROID__
+#include <mutex>
+#include <vector>
+#include <cstdint>
 #include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
 #endif
 
@@ -245,7 +248,30 @@ void PUPManager::LoadFonts()
       {
          if (extension_from_path(szFontPath) != "ttf")
             return;
-         if (TTF_Font* pFont = TTF_OpenFont(szFontPath.c_str(), 8))
+         TTF_Font* pFont = TTF_OpenFont(szFontPath.c_str(), 8);
+#ifdef __ANDROID__
+         if (!pFont)
+         {
+            // SDL_ttf's internal IO can't see SAF paths on Android.
+            // Read bytes via SAF and feed them through SDL_IOFromConstMem.
+            // Fonts are held for the session, so stash bytes in a static buffer.
+            static std::mutex s_fontBufMutex;
+            static std::vector<std::vector<uint8_t>> s_fontBuffers;
+            std::vector<uint8_t> data = AndroidSAF::ReadFile(szFontPath);
+            if (!data.empty())
+            {
+               std::vector<uint8_t>* persistent;
+               {
+                  std::lock_guard<std::mutex> lock(s_fontBufMutex);
+                  s_fontBuffers.push_back(std::move(data));
+                  persistent = &s_fontBuffers.back();
+               }
+               if (SDL_IOStream* io = SDL_IOFromConstMem(persistent->data(), persistent->size()))
+                  pFont = TTF_OpenFontIO(io, true, 8);
+            }
+         }
+#endif
+         if (pFont)
             AddFont(pFont, szFileName);
          else
             LOGE("Failed to load font: %s %s", szFontPath.c_str(), SDL_GetError());
