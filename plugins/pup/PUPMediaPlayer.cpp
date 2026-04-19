@@ -770,6 +770,10 @@ AVCodecContext* PUPMediaPlayer::OpenStream(AVFormatContext* pInputFormatContext,
 
 void PUPMediaPlayer::HandleAudioFrame(AVFrame* pFrame, bool sync)
 {
+#ifdef __ANDROID__
+   // Audio decode/resample is disabled on Android (see stream-discovery note).
+   return;
+#else
    if (m_volume == 0.0f)
       return;
 
@@ -838,6 +842,7 @@ void PUPMediaPlayer::HandleAudioFrame(AVFrame* pFrame, bool sync)
       audioUpdate->volume = m_volume / 100.0f;
       m_audioResId = UpdateAudioStream(audioUpdate);
    }
+#endif
 }
 
 #if defined(__clang__)
