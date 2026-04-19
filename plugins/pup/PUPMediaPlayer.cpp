@@ -216,6 +216,13 @@ void PUPMediaPlayer::Play(const string& filename)
       }
 
       // Find audio stream
+#ifdef __ANDROID__
+      // TEMP: the audio decode + swr_convert path crashes on Android (SIGSEGV inside
+      // libswresample.so). Once videos actually open via the custom AVIO, enabling
+      // audio is a separate debug task. Disable audio here so video-only playback
+      // works and the DMD renders.
+      m_audioStream = -1;
+#else
       if (m_videoStream >= 0)
       {
          m_audioStream = m_libAv._av_find_best_stream(m_pFormatContext, AVMEDIA_TYPE_AUDIO, -1, m_videoStream, NULL, 0);
@@ -235,6 +242,7 @@ void PUPMediaPlayer::Play(const string& filename)
             }
          }
       }
+#endif
 
       // Open audio stream
       if (m_audioStream >= 0)
