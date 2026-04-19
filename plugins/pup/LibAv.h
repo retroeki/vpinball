@@ -8,6 +8,12 @@ extern "C" {
    #include "libswresample/swresample.h"
 }
 
+// Wrap in PUP namespace to avoid ODR collision with plugins/flexdmd/actors/LibAv.h
+// which declares an identically-named LibAV::LibAV class with a different member layout.
+// Without this, the linker's COMDAT merge silently picks one class definition and the
+// other plugin ends up reading/writing past the struct end.
+namespace PUP
+{
 namespace LibAV
 {
 
@@ -282,4 +288,5 @@ private:
 
 };
 
-}
+} // namespace LibAV
+} // namespace PUP
