@@ -5,6 +5,9 @@
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#ifdef __ANDROID__
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
 
 namespace PinMAME {
 
@@ -52,6 +55,14 @@ string find_case_insensitive_directory_path(const string& szPath)
             exact.push_back(PATH_SEPARATOR_CHAR);
          return exact;
       }
+#ifdef __ANDROID__
+      if (AndroidSAF::DirExists(p.string())) {
+         string exact = p.string();
+         if (!exact.empty() && exact.back() != PATH_SEPARATOR_CHAR)
+            exact.push_back(PATH_SEPARATOR_CHAR);
+         return exact;
+      }
+#endif
 
       auto parent = p.parent_path();
       string base;

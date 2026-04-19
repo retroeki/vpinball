@@ -8,6 +8,9 @@
 #if defined(__APPLE__) || defined(__linux__) || defined(__ANDROID__)
 #include <pthread.h>
 #endif
+#ifdef __ANDROID__
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
 
 namespace PUP {
 
@@ -162,6 +165,10 @@ string find_case_insensitive_file_path(const string& szPath)
 
       if (std::filesystem::exists(p, ec))
          return p.string();
+#ifdef __ANDROID__
+      if (AndroidSAF::FileExists(p.string()))
+         return p.string();
+#endif
 
       auto parent = p.parent_path();
       string base;
@@ -207,6 +214,14 @@ string find_case_insensitive_directory_path(const string& szPath)
             exact.push_back(PATH_SEPARATOR_CHAR);
          return exact;
       }
+#ifdef __ANDROID__
+      if (AndroidSAF::DirExists(p.string())) {
+         string exact = p.string();
+         if (!exact.empty() && exact.back() != PATH_SEPARATOR_CHAR)
+            exact.push_back(PATH_SEPARATOR_CHAR);
+         return exact;
+      }
+#endif
 
       auto parent = p.parent_path();
       string base;

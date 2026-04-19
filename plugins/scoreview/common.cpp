@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <charconv>
+#ifdef __ANDROID__
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
 
 namespace ScoreView {
 
@@ -101,6 +104,10 @@ string find_case_insensitive_file_path(const string& szPath)
 
       if (std::filesystem::exists(p, ec))
          return p.string();
+#ifdef __ANDROID__
+      if (AndroidSAF::FileExists(p.string()))
+         return p.string();
+#endif
 
       auto parent = p.parent_path();
       string base;
