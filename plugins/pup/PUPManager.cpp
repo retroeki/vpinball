@@ -7,6 +7,9 @@
 
 #include <filesystem>
 #include <fstream>
+#ifdef __ANDROID__
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
 
 // External function to store video source dimensions for JNI queries
 extern "C" void SetPUPVideoSourceSize(int width, int height);
@@ -119,18 +122,33 @@ void PUPManager::LoadConfig(const string& szRomName)
 
    string szScreensPath = find_case_insensitive_file_path(m_szPath + "screens.pup");
    if (!szScreensPath.empty()) {
-      std::ifstream screensFile;
-      screensFile.open(szScreensPath, std::ifstream::in);
-      if (screensFile.is_open()) {
+      std::ifstream fsStream;
+      std::unique_ptr<std::istream> safStream;
+      std::istream* in = nullptr;
+
+      fsStream.open(szScreensPath, std::ifstream::in);
+      if (fsStream.is_open()) {
+         in = &fsStream;
+      }
+#ifdef __ANDROID__
+      else {
+         safStream = AndroidSAF::OpenFileAsStream(szScreensPath);
+         if (safStream)
+            in = safStream.get();
+      }
+#endif
+
+      if (in) {
          string line;
          int i = 0;
-         while (std::getline(screensFile, line)) {
+         while (std::getline(*in, line)) {
             if (++i == 1)
                continue;
             std::unique_ptr<PUPScreen> pScreen = PUPScreen::CreateFromCSV(this, line, m_playlists);
             if (pScreen)
                AddScreen(std::move(pScreen));
          }
+         LOGI("Screen count: %d", (i > 0 ? i - 1 : 0));
       }
       else {
          LOGE("Unable to load %s", szScreensPath.c_str());
@@ -222,24 +240,36 @@ void PUPManager::LoadFonts()
    string szFontsPath = find_case_insensitive_directory_path(m_szPath + "FONTS");
    if (!szFontsPath.empty())
    {
-      for (const auto& entry : std::filesystem::directory_iterator(szFontsPath))
+      std::error_code ec;
+      auto loadFont = [&](const string& szFontPath, const string& szFileName)
       {
-         if (entry.is_regular_file())
+         if (extension_from_path(szFontPath) != "ttf")
+            return;
+         if (TTF_Font* pFont = TTF_OpenFont(szFontPath.c_str(), 8))
+            AddFont(pFont, szFileName);
+         else
+            LOGE("Failed to load font: %s %s", szFontPath.c_str(), SDL_GetError());
+      };
+
+      bool iteratedFs = false;
+      for (auto iter = std::filesystem::directory_iterator(szFontsPath, ec);
+           !ec && iter != std::filesystem::directory_iterator(); ++iter)
+      {
+         iteratedFs = true;
+         if (iter->is_regular_file(ec))
+            loadFont(iter->path().string(), iter->path().filename().string());
+      }
+#ifdef __ANDROID__
+      if (!iteratedFs)
+      {
+         for (const auto& name : AndroidSAF::ListDirectory(szFontsPath))
          {
-            string szFontPath = entry.path().string();
-            if (extension_from_path(szFontPath) == "ttf")
-            {
-               if (TTF_Font* pFont = TTF_OpenFont(szFontPath.c_str(), 8))
-               {
-                  AddFont(pFont, entry.path().filename().string());
-               }
-               else
-               {
-                  LOGE("Failed to load font: %s %s", szFontPath.c_str(), SDL_GetError());
-               }
-            }
+            if (name.empty() || name[0] == '.')
+               continue;
+            loadFont(szFontsPath + name, name);
          }
       }
+#endif
    }
    else
    {
@@ -250,26 +280,46 @@ void PUPManager::LoadFonts()
 void PUPManager::LoadPlaylists()
 {
    string szPlaylistsPath = find_case_insensitive_file_path(GetPath() + "playlists.pup");
-   std::ifstream playlistsFile;
-   playlistsFile.open(szPlaylistsPath, std::ifstream::in);
-   if (playlistsFile.is_open()) {
-      ankerl::unordered_dense::set<std::string> lowerPlaylistNames;
-      string line;
-      int i = 0;
-      while (std::getline(playlistsFile, line)) {
-         if (++i == 1)
-            continue;
-         PUPPlaylist* pPlaylist = PUPPlaylist::CreateFromCSV(this, line);
-         if (pPlaylist) {
-            string folderNameLower = lowerCase(pPlaylist->GetFolder());
-            if (lowerPlaylistNames.find(folderNameLower) == lowerPlaylistNames.end()) {
-               m_playlists.push_back(pPlaylist);
-               lowerPlaylistNames.insert(folderNameLower);
-            }
-            else {
-               LOGE("Duplicate playlist: playlist=%s", pPlaylist->ToString().c_str());
-               delete pPlaylist;
-            }
+   if (szPlaylistsPath.empty())
+      return;
+
+   std::ifstream fsStream;
+   std::unique_ptr<std::istream> safStream;
+   std::istream* in = nullptr;
+
+   fsStream.open(szPlaylistsPath, std::ifstream::in);
+   if (fsStream.is_open()) {
+      in = &fsStream;
+   }
+#ifdef __ANDROID__
+   else {
+      safStream = AndroidSAF::OpenFileAsStream(szPlaylistsPath);
+      if (safStream)
+         in = safStream.get();
+   }
+#endif
+
+   if (!in) {
+      LOGE("Unable to load %s", szPlaylistsPath.c_str());
+      return;
+   }
+
+   ankerl::unordered_dense::set<std::string> lowerPlaylistNames;
+   string line;
+   int i = 0;
+   while (std::getline(*in, line)) {
+      if (++i == 1)
+         continue;
+      PUPPlaylist* pPlaylist = PUPPlaylist::CreateFromCSV(this, line);
+      if (pPlaylist) {
+         string folderNameLower = lowerCase(pPlaylist->GetFolder());
+         if (lowerPlaylistNames.find(folderNameLower) == lowerPlaylistNames.end()) {
+            m_playlists.push_back(pPlaylist);
+            lowerPlaylistNames.insert(folderNameLower);
+         }
+         else {
+            LOGE("Duplicate playlist: playlist=%s", pPlaylist->ToString().c_str());
+            delete pPlaylist;
          }
       }
    }

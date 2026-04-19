@@ -5,6 +5,8 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <memory>
+#include <istream>
 #include <cstdint>
 #include <cstdio>
 
@@ -47,6 +49,15 @@ bool WriteFile(const std::string& path, const uint8_t* data, size_t size);
 // Convenience: open a FILE* via SAF. Caller must fclose().
 // Returns nullptr on failure.
 FILE* FOpen(const std::string& path, const char* mode);
+
+// Open a file as an istream. Reads the whole file into memory and
+// wraps it in a stringstream. Only use for small config files.
+// Returns nullptr if the file can't be read.
+std::unique_ptr<std::istream> OpenFileAsStream(const std::string& path);
+
+// List the names of entries in a directory via SAF.
+// Returns empty vector if directory not found or bridge not ready.
+std::vector<std::string> ListDirectory(const std::string& path);
 
 } // namespace AndroidSAF
 

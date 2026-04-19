@@ -4,6 +4,7 @@
 #include <android/log.h>
 #include <unistd.h>
 #include <mutex>
+#include <sstream>
 
 #define LOG_TAG "AndroidSAFBridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -19,6 +20,7 @@ static jmethodID g_fileExistsMethod = nullptr;
 static jmethodID g_dirExistsMethod = nullptr;
 static jmethodID g_readFileMethod = nullptr;
 static jmethodID g_writeFileMethod = nullptr;
+static jmethodID g_listDirMethod = nullptr;
 static std::mutex g_mutex;
 
 // Get JNIEnv for the current thread, attaching if needed.
@@ -57,6 +59,7 @@ void Init(JNIEnv* env, jobject bridge) {
     g_dirExistsMethod = env->GetMethodID(cls, "dirExists", "(Ljava/lang/String;)Z");
     g_readFileMethod = env->GetMethodID(cls, "readFileBytes", "(Ljava/lang/String;)[B");
     g_writeFileMethod = env->GetMethodID(cls, "writeFileBytes", "(Ljava/lang/String;[B)Z");
+    g_listDirMethod = env->GetMethodID(cls, "listDirectory", "(Ljava/lang/String;)[Ljava/lang/String;");
     env->DeleteLocalRef(cls);
 
     LOGI("SAF bridge initialized");
@@ -176,6 +179,46 @@ FILE* FOpen(const std::string& path, const char* mode) {
         return nullptr;
     }
     return f;
+}
+
+std::unique_ptr<std::istream> OpenFileAsStream(const std::string& path) {
+    std::vector<uint8_t> data = ReadFile(path);
+    if (data.empty()) return nullptr;
+    std::string content(data.begin(), data.end());
+    return std::make_unique<std::istringstream>(std::move(content));
+}
+
+std::vector<std::string> ListDirectory(const std::string& path) {
+    if (!IsReady()) return {};
+    JNIEnv* env = GetEnv();
+    if (!env) return {};
+
+    jstring jpath = env->NewStringUTF(path.c_str());
+    jobjectArray jarr = (jobjectArray)env->CallObjectMethod(g_bridge, g_listDirMethod, jpath);
+    env->DeleteLocalRef(jpath);
+
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return {};
+    }
+    if (!jarr) return {};
+
+    jsize len = env->GetArrayLength(jarr);
+    std::vector<std::string> result;
+    result.reserve(len);
+    for (jsize i = 0; i < len; i++) {
+        jstring jstr = (jstring)env->GetObjectArrayElement(jarr, i);
+        if (jstr) {
+            const char* chars = env->GetStringUTFChars(jstr, nullptr);
+            if (chars) {
+                result.emplace_back(chars);
+                env->ReleaseStringUTFChars(jstr, chars);
+            }
+            env->DeleteLocalRef(jstr);
+        }
+    }
+    env->DeleteLocalRef(jarr);
+    return result;
 }
 
 } // namespace AndroidSAF
