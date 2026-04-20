@@ -7,6 +7,9 @@
 #include "PUPPlaylist.h"
 #include "PUPLabel.h"
 #include "PUPMediaManager.h"
+#ifdef __ANDROID__
+#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
+#endif
 
 namespace PUP {
 
@@ -128,18 +131,37 @@ void PUPScreen::LoadTriggers()
 {
    assert(std::this_thread::get_id() == m_apiThread);
    string szPlaylistsPath = find_case_insensitive_file_path(m_pManager->GetPath() + "triggers.pup");
-   std::ifstream triggersFile;
-   triggersFile.open(szPlaylistsPath, std::ifstream::in);
-   if (triggersFile.is_open())
+   if (szPlaylistsPath.empty())
+      return;
+
+   std::ifstream fsStream;
+   std::unique_ptr<std::istream> safStream;
+   std::istream* in = nullptr;
+
+   fsStream.open(szPlaylistsPath, std::ifstream::in);
+   if (fsStream.is_open()) {
+      in = &fsStream;
+   }
+#ifdef __ANDROID__
+   else {
+      safStream = AndroidSAF::OpenFileAsStream(szPlaylistsPath);
+      if (safStream)
+         in = safStream.get();
+   }
+#endif
+
+   if (!in) {
+      LOGE("Unable to load %s", szPlaylistsPath.c_str());
+      return;
+   }
+
+   string line;
+   int i = 0;
+   while (std::getline(*in, line))
    {
-      string line;
-      int i = 0;
-      while (std::getline(triggersFile, line))
-      {
-         if (++i == 1)
-            continue;
-         AddTrigger(PUPTrigger::CreateFromCSV(this, line));
-      }
+      if (++i == 1)
+         continue;
+      AddTrigger(PUPTrigger::CreateFromCSV(this, line));
    }
 }
 
