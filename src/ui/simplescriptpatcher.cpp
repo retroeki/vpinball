@@ -1575,6 +1575,14 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
     // Instead we capture both and the callback verifies they match.
     // Collection supports expressions like obj(x) via \w+(?:\s*\([^)]*\))?
     // Body uses (.*) to capture multiple colon-separated statements.
+    // Wine's VBScript parser chokes on single-line `For Each var In coll : body : Next`
+    // but handles multi-line For Each natively. Previously this patcher converted to
+    // `For i = 0 To UBound(coll)` indexed iteration, which is semantically WRONG for
+    // VPX editor Collections — `IsArray(collection)` returns False, so the guarded
+    // body is silently skipped. Monster Bash's `For Each xx in DracTargets:...:Next`
+    // (iterating an editor Collection) never actually dropped any walls, producing
+    // the "invisible wall blocks ball" stuck bug. Fix: expand to multi-line For Each
+    // so Collection iteration semantics are preserved.
     static const RE2 p1(R"((?im)^([ \t]*)Dim\s+(\w+)\s*:\s*For\s+Each\s+(\w+)\s+[Ii]n\s+(\w+(?:\s*\([^)]*\))?)\s*:\s*(.*?)\s*:\s*[Nn]ext[ \t]*(?:'[^\r\n]*)?\r?$)");
     r = RE2ReplaceWithCallback(r, p1, [&count](const RE2Match& m) -> std::string {
         std::string indent = m[1];
@@ -1586,24 +1594,12 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
         if (!EqualsIgnoreCase(dimVar, forVar)) {
             return m.full_match;  // Not a match, return unchanged
         }
-        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
         count++;
-        PLOGI.printf("PatchSingleLineForEach: Converting Dim + For Each to For loop (body: %s)", body.c_str());
-        // If collection contains parens (e.g. obj(x)), store in temp var to avoid re-evaluation
-        bool needsCollTemp = (collection.find('(') != std::string::npos);
-        std::string collVar = collection;
-        std::string collDecl = "";
-        if (needsCollTemp) {
-            collVar = "ssp_c" + std::to_string(s_forEachTempVarCounter - 1);
-            collDecl = ", " + collVar + " : " + collVar + " = " + collection;
-        }
-        return indent + "Dim " + forVar + ", " + tempIdx + collDecl + "\r\n" +
-               indent + "If IsArray(" + collVar + ") Then\r\n" +
-               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
-               indent + "\t\tIf IsObject(" + collVar + "(" + tempIdx + ")) Then : Set " + forVar + " = " + collVar + "(" + tempIdx + ") : Else : " + forVar + " = " + collVar + "(" + tempIdx + ") : End If\r\n" +
-               indent + "\t\t" + body + "\r\n" +
-               indent + "\tNext\r\n" +
-               indent + "End If";
+        PLOGI.printf("PatchSingleLineForEach: Expanding Dim + For Each to multi-line (body: %s)", body.c_str());
+        return indent + "Dim " + forVar + "\r\n" +
+               indent + "For Each " + forVar + " In " + collection + "\r\n" +
+               indent + "\t" + body + "\r\n" +
+               indent + "Next";
     });
 
     // Pattern 2: For Each var In collection : body : Next (no Dim prefix)
@@ -1615,25 +1611,11 @@ std::string SimpleScriptPatcher::PatchSingleLineForEach(const std::string& scrip
         std::string varName = m[2];
         std::string collection = m[3];
         std::string body = m[4];
-        std::string tempIdx = "ssp_i" + std::to_string(s_forEachTempVarCounter++);
         count++;
-        PLOGI.printf("PatchSingleLineForEach: Converting single-line For Each to For loop (body: %s)", body.c_str());
-        // If collection contains parens (e.g. obj(x)), store in temp var
-        bool needsCollTemp = (collection.find('(') != std::string::npos);
-        std::string collVar = collection;
-        std::string collDecl = "";
-        if (needsCollTemp) {
-            collVar = "ssp_c" + std::to_string(s_forEachTempVarCounter - 1);
-            collDecl = indent + "Dim " + collVar + " : " + collVar + " = " + collection + "\r\n";
-        }
-        return collDecl +
-               indent + "Dim " + tempIdx + "\r\n" +
-               indent + "If IsArray(" + collVar + ") Then\r\n" +
-               indent + "\tFor " + tempIdx + " = 0 To UBound(" + collVar + ")\r\n" +
-               indent + "\t\tIf IsObject(" + collVar + "(" + tempIdx + ")) Then : Set " + varName + " = " + collVar + "(" + tempIdx + ") : Else : " + varName + " = " + collVar + "(" + tempIdx + ") : End If\r\n" +
-               indent + "\t\t" + body + "\r\n" +
-               indent + "\tNext\r\n" +
-               indent + "End If";
+        PLOGI.printf("PatchSingleLineForEach: Expanding single-line For Each to multi-line (body: %s)", body.c_str());
+        return indent + "For Each " + varName + " In " + collection + "\r\n" +
+               indent + "\t" + body + "\r\n" +
+               indent + "Next";
     });
 
     // Pattern 3: Multi-line For Each (already expanded or written multi-line)
