@@ -264,7 +264,9 @@ Player::Player(PinTable *const table, const int playMode)
       // will snap the clamp back up to the panel refresh (120Hz). We override last so our cap wins.
       // 120Hz panels running a 97%-GPU pinball scene burn heat for frames the small screen
       // can't reliably resolve, then thermal throttle drags sustained fps below 30.
-      m_maxFramerate = min(m_maxFramerate, 60.f);
+      // Honor explicit "Uncapped" request: MaxFramerate=0 was normalized to 10000 above.
+      if (m_maxFramerate < 10000.f)
+         m_maxFramerate = min(m_maxFramerate, 60.f);
 #endif
       assert(24.f <= m_maxFramerate && m_maxFramerate <= 10000.f); // We guarantee a target framerate from 24 FPS to unbound, expressed as 10000 FPS
       PLOGI << "Synchronization mode: " << m_videoSyncMode << " with maximum FPS: " << m_maxFramerate << ", display FPS: " << pfRefreshRate;
