@@ -1369,8 +1369,15 @@ std::string SimpleScriptPatcher::PatchSolCallbackBlock(const std::string& script
 
 // =============================================================================
 // Select Case with array element access - Wine VBScript doesn't support this
-// Pattern: Select Case ArrayName(index) -> Dim tmp : tmp = ArrayName(index) : Select Case tmp
-// Uses temp variable to work around Wine's Select Case limitations
+// Pattern: Select Case ArrayName(index) -> vpx_ssc_tmp = ArrayName(index) \n Select Case vpx_ssc_tmp
+// Uses temp variable to work around Wine's Select Case limitations.
+//
+// IMPORTANT: emitted as TWO LINES, not colon-joined. A nested Select Case inside
+// an outer Case body (e.g. Bigus MOD Medieval Madness PrimStandupTgtMove) is
+// fine as multi-line but breaks Wine's parser when the inner Select is opened
+// via `:` on the same line as a preceding statement. Same structural lesson as
+// the single-line For Each fix (c28a06c): never emit patcher output joined by
+// colons — always newlines.
 // =============================================================================
 std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& script) {
     std::string r = script;
@@ -1378,9 +1385,10 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
 
     // Match: Select Case ArrayName(index)
     // where ArrayName is a word and index can be a variable or expression
-    // Transform to: vpx_ssc_tmp = ArrayName(index) : Select Case vpx_ssc_tmp
+    // Transform to:
+    //     vpx_ssc_tmp = ArrayName(index)
+    //     Select Case vpx_ssc_tmp<suffix>
     // Note: vpx_ssc_tmp is declared globally in InjectHelpers (Dim not allowed inside Case blocks)
-    // Using CInt() to ensure proper integer index - Wine has issues with ByRef params as array indices
     static const RE2 p(R"((?i)([ \t]*)(Select\s+Case\s+)(\w+)\s*\(\s*([^)]+)\s*\)(\w?))");
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         std::string indent = m[1];
@@ -1414,15 +1422,12 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
 
         count++;
         PLOGI.printf("PatchSelectCaseArrayAccess: %s(%s) -> temp variable", arrayName.c_str(), index.c_str());
-        // Use temp variable to work around Wine's Select Case array access limitations
-        // Don't wrap in CInt - it only takes one argument and this could be multi-dimensional
-        // Don't use Dim inline - Wine VBScript doesn't allow Dim inside Case blocks
-        // vpx_ssc_tmp is declared globally in InjectHelpers
         // Only insert a separating space when the next char is a word char that would
         // otherwise fuse with vpx_ssc_tmp (e.g. `)MOD` -> `vpx_ssc_tmpMOD`). A space before
         // `.`, `:`, operators, etc. breaks Wine's VBScript tokenizer (e.g. `vpx_ssc_tmp .image`).
         std::string spacer = nextChar.empty() ? "" : " ";
-        return indent + "vpx_ssc_tmp = " + arrayName + "(" + index + ") : " + selectCase + "vpx_ssc_tmp" + spacer + nextChar;
+        return indent + "vpx_ssc_tmp = " + arrayName + "(" + index + ")\r\n" +
+               indent + selectCase + "vpx_ssc_tmp" + spacer + nextChar;
     });
 
     if (count > 0) {

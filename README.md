@@ -11,6 +11,21 @@ Fork of [vpinball/vpinball](https://github.com/vpinball/vpinball) (v10.8.1) with
 - ScoreView capture via BGFX screenshot for JNI integration
 - Render thread starvation fixes for Android
 
+## Script patcher authoring rule
+
+The Wine VBScript runtime on Android is stricter than the MS VBScript parser most tables were authored against. `SimpleScriptPatcher` (`src/ui/simplescriptpatcher.cpp`) rewrites table scripts to work around those strictness differences. One invariant matters above all others:
+
+**Never emit rewrites joined by `:`. Always expand to multi-line.**
+
+Wine's parser tolerates `: Select Case X` or `: For Each v In coll` at top level but collapses when the colon-joined statement is nested inside another `Case` body, an outer `If...Then`, or similar structures. The collapse manifests as `Script Error at line 1: Description unavailable` — Wine's parser has bailed with no useful location info, so bugs of this class are expensive to diagnose from logs.
+
+Two fixes so far have applied this rule:
+
+- **`PatchSingleLineForEach`** — single-line `For Each v In coll : body : Next` was originally rewritten to indexed `For i = 0 To UBound(coll)`, which silently skipped VPX Collections (Monster Bash "invisible walls" bug). Now expands to multi-line `For Each` (commit `c28a06c`).
+- **`PatchSelectCaseArrayAccess`** — `Select Case Foo(i)` was originally rewritten as `vpx_ssc_tmp = Foo(i) : Select Case vpx_ssc_tmp`, which broke when the original `Select Case` was nested inside an outer `Case` body (Bigus MOD Medieval Madness `PrimStandupTgtMove`). Now emitted on two lines.
+
+A regression harness is planned — see [tests/scriptpatcher/TESTING_PLAN.md](tests/scriptpatcher/TESTING_PLAN.md). Until it lands, any new patcher rewriter is release-blocking: every regex change has table-library-wide blast radius.
+
 ## Upstream
 
 This fork is based on Visual Pinball X 10.8.1. For the upstream project, see [github.com/vpinball/vpinball](https://github.com/vpinball/vpinball).
