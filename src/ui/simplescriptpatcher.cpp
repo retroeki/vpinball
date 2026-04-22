@@ -1047,49 +1047,14 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
         return prefix + converted + suffix;
     });
 
-    // Step 2: Convert DTArray(i)(n) to DTArray(i).property
+    // Step 2: Convert DTArray(i)(n) to DTArray(i).property in a single pass
     // Index mapping: 0=primary, 1=secondary, 2=prim, 3=sw, 4=animate, 5=isDropped
-
-    // DTArray(i)(0) -> DTArray(i).primary
-    static const RE2 idx0(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*0\s*\))");
-    r = RE2ReplaceWithCallback(r, idx0, [&totalCount](const RE2Match& m) -> std::string {
+    static const char* kDTProps[] = { ".primary", ".secondary", ".prim", ".sw", ".animate", ".isDropped" };
+    static const RE2 dtIdxAll(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-5])\s*\))");
+    r = RE2ReplaceWithCallback(r, dtIdxAll, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
-        return "DTArray(" + m[1] + ").primary";
-    });
-
-    // DTArray(i)(1) -> DTArray(i).secondary
-    static const RE2 idx1(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*1\s*\))");
-    r = RE2ReplaceWithCallback(r, idx1, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "DTArray(" + m[1] + ").secondary";
-    });
-
-    // DTArray(i)(2) -> DTArray(i).prim
-    static const RE2 idx2(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*2\s*\))");
-    r = RE2ReplaceWithCallback(r, idx2, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "DTArray(" + m[1] + ").prim";
-    });
-
-    // DTArray(i)(3) -> DTArray(i).sw
-    static const RE2 idx3(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*3\s*\))");
-    r = RE2ReplaceWithCallback(r, idx3, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "DTArray(" + m[1] + ").sw";
-    });
-
-    // DTArray(i)(4) -> DTArray(i).animate
-    static const RE2 idx4(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*4\s*\))");
-    r = RE2ReplaceWithCallback(r, idx4, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "DTArray(" + m[1] + ").animate";
-    });
-
-    // DTArray(i)(5) -> DTArray(i).isDropped
-    static const RE2 idx5(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*5\s*\))");
-    r = RE2ReplaceWithCallback(r, idx5, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "DTArray(" + m[1] + ").isDropped";
+        int idx = m[2][0] - '0';
+        return "DTArray(" + m[1] + ")" + kDTProps[idx];
     });
 
     if (totalCount > 0) {
@@ -1194,42 +1159,14 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
         return prefix + converted + suffix;
     });
 
-    // Step 2: Convert STArray(i)(n) to STArray(i).property
-    // Index mapping: 0=primary, 1=prim, 2=sw, 3=animate
-
-    // STArray(i)(0) -> STArray(i).primary
-    static const RE2 idx0(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*0\s*\))");
-    r = RE2ReplaceWithCallback(r, idx0, [&totalCount](const RE2Match& m) -> std::string {
+    // Step 2: Convert STArray(i)(n) to STArray(i).property in a single pass
+    // Index mapping: 0=primary, 1=prim, 2=sw, 3=animate, 4=id (for 5-element arrays)
+    static const char* kSTProps[] = { ".primary", ".prim", ".sw", ".animate", ".id" };
+    static const RE2 stIdxAll(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-4])\s*\))");
+    r = RE2ReplaceWithCallback(r, stIdxAll, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
-        return "STArray(" + m[1] + ").primary";
-    });
-
-    // STArray(i)(1) -> STArray(i).prim
-    static const RE2 idx1(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*1\s*\))");
-    r = RE2ReplaceWithCallback(r, idx1, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "STArray(" + m[1] + ").prim";
-    });
-
-    // STArray(i)(2) -> STArray(i).sw
-    static const RE2 idx2(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*2\s*\))");
-    r = RE2ReplaceWithCallback(r, idx2, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "STArray(" + m[1] + ").sw";
-    });
-
-    // STArray(i)(3) -> STArray(i).animate
-    static const RE2 idx3(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*3\s*\))");
-    r = RE2ReplaceWithCallback(r, idx3, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "STArray(" + m[1] + ").animate";
-    });
-
-    // STArray(i)(4) -> STArray(i).id (for 5-element arrays)
-    static const RE2 idx4(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*4\s*\))");
-    r = RE2ReplaceWithCallback(r, idx4, [&totalCount](const RE2Match& m) -> std::string {
-        totalCount++;
-        return "STArray(" + m[1] + ").id";
+        int idx = m[2][0] - '0';
+        return "STArray(" + m[1] + ")" + kSTProps[idx];
     });
 
     if (totalCount > 0) {
@@ -2202,9 +2139,8 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     PLOGI.printf("SimpleScriptPatcher: Input script length: %zu characters", script.length());
 
     std::string result = StripBOM(script);
-
-    // Track if any patches were applied
-    std::string original = result;
+    // Keep only an input pointer for later GLF diagnostic checks (no copy).
+    const std::string& original = script;
     bool patched = false;
 
     // Apply patches in order of likelihood/impact
@@ -2248,18 +2184,42 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     PatchDictionaryAccess(result);                  // Bug 58051
     PatchSplitIndexing(result);                     // Bug 58056
 
-    // Check if any patches were applied
-    if (result != original) {
+    // Check if any patches were applied. LogPatch appends to s_patchReport only when
+    // count > 0, so a non-empty report means something changed. Avoids an O(N) byte
+    // compare against the full original script.
+    if (!s_patchReport.empty()) {
         patched = true;
         result = InjectHelpers(result);
     }
 
-    // CRITICAL: Normalize line endings to CRLF AFTER all patching
-    // Wine VBScript can fail on mixed line endings
-    result = NormalizeLineEndings(result);
-
-    // Sanitize non-ASCII characters (Wine lexer issues with UTF-8)
-    result = SanitizeNonAscii(result);
+    // CRITICAL: Normalize line endings to CRLF AND sanitize non-ASCII in a single
+    // pass. Wine VBScript requires CRLF line endings and its lexer can choke on
+    // UTF-8, so we do both in one traversal to avoid two full-script rebuilds.
+    {
+        std::string finalized;
+        finalized.reserve(result.size() + result.size() / 10);
+        int nonAsciiCount = 0;
+        for (size_t i = 0; i < result.size(); ++i) {
+            unsigned char c = static_cast<unsigned char>(result[i]);
+            if (c > 127) {
+                finalized += ' ';
+                ++nonAsciiCount;
+            } else if (c == '\r') {
+                finalized += "\r\n";
+                if (i + 1 < result.size() && result[i + 1] == '\n') {
+                    ++i;
+                }
+            } else if (c == '\n') {
+                finalized += "\r\n";
+            } else {
+                finalized += static_cast<char>(c);
+            }
+        }
+        if (nonAsciiCount > 0) {
+            PLOGI.printf("SimpleScriptPatcher: Sanitized %d non-ASCII bytes", nonAsciiCount);
+        }
+        result = std::move(finalized);
+    }
 
     // Final logging and script dump
     if (patched) {
