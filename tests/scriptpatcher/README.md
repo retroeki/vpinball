@@ -23,6 +23,7 @@ Exits 0 if all files pass, non-zero otherwise.
 | `no_fused_injected_identifier` | `vpx_ssc_tmp` / `ssp_newobj` / `ssp_idx` / `ssp_ref` followed by a word char (e.g. `vpx_ssc_tmpMOD`, the Castlevania bug). |
 | `balanced_select_case_rewrite` | `vpx_ssc_tmp = EXPR : Select Case vpx_ssc_tmp` where EXPR has unbalanced parens (Diner/BK/KISS/American Dad family — patcher's `[^)]+` stops at first `)` in nested calls). |
 | `no_dangling_else` | Lines ending with `: Else` (single-line If-Then-Else got split across two lines; South Park / BK VR Room family). |
+| `if_then_else_structure` | Stack-based walker that opens on `If ... Then` as a multi-line header, closes on `End If`, and requires `Else` / `ElseIf` / `End If` at statement start to have a matching open block. Catches orphan `End If`, orphan `Else`/`ElseIf`, and unclosed multi-line If blocks — the whole class of "patcher mangled an If-block structurally" bugs. Handles `_` line-continuation headers, `case N: if ... then` post-colon openers, `Else If ... Then` (two-word nested-If form), and `else stmt end if` on one line. Known limitation: treats every `:`-separated segment that starts with an If keyword as a candidate, which is fine for current patches but may need hardening if future patchers produce creative layouts. |
 | `sub_function_balance` | `Sub`/`End Sub`, `Function`/`End Function`, `Select Case`/`End Select` counts don't match. |
 | `single_global_injection` | `Dim vpx_ssc_tmp` or `Dim ssp_newobj` appears more than once (InjectHelpers ran twice or collided with a table global). |
 

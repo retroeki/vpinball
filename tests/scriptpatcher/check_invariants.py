@@ -198,6 +198,148 @@ def rule_no_dangling_else(text: str) -> List[Violation]:
     return violations
 
 
+# Regexes for the If/Then/Else structure rule. We scan `:`-split statements,
+# so each regex anchors at the START of a statement, not necessarily a line.
+# VBS common idioms to handle correctly:
+#   - `case 0: if p1 = 0 then ... end if` — multi-line If whose header sits
+#     after `:` on the same line as a `Case` label (Remdwaas pattern).
+#   - `If x Then y : Else z : End If` — single-line If where the entire
+#     remainder of the line is the If's body/alternatives. Once we recognise
+#     the single-line If in the first segment, we stop processing subsequent
+#     segments on that line.
+_IF_ENDIF  = re.compile(r"(?i)^\s*End\s+If\b")
+_IF_ELSE   = re.compile(r"(?i)^\s*Else(?!If)(?!\w)")
+_IF_ELSEIF = re.compile(r"(?i)^\s*ElseIf\b.+\bThen\b")
+# Captures tail after `Then` so we can decide single-line vs multi-line.
+_IF_THEN   = re.compile(r"(?i)^\s*If\b.+?\bThen\b(?P<tail>.*)$")
+
+
+def _fold_line_continuations(lines: List[str]) -> List[str]:
+    """Fold VBS ` _` line-continuation: when a line ends with ` _` (or `\\t_`
+    or just `_`), glue the next non-blank line onto it. The joined text lives
+    at the index of the first fragment; subsequent fragment indices become
+    empty strings so line-number alignment with the original source is
+    preserved (violations report the first line of the joined header)."""
+    result = list(lines)
+    # Track exactly which indices we've consumed as continuation targets.
+    # Whitespace-only non-consumed lines (e.g. a line whose only content was a
+    # string literal that strip_vbs_line reduced to a space) must NOT be
+    # skipped — doing so accidentally eats later structural tokens like
+    # `End If`.
+    consumed = [False] * len(result)
+    i = 0
+    while i < len(result):
+        if consumed[i]:
+            i += 1
+            continue
+        line = result[i].rstrip()
+        if line.endswith(" _") or line.endswith("\t_") or line == "_":
+            head = line[:-1].rstrip() if line != "_" else ""
+            j = i + 1
+            while j < len(result) and consumed[j]:
+                j += 1
+            if j < len(result):
+                result[i] = head + " " + result[j].lstrip()
+                result[j] = ""
+                consumed[j] = True
+                continue  # re-check result[i] for further continuation
+        i += 1
+    return result
+
+
+def rule_if_then_else_structure(text: str) -> List[Violation]:
+    """Walk the file tracking open multi-line If blocks. Flag any `Else`,
+    `ElseIf`, or `End If` at statement start with no matching open
+    `If ... Then`, and any multi-line `If ... Then` that never gets closed."""
+    violations: List[Violation] = []
+    raw_lines = text.splitlines()
+    cleaned_lines = _fold_line_continuations([strip_vbs_line(l) for l in raw_lines])
+    stack: List[Tuple[int, str]] = []  # (lineno, raw snippet) for open blocks
+
+    for lineno, line in enumerate(cleaned_lines, 1):
+        raw_snippet = raw_lines[lineno - 1].strip()[:140] if lineno - 1 < len(raw_lines) else ""
+        segments = line.split(":")
+        # A single-line If consumes the rest of the line as its body. Once we see
+        # one, stop processing subsequent `:`-segments on the same line.
+        skip_remaining = False
+        for seg_idx, seg in enumerate(segments):
+            if skip_remaining:
+                break
+            seg_stripped = seg.strip()
+            if not seg_stripped:
+                continue
+            if _IF_ENDIF.match(seg_stripped):
+                if not stack:
+                    violations.append((
+                        lineno, "if_then_else_structure",
+                        f"End If with no matching If ... Then: {raw_snippet}",
+                    ))
+                else:
+                    stack.pop()
+                continue
+            if _IF_ELSE.match(seg_stripped):
+                if not stack:
+                    violations.append((
+                        lineno, "if_then_else_structure",
+                        f"Else with no enclosing multi-line If: {raw_snippet}",
+                    ))
+                # Common idioms that cram more into the same line as Else:
+                # - `else <stmt> end if`  (closes the If)
+                # - `Else If <cond> Then` (two-word form starts a nested If
+                #   inside the else branch, needing its own End If).
+                after_else = seg_stripped[4:]  # skip the literal "else"/"Else"
+                nested_if = re.search(r"(?i)\bIf\b.+?\bThen\b(?P<tail>.*)$", after_else)
+                if nested_if:
+                    nested_tail = nested_if.group("tail").strip()
+                    has_later = any(
+                        segments[k].strip()
+                        for k in range(seg_idx + 1, len(segments))
+                    )
+                    if nested_tail or has_later:
+                        # Single-line nested If; rest of line is its body.
+                        skip_remaining = True
+                    else:
+                        stack.append((lineno, raw_snippet))
+                if re.search(r"(?i)\bEnd\s+If\b", seg_stripped):
+                    if stack:
+                        stack.pop()
+                    else:
+                        violations.append((
+                            lineno, "if_then_else_structure",
+                            f"End If (inline after Else) with no matching If: {raw_snippet}",
+                        ))
+                continue
+            if _IF_ELSEIF.match(seg_stripped):
+                if not stack:
+                    violations.append((
+                        lineno, "if_then_else_structure",
+                        f"ElseIf with no enclosing multi-line If: {raw_snippet}",
+                    ))
+                continue
+            m = _IF_THEN.match(seg_stripped)
+            if m:
+                tail_here = m.group("tail").strip()
+                # A multi-line If requires Then to be the last non-comment
+                # content on the entire line. If there's more content on the
+                # same line — either after Then in this segment, or in later
+                # `:`-segments — it's a single-line If, and the rest of the
+                # line is its body.
+                has_later = any(
+                    segments[k].strip() for k in range(seg_idx + 1, len(segments))
+                )
+                if tail_here or has_later:
+                    skip_remaining = True
+                else:
+                    stack.append((lineno, raw_snippet))
+
+    for lineno, snippet in stack:
+        violations.append((
+            lineno, "if_then_else_structure",
+            f"multi-line If ... Then never has matching End If: {snippet}",
+        ))
+    return violations
+
+
 def rule_sub_function_balance(text: str) -> List[Violation]:
     violations: List[Violation] = []
     # Strip comments/strings across the whole file before counting.
@@ -233,6 +375,7 @@ ALL_RULES = (
     rule_no_fused_injected_identifier,
     rule_balanced_select_case_rewrite,
     rule_no_dangling_else,
+    rule_if_then_else_structure,
     rule_sub_function_balance,
     rule_single_global_injection,
 )
