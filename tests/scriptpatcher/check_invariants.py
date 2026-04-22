@@ -70,10 +70,12 @@ INJECTED_IDENTIFIERS = (
     "ssp_ref",
 )
 
-# `vpx_ssc_tmp = EXPR : Select Case vpx_ssc_tmp` — we want the EXPR.
-# Case-insensitive, non-greedy so it stops at the first ` : Select Case ` on the line.
+# `vpx_ssc_tmp = EXPR <sep> Select Case vpx_ssc_tmp` — we want the EXPR.
+# <sep> is either `:` (old single-line rewrite) or `\r?\n` followed by indent
+# (post-916ab32 multi-line rewrite). EXPR can't contain `:` or newlines because
+# those are the separators. Case-insensitive.
 _SELECT_CASE_REWRITE = re.compile(
-    r"vpx_ssc_tmp\s*=\s*(?P<expr>.+?)\s*:\s*Select\s+Case\s+vpx_ssc_tmp",
+    r"vpx_ssc_tmp\s*=\s*(?P<expr>[^:\r\n]+?)\s*(?::|\r?\n)\s*Select\s+Case\s+vpx_ssc_tmp",
     re.IGNORECASE,
 )
 
@@ -157,19 +159,26 @@ def rule_no_fused_injected_identifier(text: str) -> List[Violation]:
 
 def rule_balanced_select_case_rewrite(text: str) -> List[Violation]:
     violations: List[Violation] = []
-    for lineno, raw in enumerate(text.splitlines(), 1):
-        stripped = strip_vbs_line(raw)
-        for m in _SELECT_CASE_REWRITE.finditer(stripped):
-            expr = m.group("expr")
-            opens = expr.count("(")
-            closes = expr.count(")")
-            if opens != closes:
-                violations.append((
-                    lineno,
-                    "balanced_select_case_rewrite",
-                    f"Select Case rewrite has unbalanced parens in EXPR "
-                    f"({opens} open, {closes} close): {raw.strip()[:140]}",
-                ))
+    raw_lines = text.splitlines()
+    # The rewrite can span two lines (post-916ab32), so scan the cleaned whole
+    # file rather than per-line. strip_vbs_line preserves newline positions via
+    # the join, so we can still recover the 1-based line number from the
+    # match offset.
+    cleaned = "\n".join(strip_vbs_line(l) for l in raw_lines)
+    for m in _SELECT_CASE_REWRITE.finditer(cleaned):
+        expr = m.group("expr")
+        opens = expr.count("(")
+        closes = expr.count(")")
+        if opens == closes:
+            continue
+        lineno = cleaned.count("\n", 0, m.start()) + 1
+        raw = raw_lines[lineno - 1] if 0 <= lineno - 1 < len(raw_lines) else ""
+        violations.append((
+            lineno,
+            "balanced_select_case_rewrite",
+            f"Select Case rewrite has unbalanced parens in EXPR "
+            f"({opens} open, {closes} close): {raw.strip()[:140]}",
+        ))
     return violations
 
 
