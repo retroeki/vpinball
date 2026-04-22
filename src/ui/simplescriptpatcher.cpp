@@ -1384,12 +1384,19 @@ std::string SimpleScriptPatcher::PatchSelectCaseArrayAccess(const std::string& s
     int count = 0;
 
     // Match: Select Case ArrayName(index)
-    // where ArrayName is a word and index can be a variable or expression
+    // where ArrayName is a word and index can be a variable or expression.
+    // The index group allows ONE level of nested parens so calls like
+    // `LightType(chgLamp(ii, 0))`, `Shots(CurPlayer, CurSong(CurPlayer))` and
+    // `BitSetCount(avSecretProgress(nCurPlayer), 6)` are captured intact and
+    // the outer `)` lands in the right place in the rewrite. Previously the
+    // naive `[^)]+` stopped at the first `)` and left the outer `)` stranded
+    // after vpx_ssc_tmp, producing unparseable output on every Diner/Black
+    // Knight 2000/KISS/American Dad variant that used nested indices.
     // Transform to:
     //     vpx_ssc_tmp = ArrayName(index)
     //     Select Case vpx_ssc_tmp<suffix>
     // Note: vpx_ssc_tmp is declared globally in InjectHelpers (Dim not allowed inside Case blocks)
-    static const RE2 p(R"((?i)([ \t]*)(Select\s+Case\s+)(\w+)\s*\(\s*([^)]+)\s*\)(\w?))");
+    static const RE2 p(R"((?i)([ \t]*)(Select\s+Case\s+)(\w+)\s*\(\s*([^()]*(?:\([^()]*\)[^()]*)*)\s*\)(\w?))");
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         std::string indent = m[1];
         std::string selectCase = m[2];
@@ -1991,6 +1998,53 @@ std::string SimpleScriptPatcher::PatchDuplicateVpmInit(const std::string& script
 }
 
 // =============================================================================
+// Dangling Else: single-line If-Then-Else got split across two lines.
+// Pattern observed in South Park 1.3 FlasherTimer2_Timer and Black Knight VR
+// Room v2.0.2 equivalent — a line ending with `: Else` followed by the else
+// body on the NEXT line. Whether the table author wrote it that way or an
+// upstream pass produced it, the result is invalid VBScript (Wine and MS
+// both reject it). Fix: join the two lines so the If-Then-Else parses as
+// a legal single-line construct.
+//
+// Guards against eating structural keywords on the next line (Next, End ...,
+// Else, Case, Loop, Wend) so a `: Else` at end of an unrelated If doesn't
+// accidentally consume a loop terminator.
+// =============================================================================
+std::string SimpleScriptPatcher::PatchDanglingElseBody(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // Match: `...: Else\r?\n<indent><body>` where body is the NEXT physical line
+    // and doesn't start with a structural keyword or another colon.
+    static const RE2 p(R"((?im)(:[ \t]*Else)[ \t]*\r?\n[ \t]+([^:\r\n].*?)[ \t]*$)");
+    r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
+        std::string elseTok = m[1];
+        std::string body = m[2];
+        // Don't join if the "body" is actually the next structural token —
+        // those belong to the enclosing block, not to this Else.
+        std::string bodyLower = body;
+        std::transform(bodyLower.begin(), bodyLower.end(), bodyLower.begin(), ::tolower);
+        static const std::string kKeywords[] = {
+            "next", "end ", "end\t", "else", "elseif", "case ", "case\t",
+            "loop", "wend", "end select", "end if", "end sub", "end function",
+        };
+        for (const std::string& kw : kKeywords) {
+            if (bodyLower.compare(0, kw.size(), kw) == 0) {
+                return std::string(m[0]);  // leave unchanged
+            }
+        }
+        count++;
+        PLOGI.printf("PatchDanglingElseBody: Joined dangling Else with body '%s'", body.c_str());
+        return elseTok + " " + body;
+    });
+
+    if (count > 0) {
+        LogPatch("Joined dangling ': Else' with following body line", count);
+    }
+    return r;
+}
+
+// =============================================================================
 // Helper function injection
 // =============================================================================
 std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
@@ -2178,6 +2232,7 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchSingleLineForEach(result);        // For Each...Next on single line Wine limitation
     result = PatchControllerChangedLamps(result);   // Controller.ChangedLamps may fail on Android
     result = PatchDuplicateVpmInit(result);         // Duplicate vpmInit Me breaks flippers in Wine
+    result = PatchDanglingElseBody(result);         // `: Else\n<body>` -> `: Else <body>` (South Park, BK VR)
     result = PatchArrayList(result);               // System.Collections.ArrayList not available on Android
     result = PatchRenderingMode(result);           // RenderingMode global may not be defined
     result = PatchTestVRonDT(result);              // TestVRonDT VR testing variable may not be defined

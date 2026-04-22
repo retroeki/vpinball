@@ -160,6 +160,12 @@ private:
     // Keep only the first occurrence, comment out duplicates
     static std::string PatchDuplicateVpmInit(const std::string& script);
 
+    // Dangling Else: a line ending with `: Else` followed by the else body on
+    // the NEXT line is invalid in Wine (and MS) VBScript. Join them back onto
+    // one line so the single-line If-Then-Else parses. Observed in South Park
+    // and Black Knight VR Room FlasherTimer_Timer subs.
+    static std::string PatchDanglingElseBody(const std::string& script);
+
     // Inject helper functions
     static std::string InjectHelpers(const std::string& script);
 
