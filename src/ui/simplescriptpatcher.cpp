@@ -1930,42 +1930,27 @@ std::string SimpleScriptPatcher::PatchControllerChangedLamps(const std::string& 
         return indent + "On Error Resume Next : " + call + " : On Error Goto 0";
     });
 
-    // Pattern 3b: B2SSetData after colon (inline statement separator).
-    //   Example: sw73.IsDropped = 0:Controller.B2SSetData 179,0
-    //
-    // IMPORTANT: we must NOT wrap when the containing line is a single-line
-    // If-Then (e.g. `If step=2 Then Controller.B2SSetData 131,1:Controller.B2SSetData 132,0`).
-    // Wrapping each call with `On Error Resume Next : ... : On Error Goto 0`
-    // produces multiple `On Error Goto 0` statements inside the single-line If
-    // body, which Wine's VBScript parser rejects (fails the whole script with
-    // "Description unavailable" at line 1). Medieval Madness Bigus MOD 3.0 has
-    // 21 such lines and hits this exact path. Check the current line for an
-    // `If ... Then` prefix in the callback and skip wrapping when present.
+    // Pattern 3b: B2SSetData after colon (inline statement separator)
+    // Example: sw73.IsDropped = 0:Controller.B2SSetData 179,0
     static const RE2 p3b(R"((?i)(:\s*)(Controller\.B2SSetData\s+[^:\r\n]*))");
-    static const RE2 ifThenOnLine(R"((?i)\bIf\b.+\bThen\b)");
-    const std::string p3bSnapshot = r;
-    r = RE2ReplaceWithCallback(p3bSnapshot, p3b,
-        [&count, &p3bSnapshot](const RE2Match& m) -> std::string {
-            size_t pos = m.position;
-            size_t lineStart = p3bSnapshot.rfind('\n', pos == 0 ? 0 : pos - 1);
-            lineStart = (lineStart == std::string::npos) ? 0 : lineStart + 1;
-            std::string linePrefix = p3bSnapshot.substr(lineStart, pos - lineStart);
-            if (RE2::PartialMatch(linePrefix, ifThenOnLine)) {
-                // Inside a single-line If-Then. Leave the call unwrapped —
-                // Wine can't handle On Error Goto 0 nested in an If body.
-                return std::string(m[0]);
-            }
-            count++;
-            PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (after colon)");
-            return std::string(m[1]) + "On Error Resume Next : " + std::string(m[2]) + " : On Error Goto 0";
-        });
+    r = RE2ReplaceWithCallback(r, p3b, [&count](const RE2Match& m) -> std::string {
+        std::string colon = m[1];
+        std::string call = m[2];
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (after colon)");
+        return colon + "On Error Resume Next : " + call + " : On Error Goto 0";
+    });
 
-    // Pattern 3c was here: `If x Then Controller.B2SSetData ...`. Removed —
-    // this is by definition inside a single-line If-Then, and Wine rejects
-    // `On Error Goto 0` there. If B2SSetData fails inside such a conditional,
-    // the script-level protection is minimal anyway (the whole If body is
-    // about that one action). Better to leave it unwrapped than to break
-    // every table that hits it.
+    // Pattern 3c: B2SSetData after Then (single-line If statement)
+    // Example: If bTwisterFlag=0 Then Controller.B2SSetData bg_id,1
+    static const RE2 p3c(R"((?i)(Then\s+)(Controller\.B2SSetData\s+[^:\r\n]*))");
+    r = RE2ReplaceWithCallback(r, p3c, [&count](const RE2Match& m) -> std::string {
+        std::string thenKeyword = m[1];
+        std::string call = m[2];
+        count++;
+        PLOGI.printf("PatchControllerChangedLamps: Wrapping B2SSetData call (after Then)");
+        return thenKeyword + "On Error Resume Next : " + call + " : On Error Goto 0";
+    });
 
     if (count > 0) {
         LogPatch("Added error handling for Controller methods (ChangedLamps, B2SSetData)", count);
