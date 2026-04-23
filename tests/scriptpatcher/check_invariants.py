@@ -356,6 +356,41 @@ def rule_sub_function_balance(text: str) -> List[Violation]:
     return violations
 
 
+# Matches a single physical line that both starts an `If ... Then` on the SAME
+# line AND contains `On Error Goto 0` later on that line. Wine's VBScript
+# parser rejects `On Error Goto 0` inside a single-line If body, and catching
+# this pattern in the patched output is the reliable way to surface the
+# Medieval Madness 3.0 family of crashes (multiple B2SSetData calls wrapped
+# with OERN/OEG pairs inside an `If step=2 Then ...` body).
+_ON_ERROR_GOTO0_IN_SINGLE_LINE_IF = re.compile(
+    r"(?im)^[^\r\n]*\bIf\b.+\bThen\b.+\bOn\s+Error\s+Goto\s+0\b[^\r\n]*$"
+)
+
+
+def rule_no_on_error_goto0_in_single_line_if(text: str) -> List[Violation]:
+    """Catches `If x Then ... On Error Goto 0 ...` on one physical line.
+    Wine's VBScript parser fails the whole script (with a generic line-1
+    "Description unavailable") when this construct appears. The patcher
+    must either leave single-line If bodies alone or split them to
+    multi-line before wrapping statements."""
+    violations: List[Violation] = []
+    raw_lines = text.splitlines()
+    # Match per-line on cleaned source so string literals and comments can't
+    # false-positive. _ON_ERROR_GOTO0_IN_SINGLE_LINE_IF uses multiline mode so
+    # `^`/`$` match line boundaries within the joined string.
+    cleaned = "\n".join(strip_vbs_line(l) for l in raw_lines)
+    for m in _ON_ERROR_GOTO0_IN_SINGLE_LINE_IF.finditer(cleaned):
+        lineno = cleaned.count("\n", 0, m.start()) + 1
+        raw = raw_lines[lineno - 1] if 0 <= lineno - 1 < len(raw_lines) else ""
+        violations.append((
+            lineno,
+            "no_on_error_goto0_in_single_line_if",
+            f"single-line If contains On Error Goto 0 (Wine rejects this): "
+            f"{raw.strip()[:160]}",
+        ))
+    return violations
+
+
 def rule_single_global_injection(text: str) -> List[Violation]:
     violations: List[Violation] = []
     for ident in ("vpx_ssc_tmp", "ssp_newobj"):
@@ -376,6 +411,7 @@ ALL_RULES = (
     rule_balanced_select_case_rewrite,
     rule_no_dangling_else,
     rule_if_then_else_structure,
+    rule_no_on_error_goto0_in_single_line_if,
     rule_sub_function_balance,
     rule_single_global_injection,
 )
