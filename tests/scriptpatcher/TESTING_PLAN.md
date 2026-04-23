@@ -190,3 +190,122 @@ catch this.
 - Testing the other patchers in the same family (`scriptpatcher.cpp`,
   `scriptpatcher_wine.cpp`, class transforms) in this first pass. Same
   harness can extend to them later — keep scope tight.
+
+---
+
+## Field lessons from the MM 3.0 investigation (2026-04-23)
+
+This section records what actually happened when the harness was put under
+pressure by a real regression hunt. The point of writing it down is so we
+don't repeat the wasted cycles. Both the successful catches and the
+embarrassing rabbit-holes are worth keeping.
+
+### Wine's "Script Error at line 1 : Description unavailable"
+
+When Wine's VBScript parser can't compile a script, it falls back to a
+**generic error with `line=1, position=0, description=""`** regardless of
+where the actual failure is. The context snippet it prints shows the first
+six lines of the file — which are always header comments, and always
+unhelpful. If you see this error, **the real problem is anywhere in the
+file**, not line 1.
+
+This is the single biggest debugging-cost multiplier. There is no useful
+location information to work with. Static analysis of the patched script
+is the only tool; the harness rules in `check_invariants.py` are the
+concrete form of that analysis.
+
+### Three distinct Wine-rejection patterns surfaced today
+
+Each has now been added to the harness as its own rule. In order of
+discovery:
+
+1. **`balanced_select_case_rewrite`** — the `PatchSelectCaseArrayAccess`
+   regex `[^)]+` stops at the first `)` in `Foo(Bar(…))` style indices,
+   stranding the outer `)` after the rewrite. Symptom: a line that reads
+   `vpx_ssc_tmp = Foo(Bar(...) : Select Case vpx_ssc_tmp)`. Fix: widen
+   regex to `[^()]*(?:\([^()]*\)[^()]*)*` for one level of nested parens.
+   Affected tables: Diner ×3 variants, Black Knight 2000 ×3, KISS, American
+   Dad.
+
+2. **`no_on_error_goto0_in_single_line_if`** — `PatchControllerChangedLamps`
+   wrapped every colon-separated `Controller.B2SSetData` call with
+   `On Error Resume Next : ... : On Error Goto 0`. Fine at statement level,
+   but when the calls sit inside a single-line `If x Then` body, multiple
+   `On Error Goto 0` statements end up inside the If body — Wine rejects
+   the whole script. Fix: in Pattern 3b's callback, check the current line
+   for an `If ... Then` prefix before wrapping; skip if present. Pattern
+   3c (after `Then`) removed entirely — it's by definition inside a
+   single-line If. Affected tables: Medieval Madness Bigus MOD ×2
+   (2.0 and 3.0), Star Trek Gottlieb 1971.
+
+3. **`no_empty_single_line_sub`** — `PatchControllerPause` stripped
+   `:Controller.Pause=True:` from `Sub X:Controller.Pause=True:End Sub`,
+   leaving `Sub X:End Sub`. Wine rejects empty-body single-line Subs. Fix:
+   special-case pattern that runs before the general strip, expanding
+   `Sub X:Controller.Pause=Y:End Sub` to a multi-line Sub with a comment
+   body. Affected tables: Medieval Madness Bigus MOD Table1_Paused /
+   Table1_unPaused.
+
+### Table-version differentiation is important
+
+The investigation assumed "MM was working" meant MM 3.0, when
+commit `916ab32`'s regression test was actually **MM 2.0**. MM 3.0 is a
+*different table mod* with different script content. It had never been
+tested at 916ab32 time and had a distinct Wine-rejection pattern that
+the 916ab32 fix didn't address.
+
+**Rule of thumb:** a table mod version is a different table. Don't assume
+MM 2.0 working means MM 3.0 works. When a "working" table breaks, first
+check: is it the same file on disk as last time? Different mods share a
+name and nothing else.
+
+### Static analysis has limits; empirical bisection beats theory
+
+The morning was spent chasing theoretical failure modes of commit `9052b1c`
+(Group A + B). After the commit was reverted and MM 3.0 still crashed,
+the regression had to be somewhere else. Diffing the reverted source
+against the last-known-good commit (`916ab32`) showed **zero lines of
+difference in the patcher**. The "regression" wasn't a regression at all —
+the table had never worked, the user's recollection was for a different
+table version.
+
+**Rule of thumb:** if a bisect-equivalent (revert the suspected commit
++ rebuild + retest) doesn't unstick the bug, stop theorising and verify
+the *working* baseline. Is the patcher source actually different from
+when it was reported working? If not, the reporter's test fixture is
+probably different from what you think.
+
+### Why the harness must be comprehensive, not just reactive
+
+Each of the three rules above existed as a specific bug in specific
+tables. It's tempting to add the rule only when someone reports the bug.
+But the `balanced_select_case_rewrite` rule retroactively caught the MM 3.0
+issue as soon as it was added — we just hadn't tried running the harness
+on a new table yet. **A rule added today protects every future table,
+not just the one that motivated it.**
+
+Corollary: the corpus should grow aggressively. Any table that has ever
+crashed on device should be in `crash_investigations/` and run through the
+harness on every patcher commit. Layer 1 invariants are only as useful
+as the corpus they're checked against.
+
+### Known still-unexplained: MM 3.0
+
+After all three rules above were fixed, MM 3.0 still failed with the
+generic line-1 error. The patched output passes every invariant in the
+harness but Wine still rejects it. The investigation was handed off — if
+you pick this up:
+
+1. The original (unpatched) MM 3.0 script is in
+   `C:\Android\com.retroeki.pinball\crash_investigations\Medieval Madness (Williams 1997)_Bigus(MOD)3.0_crash_report\original_script.txt`.
+2. The latest patched output was pulled via `adb exec-out run-as
+   com.retroeki.pinball cat files/patched_script.vbs` — use `exec-out`,
+   NOT `adb shell cat`, to avoid pty `\n`→`\r\n` translation that produces
+   fake `\r\r\n` line endings.
+3. Approach: push a modified patched script (one transformation undone at
+   a time) to the device and see which one lets Wine compile. The patched
+   script dumps to `/data/user/0/com.retroeki.pinball/files/patched_script.vbs`
+   after table load; `adb push` + `run-as ... cp` to replace it. Reload
+   the table. If compile succeeds, the last-undone transformation was the
+   trigger. When identified, add an invariant rule so the whole class is
+   caught.
