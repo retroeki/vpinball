@@ -367,38 +367,6 @@ _ON_ERROR_GOTO0_IN_SINGLE_LINE_IF = re.compile(
 )
 
 
-# Matches `Sub X:End Sub` or `Function X:End Function` on one physical line
-# with NOTHING between the `:` after the name and the `End Sub/Function`.
-# An empty-body single-line Sub/Function slips past Microsoft VBS but Wine's
-# parser rejects the whole script (generic line-1 "Description unavailable").
-# Seen in Medieval Madness Bigus MOD 3.0 after PatchControllerPause stripped
-# `Controller.Pause = True` from `Sub Table1_Paused:Controller.Pause=True:End Sub`
-# leaving `Sub Table1_Paused:End Sub`.
-_EMPTY_SINGLE_LINE_SUB_OR_FUNC = re.compile(
-    r"(?im)^\s*(?:Public\s+|Private\s+|Static\s+)?"
-    r"(Sub|Function)\s+\w+(?:\s*\([^)]*\))?\s*:\s*End\s+\1\s*$"
-)
-
-
-def rule_no_empty_single_line_sub(text: str) -> List[Violation]:
-    """Catches `Sub X:End Sub` / `Function X:End Function` with no body.
-    Wine VBScript rejects the whole script when this construct appears.
-    The patcher must either leave at least one statement in the body or
-    expand to a multi-line declaration before stripping content."""
-    violations: List[Violation] = []
-    raw_lines = text.splitlines()
-    cleaned = "\n".join(strip_vbs_line(l) for l in raw_lines)
-    for m in _EMPTY_SINGLE_LINE_SUB_OR_FUNC.finditer(cleaned):
-        lineno = cleaned.count("\n", 0, m.start()) + 1
-        raw = raw_lines[lineno - 1] if 0 <= lineno - 1 < len(raw_lines) else ""
-        violations.append((
-            lineno,
-            "no_empty_single_line_sub",
-            f"empty-body single-line {m.group(1)}: {raw.strip()[:140]}",
-        ))
-    return violations
-
-
 def rule_no_on_error_goto0_in_single_line_if(text: str) -> List[Violation]:
     """Catches `If x Then ... On Error Goto 0 ...` on one physical line.
     Wine's VBScript parser fails the whole script (with a generic line-1
@@ -444,7 +412,6 @@ ALL_RULES = (
     rule_no_dangling_else,
     rule_if_then_else_structure,
     rule_no_on_error_goto0_in_single_line_if,
-    rule_no_empty_single_line_sub,
     rule_sub_function_balance,
     rule_single_global_injection,
 )

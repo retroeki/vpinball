@@ -1198,26 +1198,12 @@ std::string SimpleScriptPatcher::PatchControllerPause(const std::string& script)
     int count = 0;
 
     // === Controller.Pause ===
-    // Special case FIRST: `Sub X:Controller.Pause=Y:End Sub` — a single-line
-    // sub whose ONLY body is Controller.Pause. If p1 below strips this naively,
-    // we get `Sub X:End Sub` — an empty single-line Sub that Wine VBScript's
-    // parser rejects (fails the whole script compile with a generic line-1
-    // "Description unavailable"). Convert to a multi-line Sub with a comment
-    // body instead, which every VBScript parser accepts. Observed in Medieval
-    // Madness Bigus MOD 3.0 Table1_Paused / Table1_unPaused.
-    static const RE2 pSubOnlyPause(
-        R"((?i)(Sub\s+\w+(?:\s*\([^)]*\))?)\s*:\s*Controller\.Pause\s*=\s*(?:True|False|1|0)\s*:\s*(End\s+Sub))"
-    );
-    std::string before = r;
-    r = RE2Replace(r, pSubOnlyPause, "\\1\r\n\t' Controller.Pause disabled for Android\r\n\\2");
-    if (r != before) count++;
-
-    // General case: colon-separated Controller.Pause in a sub with OTHER body.
-    // Here removing just the Pause segment still leaves a valid non-empty sub.
-    //   Example: Sub Foo:PlaySound "x":Controller.Pause=1:DoThing:End Sub
-    //         → Sub Foo:PlaySound "x":DoThing:End Sub
+    // First handle colon-separated statements (e.g., Sub Foo:Controller.Pause = 1:End Sub)
+    // These can't be safely commented out, so remove them entirely
+    // Pattern matches :Controller.Pause = Value followed by :
+    // Value can be True/False or 1/0
     static const RE2 p1(R"((?i):[ \t]*Controller\.Pause\s*=\s*(True|False|1|0)[ \t]*:)");
-    before = r;
+    std::string before = r;
     r = RE2Replace(r, p1, ":");
     if (r != before) count++;
 
