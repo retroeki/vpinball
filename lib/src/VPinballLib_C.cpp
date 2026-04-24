@@ -202,6 +202,11 @@ VPINBALLAPI VPINBALL_STATUS VPinballSoftResume()
    return VPinballLib::VPinballLib::Instance().SoftResume();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballPushKeyEvent(int scancode, int pressed)
+{
+   return VPinballLib::VPinballLib::Instance().PushKeyEvent(scancode, pressed != 0);
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status)
 {
    return VPinballLib::VPinballLib::Instance().SetThermalStatus(status);

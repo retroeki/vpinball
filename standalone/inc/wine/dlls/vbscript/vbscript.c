@@ -26,6 +26,14 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define VBS_ERR_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptRuntime", __VA_ARGS__)
+#else
+#include <stdio.h>
+#define VBS_ERR_LOG(...) fprintf(stderr, __VA_ARGS__)
+#endif
+
 #ifdef _WIN64
 
 #define CTXARG_T DWORDLONG
@@ -583,6 +591,45 @@ HRESULT report_script_error(script_ctx_t *ctx, const vbscode_t *code, unsigned l
         nl = p + 1;
     }
     error->character = code->source + loc - nl;
+
+    /* Instrumentation: log the raw EXCEPINFO Wine populated BEFORE it hands it
+     * off to the host's OnScriptError, plus the first 160 chars of the code
+     * block that errored (so we can identify WHICH script snippet is
+     * failing even when the host reports line=0/loc=0). */
+    {
+        char src[256] = {0}, desc[512] = {0}, snippet[200] = {0};
+        if (error->ei.bstrSource) {
+            int n = WideCharToMultiByte(CP_UTF8, 0, error->ei.bstrSource, -1,
+                                        src, sizeof(src) - 1, NULL, NULL);
+            if (n <= 0) src[0] = '\0';
+        }
+        if (error->ei.bstrDescription) {
+            int n = WideCharToMultiByte(CP_UTF8, 0, error->ei.bstrDescription, -1,
+                                        desc, sizeof(desc) - 1, NULL, NULL);
+            if (n <= 0) desc[0] = '\0';
+        }
+        if (code && code->source) {
+            /* Clamp to 160 wchars for WC→UTF-8 round-trip. Replace newlines with
+             * a visible marker so everything stays on one log line. */
+            WCHAR tmp[161];
+            unsigned i;
+            for (i = 0; i < 160 && code->source[i]; i++) {
+                tmp[i] = (code->source[i] == '\n' || code->source[i] == '\r')
+                         ? (WCHAR)0x00B6 /* ¶ */
+                         : code->source[i];
+            }
+            tmp[i] = 0;
+            int n = WideCharToMultiByte(CP_UTF8, 0, tmp, -1,
+                                        snippet, sizeof(snippet) - 1, NULL, NULL);
+            if (n <= 0) snippet[0] = '\0';
+        }
+        VBS_ERR_LOG("report_script_error: scode=0x%08lx wCode=0x%04x line=%u char=%u loc=%u start_line=%u source=\"%s\" description=\"%s\" snippet=\"%s\"",
+                    (unsigned long)error->ei.scode, (unsigned)error->ei.wCode,
+                    (unsigned)error->line, (unsigned)error->character,
+                    (unsigned)loc,
+                    code ? (unsigned)code->start_line : 0u,
+                    src, desc, snippet);
+    }
 
     hres = IActiveScriptSite_OnScriptError(ctx->site, &error->IActiveScriptError_iface);
     IActiveScriptError_Release(&error->IActiveScriptError_iface);

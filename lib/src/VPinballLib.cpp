@@ -911,6 +911,27 @@ VPINBALL_STATUS VPinballLib::SoftResume()
    return VPINBALL_STATUS_SUCCESS;
 }
 
+VPINBALL_STATUS VPinballLib::PushKeyEvent(int scancode, bool pressed)
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   // Mirrors exactly what SDLInputHandler::HandleSDLEvent does after pulling
+   // an SDL_EVENT_KEY_DOWN/UP off the queue (see SDLInputHandler.h:57):
+   //   m_pininput.PushButtonEvent(GetKeyboardDeviceId(), scancode, ts, down);
+   // Downstream path (InputAction callback → FireDispID → VBS vpmKeyDown) is
+   // therefore identical to a real keypress. Skipping SDL's queue and our
+   // own m_eventQueue / m_gameLoop gate makes this deterministic — the
+   // in-game service-menu overlay needs every tap to land.
+   g_pplayer->m_pininput.PushButtonEvent(
+      g_pplayer->m_pininput.GetKeyboardDeviceId(),
+      static_cast<uint16_t>(scancode),
+      SDL_GetTicksNS(),
+      pressed);
+
+   return VPINBALL_STATUS_SUCCESS;
+}
+
 VPINBALL_STATUS VPinballLib::SetThermalStatus(int status)
 {
    RuntimeStats::SetThermalStatus(status);

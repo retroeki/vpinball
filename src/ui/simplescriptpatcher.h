@@ -166,6 +166,12 @@ private:
     // and Black Knight VR Room FlasherTimer_Timer subs.
     static std::string PatchDanglingElseBody(const std::string& script);
 
+    // Reversed relational operators `=>` / `=<`: invalid VBScript. Microsoft's
+    // parser silently treats them as `>=` / `<=`; Wine's rejects the whole
+    // script with the generic line-1 "Description unavailable" error.
+    // Observed in Medieval Madness Bigus MOD 3.0 (6 occurrences).
+    static std::string PatchReversedRelationalOp(const std::string& script);
+
     // Inject helper functions
     static std::string InjectHelpers(const std::string& script);
 

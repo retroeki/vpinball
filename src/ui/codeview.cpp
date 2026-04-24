@@ -1227,6 +1227,32 @@ STDMETHODIMP CodeViewer::OnScriptError(IActiveScriptError *pscripterror)
 		return S_OK;
 	}
 
+#ifdef __STANDALONE__
+	// Wine's `Execute` statement runs its string argument in a NESTED script
+	// context. An outer-scope `On Error Resume Next` does NOT propagate into
+	// that inner context, so runtime errors there always notify the host —
+	// even though the outer OERN catches the E_FAIL returned to it and the
+	// script continues fine. Signature of this inner-Execute noise:
+	//   scode=E_FAIL, raw line==0 (so nLine==1 after the ++ above), char==0,
+	//   empty description.
+	// Observed in Medieval Madness Bigus MOD 3.0 init:
+	//   `For i=0 To 127 : Execute "Set Lights(i)=L" & i : Next`
+	// ~66 missing L<i> objects on that table. Setting m_scriptError=true here
+	// makes Player::FinishFrame close the player ~2s later, so we suppress.
+	const bool isInnerExecuteOernNoise =
+		exception.scode == E_FAIL &&
+		nLine == 1 && nChar == 0 &&
+		(exception.bstrDescription == nullptr || SysStringLen(exception.bstrDescription) == 0);
+	if (isInnerExecuteOernNoise)
+	{
+		SysFreeString(bstr);
+		if (exception.bstrSource) SysFreeString(exception.bstrSource);
+		if (exception.bstrDescription) SysFreeString(exception.bstrDescription);
+		if (exception.bstrHelpFile) SysFreeString(exception.bstrHelpFile);
+		return S_OK;
+	}
+#endif
+
 	m_scriptError = true;
 
 	if (g_pplayer)

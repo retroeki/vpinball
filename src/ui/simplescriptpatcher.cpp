@@ -2074,6 +2074,41 @@ std::string SimpleScriptPatcher::PatchDanglingElseBody(const std::string& script
 }
 
 // =============================================================================
+// Reversed relational operators `=>` / `=<`
+// Microsoft's VBScript parser silently accepts `=>` as `>=` and `=<` as `<=`.
+// Wine's parser rejects them and fails the whole script compile with the
+// generic line-1 "Description unavailable" error.
+// Observed in Medieval Madness Bigus MOD 3.0 (6 × `=>`).
+// =============================================================================
+std::string SimpleScriptPatcher::PatchReversedRelationalOp(const std::string& script) {
+    std::string r = script;
+    int count = 0;
+
+    // `=>` → `>=`. A bare literal match is acceptable: `=>` has no valid VBS
+    // meaning, so any occurrence outside a string/comment is a bug. The only
+    // false-positive risk is a string literal like `"=>"` that happens to
+    // contain the glyphs; MM 3.0 has none, and the cost of a string mutation
+    // is low vs. the script-wide compile failure this causes.
+    static const RE2 pGe(R"(=>)");
+    std::string before = r;
+    r = RE2Replace(r, pGe, ">=");
+    size_t pos = 0;
+    while ((pos = before.find("=>", pos)) != std::string::npos) { count++; pos += 2; }
+
+    // `=<` → `<=` (same reasoning).
+    static const RE2 pLe(R"(=<)");
+    before = r;
+    r = RE2Replace(r, pLe, "<=");
+    pos = 0;
+    while ((pos = before.find("=<", pos)) != std::string::npos) { count++; pos += 2; }
+
+    if (count > 0) {
+        LogPatch("Fixed reversed relational operators (=> / =<)", count);
+    }
+    return r;
+}
+
+// =============================================================================
 // Helper function injection
 // =============================================================================
 std::string SimpleScriptPatcher::InjectHelpers(const std::string& script) {
@@ -2231,47 +2266,62 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     const std::string& original = script;
     bool patched = false;
 
-    // Apply patches in order of likelihood/impact
-    result = PatchAlwaysOnTop(result);              // Windows-only PowerShell Sub - stub on Android
-    result = PatchWScriptShell(result);             // Windows-only WScript.Shell - disable on Android
-    result = PatchMultiplicationInSubCall(result);  // Bug 54177
-    result = PatchUBound(result);                    // Bug 54291
-    // REMOVED: PatchSingleLineIf - Wine parser now handles these patterns natively
-    result = PatchBooleanNot(result);               // Bug 55093
-    result = PatchLineContinuation(result);         // Bug 56480
-    result = PatchDoubleDot(result);                // Common typo fix
-    result = PatchGlfBooleanArray(result);          // GLF Boolean Array Bug
-    // REMOVED: PatchInlineStatements - Wine parser now handles these patterns natively
-    result = PatchDTArray(result);                  // DTArray patterns
-    result = PatchSTArray(result);                  // STArray patterns
-    result = PatchControllerPause(result);          // Controller.Pause not available on Android
-    result = PatchPinUpPlayerFileAccess(result);    // PinUp Player file access not available on Android
-    result = PatchParenthesizedNot(result);         // Wine arity bug with (Not Func)(arg)
-    result = PatchNewClassCall(result);             // (new ClassName)(args) Wine parser limitation
-    // DISABLED: PatchGetRefCall and Patch2DArrayAccess cause regressions on tables where
-    // Wine's parser handles )( patterns fine (e.g., Dark Chaos). The ssp_idx transformation
-    // breaks lvalue assignments (dict(key)("field") = value) and statement-level calls.
-    // These were disabled before the GOT fix and no tables relied on them.
-    // result = PatchGetRefCall(result);              // GetRef(name)(args) Wine parser )( limitation
-    // result = Patch2DArrayAccess(result);            // arr(x)(y) chained indexing Wine parser limitation
-    result = PatchAmbiguousCallParens(result);      // SubName (expr)+rest Wine parser "Missing comma"
-    result = PatchForwardConstantReference(result); // cGameName forward reference issue
-    result = PatchSolCallbackBlock(result);         // SolCallback VPM constants not defined
-    result = PatchSelectCaseArrayAccess(result);    // Select Case Array(x) Wine limitation
-    result = PatchSingleLineForEach(result);        // For Each...Next on single line Wine limitation
-    result = PatchControllerChangedLamps(result);   // Controller.ChangedLamps may fail on Android
-    result = PatchDuplicateVpmInit(result);         // Duplicate vpmInit Me breaks flippers in Wine
-    result = PatchDanglingElseBody(result);         // `: Else\n<body>` -> `: Else <body>` (South Park, BK VR)
-    result = PatchArrayList(result);               // System.Collections.ArrayList not available on Android
-    result = PatchRenderingMode(result);           // RenderingMode global may not be defined
-    result = PatchTestVRonDT(result);              // TestVRonDT VR testing variable may not be defined
-    // DISABLED: FlexDMD Virtual Segment DMD hides the light-based segments, but FlexDMD can't render overlays on Android
-    // result = PatchEnableFlexDMDByDefault(result);   // Enable FlexDMD segment display for GLF tables
-    // result = PatchFlexDMDSegments(result);          // Convert .Segments array to string method for Wine
+    // Post-audit 2026-04-23: only the 12 rules empirically corroborated by the
+    // upstream jsm174/vpx-standalone-scripts community project are enabled.
+    // The remaining ~18 rules previously applied here had no upstream evidence
+    // and were found to be dead weight — MM 2.0 and MM 3.0 load fine with
+    // them all disabled. See:
+    //   C:\Android\com.retroeki.pinball\crash_investigations\vpx_standalone_scripts_audit.md
+    //   memory/feedback_verify_wine_claims_empirically.md
+    // If a new table breaks, verify the failure via the VBScriptCompile /
+    // VBScriptRuntime logcat tags BEFORE adding or re-enabling any rule.
 
-    // Warnings only (no transformation yet)
+    // ENABLED (upstream-corroborated, "high" confidence):
+    result = PatchMultiplicationInSubCall(result);  // Bug 54177; FNAF, IndyJones-Hanibal, Defender VPW
+    result = PatchWScriptShell(result);             // KISS Bigus 1.1, Thundercats 1.0.9
+    result = PatchNewClassCall(result);             // (new Class)(args) - bug class confirmed
+    result = PatchDTArray(result);                  // DT class conversion; many WPC tables
+    result = PatchSTArray(result);                  // ST class conversion; Monster Bash, TZ, Dr Who
+    result = PatchAmbiguousCallParens(result);      // Defender VPW v1.4
+    result = PatchPinUpPlayerFileAccess(result);    // Thundercats 1.0.9
+    result = PatchForwardConstantReference(result); // Wheel of Fortune Stern, Flash Gordon VPW, Cactus Canyon
+    result = PatchSolCallbackBlock(result);         // Playboy (Bally 1978); repo issue #267
+    // result = PatchSingleLineForEach(result);     // DISABLED 2026-04-23: audit rated "high" by pattern-matching
+                                                    // Cue Ball Wizard / Scared Stiff upstream fixes, but those
+                                                    // address missing-colon / broken-Sub bugs, NOT a Wine
+                                                    // single-line For Each rejection. Empirical evidence: MM 2.0
+                                                    // has 106 lines this rule would rewrite and parses fine
+                                                    // without the rule. The rule's own comment says "Wine chokes
+                                                    // on single-line For Each"; VBScriptCompile logs show Wine
+                                                    // parses these lines with error_loc=-1. Cosmetic-only.
+    result = PatchDanglingElseBody(result);         // South Park 1.3, Starship Troopers, AC-DC LUCI
+
+    // Warning-only, enabled: alerts us if Dictionary.Keys/Items direct-indexing
+    // pattern shows up (Wine Bug 58051; Batman66 patches this manually).
     PatchDictionaryAccess(result);                  // Bug 58051
-    PatchSplitIndexing(result);                     // Bug 58056
+
+    // DISABLED (audit confidence: low / medium / dead / pre-existing regression):
+    // result = PatchReversedRelationalOp(result);     // dead — empirically disproven 2026-04-23
+    // result = PatchAlwaysOnTop(result);              // low — no upstream evidence
+    // result = PatchUBound(result);                   // dead — rule itself is a no-op per comment
+    // result = PatchBooleanNot(result);               // low
+    // result = PatchLineContinuation(result);         // low — real Wine bug, no sampled table needs it
+    // result = PatchDoubleDot(result);                // low — defensive, no upstream evidence
+    // result = PatchGlfBooleanArray(result);          // low — GLF-specific, sparse in upstream repo
+    result = PatchControllerPause(result);          // Knight Rider `Controller.Pause = True` runtime E_FAIL — re-enabled 2026-04-24
+    // result = PatchParenthesizedNot(result);         // medium — bug real, no sample citation
+    // result = PatchSelectCaseArrayAccess(result);    // low
+    // result = PatchControllerChangedLamps(result);   // medium — upstream resizes arrays instead
+    result = PatchDuplicateVpmInit(result);         // Back to the Future (Data East 1990) flipper fix — re-enabled per user report
+    // result = PatchArrayList(result);                // low — real Android gap but no upstream precedent
+    // result = PatchRenderingMode(result);            // medium
+    // result = PatchTestVRonDT(result);               // medium
+    // result = PatchOrphanedNext(result);             // low — probably self-introduced problem
+    // result = PatchEnableFlexDMDByDefault(result);   // low — feature toggle, not a bug workaround
+    // result = PatchFlexDMDSegments(result);          // low — bug class plausible, no upstream sample
+    // result = PatchGetRefCall(result);               // pre-existing regression marker
+    // result = Patch2DArrayAccess(result);            // pre-existing regression marker (breaks lvalue dict(k)("f") = v)
+    // PatchSplitIndexing(result);                     // Bug 58056 (warning) — no upstream citation
 
     // Check if any patches were applied. LogPatch appends to s_patchReport only when
     // count > 0, so a non-empty report means something changed. Avoids an O(N) byte

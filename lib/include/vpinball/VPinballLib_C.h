@@ -95,6 +95,10 @@ VPINBALLAPI VPINBALL_STATUS VPinballPause();
 VPINBALLAPI VPINBALL_STATUS VPinballResume();
 VPINBALLAPI VPINBALL_STATUS VPinballSoftPause();   // Pause game logic only, keep rendering
 VPINBALLAPI VPINBALL_STATUS VPinballSoftResume();
+// Direct-path key event injection — bypasses SDL's event queue so every call
+// lands deterministically. scancode is an SDL_Scancode value (e.g. 36 for '7',
+// 77 for End). pressed: non-zero = key down, zero = key up.
+VPINBALLAPI VPINBALL_STATUS VPinballPushKeyEvent(int scancode, int pressed);
 VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBatteryTempC(float tempC);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);

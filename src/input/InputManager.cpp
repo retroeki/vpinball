@@ -514,6 +514,9 @@ void InputManager::HandleSDLEvent(const SDL_Event& e) { m_sdlHandler->HandleSDLE
 
 void InputManager::PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_t timestampNs, bool isPressed)
 {
+   // Diagnostic: trace keyboard events only to avoid flooding the log with axis/joystick noise.
+   // Noisy enough to be behind a flag if it ever hits main; for now we keep it always-on so
+   // the Android service-menu overlay can be diagnosed without a custom build.
    // Discard keyboard events when the UI is capturing the keyboard (e.g. for control input)
    if (deviceId == m_keyboardDeviceId && ImGui::GetIO().WantCaptureKeyboard)
       return;

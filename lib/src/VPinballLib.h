@@ -90,6 +90,14 @@ public:
    VPINBALL_STATUS Resume();
    VPINBALL_STATUS SoftPause();   // Pause game logic only, keep rendering for live settings preview
    VPINBALL_STATUS SoftResume();
+   // Direct-path key event injection. Used by the Android in-game service-menu
+   // overlay: the synthetic-key round-trip through SDL's event queue + our own
+   // m_eventQueue + the game-loop pump is lossy under load (observed as "some
+   // service taps register, some don't" on Data East DMD ROMs), and this
+   // bypasses all of it by calling InputManager::PushButtonEvent directly —
+   // exactly what SDLInputHandler does for a real keypress.
+   // scancode is SDL_Scancode (SDL_SCANCODE_7 = 36, _8 = 37, _END = 77, etc.)
+   VPINBALL_STATUS PushKeyEvent(int scancode, bool pressed);
    // Called from the Android PowerManager.OnThermalStatusChangedListener so the stats overlay can surface the current thermal state.
    VPINBALL_STATUS SetThermalStatus(int status);
    // Called from Android's ACTION_BATTERY_CHANGED receiver (EXTRA_TEMPERATURE / 10).

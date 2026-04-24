@@ -298,6 +298,11 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSoftResume(
    return VPinballSoftResume();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballPushKeyEvent(JNIEnv* env, jobject obj, jint scancode, jboolean pressed)
+{
+   return VPinballPushKeyEvent(scancode, pressed ? 1 : 0);
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetThermalStatus(JNIEnv* env, jobject obj, jint status)
 {
    return VPinballSetThermalStatus(status);
