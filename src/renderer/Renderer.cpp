@@ -956,7 +956,25 @@ void Renderer::DrawBackground()
       m_renderDevice->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
       m_renderDevice->SetRenderState(RenderState::ZENABLE, RenderState::RS_FALSE);
       m_renderDevice->SetRenderState(RenderState::ALPHABLENDENABLE, RenderState::RS_FALSE);
-      g_pplayer->m_renderer->DrawSprite(0.f, 0.f, 1.f, 1.f, 0xFFFFFFFF, m_renderDevice->m_texMan.LoadTexture(pin, false), ptable->m_ImageBackdropNightDay ? sqrtf(m_sceneLighting.GetGlobalEmissionScale()) : 1.0f, true);
+
+      // Cover: fill viewport while preserving the backdrop image aspect ratio. The shorter
+      // image axis is scaled to match the viewport; the longer axis overflows and is clipped.
+      const RenderTarget * const bb = GetBackBufferTexture();
+      const float screenAspect = (bb && bb->GetHeight() > 0) ? (float)bb->GetWidth() / (float)bb->GetHeight() : 1.f;
+      const float imageAspect = (pin->m_height > 0) ? (float)pin->m_width / (float)pin->m_height : screenAspect;
+      float drawX = 0.f, drawY = 0.f, drawW = 1.f, drawH = 1.f;
+      if (imageAspect > screenAspect)
+      {  // image wider than screen -> match height, overflow horizontally
+         drawW = imageAspect / screenAspect;
+         drawX = (1.f - drawW) * 0.5f;
+      }
+      else if (imageAspect < screenAspect)
+      {  // image taller than screen -> match width, overflow vertically
+         drawH = screenAspect / imageAspect;
+         drawY = (1.f - drawH) * 0.5f;
+      }
+
+      g_pplayer->m_renderer->DrawSprite(drawX, drawY, drawW, drawH, 0xFFFFFFFF, m_renderDevice->m_texMan.LoadTexture(pin, false), ptable->m_ImageBackdropNightDay ? sqrtf(m_sceneLighting.GetGlobalEmissionScale()) : 1.0f, true);
    }
    else
    {
