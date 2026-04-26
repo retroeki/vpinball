@@ -961,6 +961,35 @@ float VPinballLib::GetBloomStrength()
    return g_pplayer->m_ptable->m_bloom_strength;
 }
 
+VPINBALL_STATUS VPinballLib::SetUserCGBrightness(float v)
+{
+   if (!g_pplayer || !g_pplayer->m_renderer) return VPINBALL_STATUS_FAILURE;
+   g_pplayer->m_renderer->SetUserCGBrightness(v);
+   return VPINBALL_STATUS_SUCCESS;
+}
+VPINBALL_STATUS VPinballLib::SetUserCGContrast(float v)
+{
+   if (!g_pplayer || !g_pplayer->m_renderer) return VPINBALL_STATUS_FAILURE;
+   g_pplayer->m_renderer->SetUserCGContrast(v);
+   return VPINBALL_STATUS_SUCCESS;
+}
+VPINBALL_STATUS VPinballLib::SetUserCGSaturation(float v)
+{
+   if (!g_pplayer || !g_pplayer->m_renderer) return VPINBALL_STATUS_FAILURE;
+   g_pplayer->m_renderer->SetUserCGSaturation(v);
+   return VPINBALL_STATUS_SUCCESS;
+}
+VPINBALL_STATUS VPinballLib::SetUserCGTemperature(float v)
+{
+   if (!g_pplayer || !g_pplayer->m_renderer) return VPINBALL_STATUS_FAILURE;
+   g_pplayer->m_renderer->SetUserCGTemperature(v);
+   return VPINBALL_STATUS_SUCCESS;
+}
+float VPinballLib::GetUserCGBrightness()  { return (g_pplayer && g_pplayer->m_renderer) ? g_pplayer->m_renderer->GetUserCGBrightness()  : 1.f; }
+float VPinballLib::GetUserCGContrast()    { return (g_pplayer && g_pplayer->m_renderer) ? g_pplayer->m_renderer->GetUserCGContrast()    : 1.f; }
+float VPinballLib::GetUserCGSaturation()  { return (g_pplayer && g_pplayer->m_renderer) ? g_pplayer->m_renderer->GetUserCGSaturation()  : 1.f; }
+float VPinballLib::GetUserCGTemperature() { return (g_pplayer && g_pplayer->m_renderer) ? g_pplayer->m_renderer->GetUserCGTemperature() : 0.f; }
+
 VPINBALL_STATUS VPinballLib::SetEmissionScale(float scale)
 {
    if (!g_pplayer || !g_pplayer->m_ptable || !g_pplayer->m_renderer)
@@ -1325,18 +1354,37 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
          }
       }
 
-      // Determine capture size: use PUP source dimensions for best quality, capped at 640px wide
+      // Determine capture size: use PUP source dimensions for best quality, capped at 640px wide.
+      //
+      // SetWidth/SetHeight on the embedded window take LOGICAL units, not pixels. The crop
+      // step below converts those logical units back to framebuffer pixels by multiplying by
+      // displayScaleX/Y. On Android with a 3× density display, asking for 640 logical units
+      // means 1920 framebuffer pixels — which exceeds the screen's actual pixel width. The
+      // PUP renderer only writes valid pixels for the on-screen portion, so the cropped
+      // bitmap ends up with valid DMD content on the left and ~25% empty padding on the
+      // right. Cap the requested logical size to the container window's logical size so the
+      // resized embedded window always fits in the framebuffer.
+      VPX::Window* containerWnd = g_pplayer->m_renderer->m_renderDevice->m_outputWnd[0];
+      const float displayScaleX = static_cast<float>(containerWnd->GetPixelWidth()) / static_cast<float>(containerWnd->GetWidth());
+      const float displayScaleY = static_cast<float>(containerWnd->GetPixelHeight()) / static_cast<float>(containerWnd->GetHeight());
+      const int containerLogicalW = containerWnd->GetWidth();
+      const int containerLogicalH = containerWnd->GetHeight();
+
       int srcW = 0, srcH = 0;
       GetPUPVideoSourceSize(srcW, srcH);
       int captureW, captureH;
       if (srcW > 0 && srcH > 0) {
          const float aspect = static_cast<float>(srcW) / static_cast<float>(srcH);
-         captureW = std::min(srcW, 640);
+         captureW = std::min({srcW, 640, containerLogicalW});
          captureH = static_cast<int>(static_cast<float>(captureW) / aspect);
          if (captureH < 1) captureH = 1;
+         if (captureH > containerLogicalH) {
+            captureH = containerLogicalH;
+            captureW = static_cast<int>(static_cast<float>(captureH) * aspect);
+         }
       } else {
-         captureW = 512;
-         captureH = 128;
+         captureW = std::min(512, containerLogicalW);
+         captureH = std::min(128, containerLogicalH);
       }
 
       // Temporarily enable/resize ScoreView at position (0,0) for capture
@@ -1344,11 +1392,6 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
       output.SetPos(0, 0);
       output.SetWidth(captureW);
       output.SetHeight(captureH);
-
-      // Calculate crop rect from the capture dimensions
-      VPX::Window* containerWnd = g_pplayer->m_renderer->m_renderDevice->m_outputWnd[0];
-      const float displayScaleX = static_cast<float>(containerWnd->GetPixelWidth()) / static_cast<float>(containerWnd->GetWidth());
-      const float displayScaleY = static_cast<float>(containerWnd->GetPixelHeight()) / static_cast<float>(containerWnd->GetHeight());
 
       {
          std::lock_guard<std::mutex> lock(self->m_scoreViewCapture.mutex);
