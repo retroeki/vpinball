@@ -1932,6 +1932,52 @@ bool Renderer::IsBloomEnabled() const
    return !m_bloomOff && (m_table->m_bloom_strength > 0.0f) && (g_pplayer->GetInfoMode() <= IF_DYNAMIC_ONLY);
 }
 
+// Bake the 4-knob user color grade into a 256x16 LUT (16x16x16 cube unrolled
+// horizontally). The shader's existing FBColorGrade() samples this LUT exactly
+// the same way it samples a table-supplied one, so no shader changes are needed.
+//
+// Math mirrors the analytic form: brightness * input → contrast around 0.5 →
+// saturation lerp against luma → temperature warm/cool tint on R/B.
+void Renderer::RebuildUserCGLut()
+{
+   constexpr int LUT_AXIS = 16;            // 16x16x16 cube
+   constexpr int LUT_W    = LUT_AXIS * LUT_AXIS; // 256
+   constexpr int LUT_H    = LUT_AXIS;            // 16
+   auto tex = BaseTexture::Create(LUT_W, LUT_H, BaseTexture::SRGBA);
+   uint8_t * const d = static_cast<uint8_t*>(tex->data());
+   const float B = m_cgBrightness, C = m_cgContrast, S = m_cgSaturation, T = m_cgTemperature;
+   for (int b = 0; b < LUT_AXIS; ++b)
+      for (int g = 0; g < LUT_AXIS; ++g)
+         for (int r = 0; r < LUT_AXIS; ++r)
+         {
+            float fr = r / 15.f, fg = g / 15.f, fb = b / 15.f;
+            // Brightness
+            fr *= B; fg *= B; fb *= B;
+            // Contrast around mid-grey
+            fr = (fr - 0.5f) * C + 0.5f;
+            fg = (fg - 0.5f) * C + 0.5f;
+            fb = (fb - 0.5f) * C + 0.5f;
+            // Saturation — lerp against rec.601 luma
+            const float luma = 0.299f * fr + 0.587f * fg + 0.114f * fb;
+            fr = luma + (fr - luma) * S;
+            fg = luma + (fg - luma) * S;
+            fb = luma + (fb - luma) * S;
+            // Temperature — warm boosts R, cools B (and vice versa)
+            fr *= 1.f + T;
+            fb *= 1.f - T;
+            // Clamp + write (LUT layout: tile X = b, pixel Y = g, pixel X within tile = r)
+            const int x = b * LUT_AXIS + r;
+            const int y = g;
+            uint8_t * const p = d + (y * LUT_W + x) * 4;
+            p[0] = static_cast<uint8_t>(clamp(fr, 0.f, 1.f) * 255.f + 0.5f);
+            p[1] = static_cast<uint8_t>(clamp(fg, 0.f, 1.f) * 255.f + 0.5f);
+            p[2] = static_cast<uint8_t>(clamp(fb, 0.f, 1.f) * 255.f + 0.5f);
+            p[3] = 255;
+         }
+   m_userCGLutSampler = std::make_shared<Sampler>(m_renderDevice, "UserColorGradeLUT"s, std::shared_ptr<const BaseTexture>(tex), true);
+   m_cgLutDirty = false;
+}
+
 void Renderer::UpdateBloom(RenderTarget* renderedRT)
 {
    if (!IsBloomEnabled())
@@ -2244,13 +2290,22 @@ ShaderTechniques Renderer::ApplyTonemapping(RenderTarget* renderedRT, RenderTarg
    }
 
    Texture *const pin = m_table->GetImage(m_table->m_imageColorGrade);
-   if (pin)
+   const bool userCG = IsUserCGActive();
+   if (userCG)
+   {
+      // User color grade overrides any table-supplied LUT. Rebuild on any param change,
+      // otherwise reuse the cached Sampler (one allocation per slider drag, not per frame).
+      if (m_cgLutDirty || !m_userCGLutSampler)
+         RebuildUserCGLut();
+      m_renderDevice->m_FBShader->SetTexture(SHADER_tex_color_lut, m_userCGLutSampler, SF_BILINEAR, SA_CLAMP, SA_CLAMP);
+   }
+   else if (pin)
       // FIXME ensure that we always honor the linear RGB. Here it can be defeated if texture is used for something else (which is very unlikely)
       m_renderDevice->m_FBShader->SetTexture(SHADER_tex_color_lut, pin, true, SF_BILINEAR, SA_CLAMP, SA_CLAMP);
    m_renderDevice->m_FBShader->SetVector(SHADER_bloom_dither_colorgrade,
       IsBloomEnabled() ? 1.f : 0.f, // Bloom
       (!isHdr2020 && (m_renderDevice->GetOutputBackBuffer()->GetColorFormat() != colorFormat::RGBA10)) ? 1.f : 0.f, // Dither
-      (pin != nullptr) ? 1.f : 0.f, /* LUT colorgrade */
+      (userCG || pin != nullptr) ? 1.f : 0.f, /* LUT colorgrade */
       0.f);
    if (IsBloomEnabled())
       m_renderDevice->AddRenderTargetDependency(GetBloomBufferTexture());

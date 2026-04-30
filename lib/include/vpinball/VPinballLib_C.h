@@ -103,6 +103,14 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBatteryTempC(float tempC);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);
 VPINBALLAPI float VPinballGetBloomStrength();
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGBrightness(float v);
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGContrast(float v);
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGSaturation(float v);
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGTemperature(float v);
+VPINBALLAPI float VPinballGetUserCGBrightness();
+VPINBALLAPI float VPinballGetUserCGContrast();
+VPINBALLAPI float VPinballGetUserCGSaturation();
+VPINBALLAPI float VPinballGetUserCGTemperature();
 VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale);
 VPINBALLAPI float VPinballGetEmissionScale();
 VPINBALLAPI VPINBALL_STATUS VPinballSetFOV(float fov);  // Field of View (10-90 degrees, default 45)

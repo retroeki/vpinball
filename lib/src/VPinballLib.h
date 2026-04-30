@@ -104,6 +104,16 @@ public:
    VPINBALL_STATUS SetBatteryTempC(float tempC);
    VPINBALL_STATUS SetBloomStrength(float strength);
    float GetBloomStrength();
+   // User color grade — 4 analytic dials baked into a runtime LUT inside Renderer.
+   // Defaults: brightness=1.0, contrast=1.0, saturation=1.0, temperature=0.0.
+   VPINBALL_STATUS SetUserCGBrightness(float v);
+   VPINBALL_STATUS SetUserCGContrast(float v);
+   VPINBALL_STATUS SetUserCGSaturation(float v);
+   VPINBALL_STATUS SetUserCGTemperature(float v);
+   float GetUserCGBrightness();
+   float GetUserCGContrast();
+   float GetUserCGSaturation();
+   float GetUserCGTemperature();
    VPINBALL_STATUS SetEmissionScale(float scale);
    float GetEmissionScale();
    VPINBALL_STATUS SetFOV(float fov);

@@ -185,6 +185,19 @@ public:
    bool m_HDRforceDisableToneMapper = true;
    float m_exposure = 1.f;
 
+   // User color grade — 4-knob analytic grading baked into a 256x16 LUT
+   // at runtime so it reuses the engine's existing FBColorGrade shader path.
+   // Defaults are identity (no change). Setters mark the LUT dirty.
+   void SetUserCGBrightness(float v)  { m_cgBrightness  = v; m_cgLutDirty = true; }
+   void SetUserCGContrast(float v)    { m_cgContrast    = v; m_cgLutDirty = true; }
+   void SetUserCGSaturation(float v)  { m_cgSaturation  = v; m_cgLutDirty = true; }
+   void SetUserCGTemperature(float v) { m_cgTemperature = v; m_cgLutDirty = true; }
+   float GetUserCGBrightness()  const { return m_cgBrightness;  }
+   float GetUserCGContrast()    const { return m_cgContrast;    }
+   float GetUserCGSaturation()  const { return m_cgSaturation;  }
+   float GetUserCGTemperature() const { return m_cgTemperature; }
+   bool  IsUserCGActive() const { return m_cgBrightness != 1.f || m_cgContrast != 1.f || m_cgSaturation != 1.f || m_cgTemperature != 0.f; }
+
    CGpuProfiler m_gpu_profiler;
 
    RenderDevice* m_renderDevice = nullptr;
@@ -209,6 +222,13 @@ private:
    void DrawBackground();
    void DrawBulbLightBuffer();
    bool IsBloomEnabled() const;
+   void RebuildUserCGLut();
+   float m_cgBrightness  = 1.f;
+   float m_cgContrast    = 1.f;
+   float m_cgSaturation  = 1.f;
+   float m_cgTemperature = 0.f;
+   bool  m_cgLutDirty = true;
+   std::shared_ptr<Sampler> m_userCGLutSampler;
    std::shared_ptr<BaseTexture> EnvmapPrecalc(const std::shared_ptr<const BaseTexture>& envTex, const unsigned int rad_env_xres, const unsigned int rad_env_yres);
 
    // Postprocess passes

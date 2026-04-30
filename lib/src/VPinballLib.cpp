@@ -1325,123 +1325,71 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
    if (!g_pplayer || !g_pplayer->m_ptable)
       return VPINBALL_STATUS_FAILURE;
 
-   // Run everything on the main thread so we can safely read/modify ScoreView state,
-   // temporarily enable/resize it for a high-quality capture, and request the screenshot.
+   // Read the live, user-chosen ScoreView placement and crop the framebuffer
+   // there. Do NOT move/resize the ScoreView — the host app has placed it via
+   // VPinballToggleScoreView at the user's selected size+position; touching it
+   // would race with the renderer (the screenshot can fire before SetPos/Size
+   // takes effect, producing a misaligned crop — playfield slices, or the
+   // left-edge-of-DMD slice the user reported).
    return SDL_RunOnMainThread([](void* userdata) {
       auto* self = static_cast<VPinballLib*>(userdata);
       if (!g_pplayer || !g_pplayer->m_renderer || !g_pplayer->m_renderer->m_renderDevice)
          return;
 
-      // If a previous capture is still pending restore, skip to avoid overwriting the
-      // original ScoreView state with the temporary capture dimensions
-      {
-         std::lock_guard<std::mutex> lock(self->m_scoreViewCapture.mutex);
-         if (self->m_scoreViewCapture.needsRestore)
-            return;
-      }
-
       auto& output = g_pplayer->m_scoreViewOutput;
-      const bool wasDisabled = (output.GetMode() != VPX::RenderOutput::OM_EMBEDDED);
-
-      // Save current embedded window state for restoration after capture
-      int origX = 0, origY = 0, origW = 0, origH = 0;
-      if (!wasDisabled) {
-         VPX::EmbeddedWindow* embedWnd = output.GetEmbeddedWindow();
-         if (embedWnd) {
-            embedWnd->GetPos(origX, origY);
-            origW = embedWnd->GetWidth();
-            origH = embedWnd->GetHeight();
-         }
+      if (output.GetMode() != VPX::RenderOutput::OM_EMBEDDED) {
+         PLOGE << "[DMDCapture] ScoreView is not embedded — capture skipped";
+         return;
+      }
+      VPX::EmbeddedWindow* embedWnd = output.GetEmbeddedWindow();
+      if (!embedWnd) {
+         PLOGE << "[DMDCapture] ScoreView has no embedded window — capture skipped";
+         return;
       }
 
-      // Determine capture size: use PUP source dimensions for best quality, capped at 640px wide.
-      //
-      // SetWidth/SetHeight on the embedded window take LOGICAL units, not pixels. The crop
-      // step below converts those logical units back to framebuffer pixels by multiplying by
-      // displayScaleX/Y. On Android with a 3× density display, asking for 640 logical units
-      // means 1920 framebuffer pixels — which exceeds the screen's actual pixel width. The
-      // PUP renderer only writes valid pixels for the on-screen portion, so the cropped
-      // bitmap ends up with valid DMD content on the left and ~25% empty padding on the
-      // right. Cap the requested logical size to the container window's logical size so the
-      // resized embedded window always fits in the framebuffer.
+      int wndX = 0, wndY = 0;
+      embedWnd->GetPos(wndX, wndY);
+      const int wndW = embedWnd->GetWidth();
+      const int wndH = embedWnd->GetHeight();
+
+      // The EmbeddedWindow's (x,y,w,h) live in BACKBUFFER-TEXTURE pixel space
+      // (m_renderWidth × AAfactor — the host passes them as pixelWidth × resolutionScale).
+      // Note: GetRenderSize returns m_renderWidth pre-AAfactor, NOT the backbuffer
+      // texture size. The bgfx screenshot captures the FINAL output backbuffer at
+      // the SDL window's pixel size, after the upscaler. Use the backbuffer
+      // texture dimensions as the source of truth.
       VPX::Window* containerWnd = g_pplayer->m_renderer->m_renderDevice->m_outputWnd[0];
-      const float displayScaleX = static_cast<float>(containerWnd->GetPixelWidth()) / static_cast<float>(containerWnd->GetWidth());
-      const float displayScaleY = static_cast<float>(containerWnd->GetPixelHeight()) / static_cast<float>(containerWnd->GetHeight());
-      const int containerLogicalW = containerWnd->GetWidth();
-      const int containerLogicalH = containerWnd->GetHeight();
+      const int frameW = containerWnd->GetPixelWidth();
+      const int frameH = containerWnd->GetPixelHeight();
+      RenderTarget* const bb = g_pplayer->m_renderer->GetBackBufferTexture();
+      const int bbW = bb ? bb->GetWidth() : frameW;
+      const int bbH = bb ? bb->GetHeight() : frameH;
+      const float scaleX = static_cast<float>(frameW) / static_cast<float>(bbW > 0 ? bbW : frameW);
+      const float scaleY = static_cast<float>(frameH) / static_cast<float>(bbH > 0 ? bbH : frameH);
 
-      int srcW = 0, srcH = 0;
-      GetPUPVideoSourceSize(srcW, srcH);
-      int captureW, captureH;
-      if (srcW > 0 && srcH > 0) {
-         const float aspect = static_cast<float>(srcW) / static_cast<float>(srcH);
-         captureW = std::min({srcW, 640, containerLogicalW});
-         captureH = static_cast<int>(static_cast<float>(captureW) / aspect);
-         if (captureH < 1) captureH = 1;
-         if (captureH > containerLogicalH) {
-            captureH = containerLogicalH;
-            captureW = static_cast<int>(static_cast<float>(captureH) * aspect);
-         }
-      } else {
-         captureW = std::min(512, containerLogicalW);
-         captureH = std::min(128, containerLogicalH);
-      }
+      const int cropX = static_cast<int>(static_cast<float>(wndX) * scaleX);
+      const int cropY = static_cast<int>(static_cast<float>(wndY) * scaleY);
+      const int cropW = static_cast<int>(static_cast<float>(wndW) * scaleX);
+      const int cropH = static_cast<int>(static_cast<float>(wndH) * scaleY);
 
-      // Temporarily enable/resize ScoreView at position (0,0) for capture
-      output.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_EMBEDDED);
-      output.SetPos(0, 0);
-      output.SetWidth(captureW);
-      output.SetHeight(captureH);
+      PLOGI.printf("[DMDCapture] live crop: wnd=(%d,%d %dx%d) backbuf=%dx%d frame=%dx%d scale=(%.3f,%.3f) → crop=(%d,%d %dx%d)",
+         wndX, wndY, wndW, wndH, bbW, bbH, frameW, frameH, scaleX, scaleY, cropX, cropY, cropW, cropH);
 
       {
          std::lock_guard<std::mutex> lock(self->m_scoreViewCapture.mutex);
-         self->m_scoreViewCapture.cropX = 0;
-         self->m_scoreViewCapture.cropY = 0;
-         self->m_scoreViewCapture.cropW = static_cast<int>(static_cast<float>(captureW) * displayScaleX);
-         self->m_scoreViewCapture.cropH = static_cast<int>(static_cast<float>(captureH) * displayScaleY);
+         self->m_scoreViewCapture.cropX = cropX;
+         self->m_scoreViewCapture.cropY = cropY;
+         self->m_scoreViewCapture.cropW = cropW;
+         self->m_scoreViewCapture.cropH = cropH;
          self->m_scoreViewCapture.ready = false;
-         // Store restore info so DeliverScoreViewCapture can restore original state
-         self->m_scoreViewCapture.needsRestore = true;
-         self->m_scoreViewCapture.wasDisabled = wasDisabled;
-         self->m_scoreViewCapture.restoreX = origX;
-         self->m_scoreViewCapture.restoreY = origY;
-         self->m_scoreViewCapture.restoreW = origW;
-         self->m_scoreViewCapture.restoreH = origH;
+         // We didn't change anything — nothing to restore.
+         self->m_scoreViewCapture.needsRestore = false;
       }
 
-      // Request screenshot — the marker filename routes it to DeliverScoreViewCapture.
-      // If the request is rejected (another screenshot in progress), restore immediately
-      // since DeliverScoreViewCapture won't be called to do it.
-      struct FailsafeRestore {
-         VPinballLib* lib;
-         bool disabled;
-         int x, y, w, h;
-      };
-      auto* fr = new FailsafeRestore{self, wasDisabled, origX, origY, origW, origH};
       g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot("__scoreview_capture__",
-         [fr](bool success) {
-            if (!success) {
-               PLOGE << "ScoreView capture failed — restoring ScoreView state";
-               SDL_RunOnMainThread([](void* userdata) {
-                  auto* rp = static_cast<FailsafeRestore*>(userdata);
-                  if (g_pplayer && g_pplayer->m_ptable) {
-                     if (rp->disabled) {
-                        g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_DISABLED);
-                     } else {
-                        g_pplayer->m_scoreViewOutput.SetPos(rp->x, rp->y);
-                        g_pplayer->m_scoreViewOutput.SetWidth(rp->w);
-                        g_pplayer->m_scoreViewOutput.SetHeight(rp->h);
-                     }
-                  }
-                  {
-                     std::lock_guard<std::mutex> lock(rp->lib->m_scoreViewCapture.mutex);
-                     rp->lib->m_scoreViewCapture.needsRestore = false;
-                  }
-                  delete rp;
-               }, fr, false);
-            } else {
-               delete fr;
-            }
+         [](bool success) {
+            if (!success)
+               PLOGE << "[DMDCapture] screenshot request failed";
          });
    }, this, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
 }
@@ -1472,19 +1420,30 @@ void VPinballLib::DeliverScoreViewCapture(const uint32_t* framePixels, uint32_t 
 {
    std::lock_guard<std::mutex> lock(m_scoreViewCapture.mutex);
 
-   int cx = m_scoreViewCapture.cropX;
-   int cy = m_scoreViewCapture.cropY;
-   int cw = m_scoreViewCapture.cropW;
-   int ch = m_scoreViewCapture.cropH;
+   const int origCropX = m_scoreViewCapture.cropX;
+   const int origCropY = m_scoreViewCapture.cropY;
+   const int origCropW = m_scoreViewCapture.cropW;
+   const int origCropH = m_scoreViewCapture.cropH;
+
+   int cx = origCropX;
+   int cy = origCropY;
+   int cw = origCropW;
+   int ch = origCropH;
 
    // Clamp crop rect to frame bounds
    if (cx < 0) cx = 0;
    if (cy < 0) cy = 0;
    if (cx + cw > (int)frameWidth) cw = (int)frameWidth - cx;
    if (cy + ch > (int)frameHeight) ch = (int)frameHeight - cy;
+
+   PLOGI.printf("[DMDCapture] deliver: frame=%ux%u yflip=%d swapRB=%d requestedCrop=%d,%d %dx%d clampedCrop=%d,%d %dx%d",
+      frameWidth, frameHeight, yflip ? 1 : 0, swapRB ? 1 : 0,
+      origCropX, origCropY, origCropW, origCropH, cx, cy, cw, ch);
+
    if (cw <= 0 || ch <= 0)
    {
       m_scoreViewCapture.ready = false;
+      PLOGE.printf("[DMDCapture] deliver: clamped crop has zero/negative size — capture rejected");
       return;
    }
 

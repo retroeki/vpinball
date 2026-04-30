@@ -323,6 +323,15 @@ JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetBloomS
    return VPinballGetBloomStrength();
 }
 
+JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGBrightness(JNIEnv*, jobject, jfloat v)  { return VPinballSetUserCGBrightness(v); }
+JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGContrast(JNIEnv*, jobject, jfloat v)    { return VPinballSetUserCGContrast(v); }
+JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGSaturation(JNIEnv*, jobject, jfloat v)  { return VPinballSetUserCGSaturation(v); }
+JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGTemperature(JNIEnv*, jobject, jfloat v) { return VPinballSetUserCGTemperature(v); }
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetUserCGBrightness(JNIEnv*, jobject)  { return VPinballGetUserCGBrightness(); }
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetUserCGContrast(JNIEnv*, jobject)    { return VPinballGetUserCGContrast(); }
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetUserCGSaturation(JNIEnv*, jobject)  { return VPinballGetUserCGSaturation(); }
+JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetUserCGTemperature(JNIEnv*, jobject) { return VPinballGetUserCGTemperature(); }
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetEmissionScale(JNIEnv* env, jobject obj, jfloat scale)
 {
    return VPinballSetEmissionScale(scale);

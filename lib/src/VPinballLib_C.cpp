@@ -227,6 +227,15 @@ VPINBALLAPI float VPinballGetBloomStrength()
    return VPinballLib::VPinballLib::Instance().GetBloomStrength();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGBrightness(float v)  { return VPinballLib::VPinballLib::Instance().SetUserCGBrightness(v); }
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGContrast(float v)    { return VPinballLib::VPinballLib::Instance().SetUserCGContrast(v); }
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGSaturation(float v)  { return VPinballLib::VPinballLib::Instance().SetUserCGSaturation(v); }
+VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGTemperature(float v) { return VPinballLib::VPinballLib::Instance().SetUserCGTemperature(v); }
+VPINBALLAPI float VPinballGetUserCGBrightness()  { return VPinballLib::VPinballLib::Instance().GetUserCGBrightness(); }
+VPINBALLAPI float VPinballGetUserCGContrast()    { return VPinballLib::VPinballLib::Instance().GetUserCGContrast(); }
+VPINBALLAPI float VPinballGetUserCGSaturation()  { return VPinballLib::VPinballLib::Instance().GetUserCGSaturation(); }
+VPINBALLAPI float VPinballGetUserCGTemperature() { return VPinballLib::VPinballLib::Instance().GetUserCGTemperature(); }
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetEmissionScale(float scale)
 {
    return VPinballLib::VPinballLib::Instance().SetEmissionScale(scale);
