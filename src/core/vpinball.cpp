@@ -20,7 +20,7 @@
 // External function to get pre-set internal path (for Android headless/service mode)
 #ifdef __ANDROID__
 extern "C" const char* VPinballGetInternalPath();
-extern "C" const char* VPinballGetUserPrefPath();
+extern "C" const char* VPinballGetWebLibraryPath();
 #endif
 
 #include <filesystem>
@@ -210,13 +210,12 @@ string VPinball::GetDefaultPrefPath()
    // That would look something like: "C:\Users\bob\AppData\Roaming\VPinballX\"
    path = string(GetAppDataPath()) + PATH_SEPARATOR_CHAR + "VPinballX" + PATH_SEPARATOR_CHAR;
 #elif defined(__ANDROID__)
-   // Prefer the user pref path if set — that's where the user library
-   // (tables/, pinmame/, music/, pupvideos/) actually lives, separate from the
-   // internal asset path. Falls through to the internal path so existing
-   // behaviour is preserved if no user pref path was supplied.
-   const char* userPrefPath = VPinballGetUserPrefPath();
-   if (userPrefPath && userPrefPath[0] != '\0') {
-      path = string(userPrefPath) + PATH_SEPARATOR_CHAR;
+   // Default web-server root is the library path (user content). Falls back
+   // to the internal path (bundled assets) so existing behaviour is preserved
+   // if the host hasn't registered a library path.
+   const char* libraryPath = VPinballGetWebLibraryPath();
+   if (libraryPath && libraryPath[0] != '\0') {
+      path = string(libraryPath) + PATH_SEPARATOR_CHAR;
    } else {
       const char* internalPath = VPinballGetInternalPath();
       if (internalPath && internalPath[0] != '\0') {

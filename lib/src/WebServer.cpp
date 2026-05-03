@@ -74,6 +74,10 @@ void WebServer::EventHandler(struct mg_connection *c, int ev, void *ev_data)
          webServer->LogStream(c, hm);
       else if (mg_match(hm->uri, mg_str("/rename"), NULL))
          webServer->Rename(c, hm);
+      else if (mg_match(hm->uri, mg_str("/setroot"), NULL))
+         webServer->SetRoot(c, hm);
+      else if (mg_match(hm->uri, mg_str("/getroot"), NULL))
+         webServer->GetRoot(c, hm);
       else {
          struct mg_http_serve_opts opts = {};
 
@@ -463,6 +467,58 @@ void WebServer::Rename(struct mg_connection *c, struct mg_http_message* hm)
       SetLastUpdate();
       mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
    }
+}
+
+// Two stored web roots (library / advanced) registered by the host. Implemented
+// in VPinballLib.cpp.
+extern "C" const char* VPinballSetActiveWebRoot(int type);
+extern "C" const char* VPinballGetWebLibraryPath();
+extern "C" const char* VPinballGetWebAdvancedPath();
+
+void WebServer::SetRoot(struct mg_connection *c, struct mg_http_message* hm)
+{
+   char buffer[16];
+   mg_http_get_var(&hm->query, "type", buffer, sizeof(buffer));
+   string type = buffer;
+
+   int t;
+   if (type == "library") t = 0;
+   else if (type == "advanced") t = 1;
+   else {
+      mg_http_reply(c, STATUS_BAD_REQUEST, "", "%s", RESPONSE_BAD_REQUEST);
+      return;
+   }
+
+   const char* resolved = VPinballSetActiveWebRoot(t);
+   if (resolved == nullptr || resolved[0] == '\0') {
+      mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+      return;
+   }
+
+   nlohmann::json j;
+   j["type"] = type;
+   j["path"] = resolved;
+   string body = j.dump();
+   mg_http_reply(c, STATUS_OK, "Content-Type: application/json\r\n", "%s", body.c_str());
+}
+
+void WebServer::GetRoot(struct mg_connection *c, struct mg_http_message* hm)
+{
+   const char* libPath = VPinballGetWebLibraryPath();
+   const char* advPath = VPinballGetWebAdvancedPath();
+   const string current = g_pvp ? g_pvp->GetPrefPath() : string();
+
+   string activeType;
+   if (libPath && current.find(libPath) == 0) activeType = "library";
+   else if (advPath && current.find(advPath) == 0) activeType = "advanced";
+   else activeType = "library"; // default fallback
+
+   nlohmann::json j;
+   j["active"] = activeType;
+   j["library_available"] = (libPath != nullptr && libPath[0] != '\0');
+   j["advanced_available"] = (advPath != nullptr && advPath[0] != '\0');
+   string body = j.dump();
+   mg_http_reply(c, STATUS_OK, "Content-Type: application/json\r\n", "%s", body.c_str());
 }
 
 void WebServer::Folder(struct mg_connection *c, struct mg_http_message* hm)

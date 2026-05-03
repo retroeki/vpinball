@@ -35,6 +35,8 @@ private:
    void Upload(struct mg_connection *c, struct mg_http_message* hm);
    void Delete(struct mg_connection *c, struct mg_http_message* hm);
    void Rename(struct mg_connection *c, struct mg_http_message* hm);
+   void SetRoot(struct mg_connection *c, struct mg_http_message* hm);
+   void GetRoot(struct mg_connection *c, struct mg_http_message* hm);
    void Folder(struct mg_connection *c, struct mg_http_message* hm);
    void Extract(struct mg_connection *c, struct mg_http_message* hm);
    void Command(struct mg_connection *c, struct mg_http_message* hm);

@@ -88,38 +88,63 @@ extern "C" const char* VPinballGetInternalPath()
    return g_internalFilesPath.empty() ? nullptr : g_internalFilesPath.c_str();
 }
 
-// Separate global for the user-content path (tables/, pinmame/, music/...). On
-// Android this is the app-specific external storage dir, distinct from the
-// internal path which holds bundled assets/scripts/plugins. When set,
-// GetDefaultPrefPath() returns this so the WebServer's file browser and
-// PinMAME plugins look at the user's library, while m_myPath / asset lookups
-// still resolve against the internal path.
+// Two stored paths for the WebServer file-browser root toggle. The host
+// (Android) registers both at init: the user library path (tables/, pinmame/,
+// music/, pupvideos/) and the advanced/internal path (bundled assets/, scripts/,
+// plugins/, VPinballX.ini, logs).
 //
-// Can be called both before VPinballInit (caches in the global; the constructor
-// picks it up via GetDefaultPrefPath) and after init (also pushes to the live
-// VPinball instance via SetPrefPath, so a runtime toggle takes effect without
-// re-initialising).
-static std::string g_userPrefPath;
-static std::mutex g_userPrefPathMutex;
+// VPinball::GetPrefPath defaults to the library path; the WebServer can flip
+// the active root at runtime by calling VPinballSetActiveWebRoot, which the
+// /setroot?type=library|advanced endpoint in WebServer.cpp invokes.
+//
+// Pre-init: GetDefaultPrefPath() reads g_libraryPath via VPinballGetWebLibraryPath
+// so the constructor seeds m_myPrefPath correctly.
+// Post-init: VPinballSetActiveWebRoot calls g_pvp->SetPrefPath() so subsequent
+// file-browser requests use the new root immediately.
+static std::string g_libraryPath;
+static std::string g_advancedPath;
+static std::mutex g_webPathMutex;
 
-extern "C" void VPinballSetUserPrefPath(const char* path)
+extern "C" void VPinballSetWebLibraryPath(const char* path)
 {
-   {
-      std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
-      g_userPrefPath = path ? path : "";
-      PLOGI.printf("VPinballLib: User pref path set to: %s", g_userPrefPath.c_str());
-   }
-
-   if (g_pvp != nullptr) {
-      std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
-      g_pvp->SetPrefPath(g_userPrefPath);
-   }
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   g_libraryPath = path ? path : "";
+   PLOGI.printf("VPinballLib: Web library path set to: %s", g_libraryPath.c_str());
 }
 
-extern "C" const char* VPinballGetUserPrefPath()
+extern "C" void VPinballSetWebAdvancedPath(const char* path)
 {
-   std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
-   return g_userPrefPath.empty() ? nullptr : g_userPrefPath.c_str();
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   g_advancedPath = path ? path : "";
+   PLOGI.printf("VPinballLib: Web advanced path set to: %s", g_advancedPath.c_str());
+}
+
+extern "C" const char* VPinballGetWebLibraryPath()
+{
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   return g_libraryPath.empty() ? nullptr : g_libraryPath.c_str();
+}
+
+extern "C" const char* VPinballGetWebAdvancedPath()
+{
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   return g_advancedPath.empty() ? nullptr : g_advancedPath.c_str();
+}
+
+// type 0 = library, type 1 = advanced. Returns the resolved path so callers
+// can echo it back (e.g. the /setroot HTTP response).
+extern "C" const char* VPinballSetActiveWebRoot(int type)
+{
+   std::string path;
+   {
+      std::lock_guard<std::mutex> lock(g_webPathMutex);
+      path = (type == 1) ? g_advancedPath : g_libraryPath;
+   }
+   if (path.empty() || g_pvp == nullptr) return nullptr;
+   g_pvp->SetPrefPath(path);
+   PLOGI.printf("VPinballLib: Active web root set to %s (type=%d)", path.c_str(), type);
+   // Return a static-ish ref via the VPinball instance's stored path.
+   return g_pvp->GetPrefPath().c_str();
 }
 
 namespace VPinballLib {
