@@ -88,6 +88,40 @@ extern "C" const char* VPinballGetInternalPath()
    return g_internalFilesPath.empty() ? nullptr : g_internalFilesPath.c_str();
 }
 
+// Separate global for the user-content path (tables/, pinmame/, music/...). On
+// Android this is the app-specific external storage dir, distinct from the
+// internal path which holds bundled assets/scripts/plugins. When set,
+// GetDefaultPrefPath() returns this so the WebServer's file browser and
+// PinMAME plugins look at the user's library, while m_myPath / asset lookups
+// still resolve against the internal path.
+//
+// Can be called both before VPinballInit (caches in the global; the constructor
+// picks it up via GetDefaultPrefPath) and after init (also pushes to the live
+// VPinball instance via SetPrefPath, so a runtime toggle takes effect without
+// re-initialising).
+static std::string g_userPrefPath;
+static std::mutex g_userPrefPathMutex;
+
+extern "C" void VPinballSetUserPrefPath(const char* path)
+{
+   {
+      std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
+      g_userPrefPath = path ? path : "";
+      PLOGI.printf("VPinballLib: User pref path set to: %s", g_userPrefPath.c_str());
+   }
+
+   if (g_pvp != nullptr) {
+      std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
+      g_pvp->SetPrefPath(g_userPrefPath);
+   }
+}
+
+extern "C" const char* VPinballGetUserPrefPath()
+{
+   std::lock_guard<std::mutex> lock(g_userPrefPathMutex);
+   return g_userPrefPath.empty() ? nullptr : g_userPrefPath.c_str();
+}
+
 namespace VPinballLib {
 
 VPinballLib::VPinballLib()

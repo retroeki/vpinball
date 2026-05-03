@@ -20,6 +20,7 @@
 // External function to get pre-set internal path (for Android headless/service mode)
 #ifdef __ANDROID__
 extern "C" const char* VPinballGetInternalPath();
+extern "C" const char* VPinballGetUserPrefPath();
 #endif
 
 #include <filesystem>
@@ -209,14 +210,22 @@ string VPinball::GetDefaultPrefPath()
    // That would look something like: "C:\Users\bob\AppData\Roaming\VPinballX\"
    path = string(GetAppDataPath()) + PATH_SEPARATOR_CHAR + "VPinballX" + PATH_SEPARATOR_CHAR;
 #elif defined(__ANDROID__)
-   // Try to use pre-set internal path first (for headless/service mode where SDL Activity isn't available)
-   const char* internalPath = VPinballGetInternalPath();
-   if (internalPath && internalPath[0] != '\0') {
-      path = string(internalPath) + PATH_SEPARATOR_CHAR;
+   // Prefer the user pref path if set — that's where the user library
+   // (tables/, pinmame/, music/, pupvideos/) actually lives, separate from the
+   // internal asset path. Falls through to the internal path so existing
+   // behaviour is preserved if no user pref path was supplied.
+   const char* userPrefPath = VPinballGetUserPrefPath();
+   if (userPrefPath && userPrefPath[0] != '\0') {
+      path = string(userPrefPath) + PATH_SEPARATOR_CHAR;
    } else {
-      char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
-      path = szPrefPath;
-      SDL_free(szPrefPath);
+      const char* internalPath = VPinballGetInternalPath();
+      if (internalPath && internalPath[0] != '\0') {
+         path = string(internalPath) + PATH_SEPARATOR_CHAR;
+      } else {
+         char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
+         path = szPrefPath;
+         SDL_free(szPrefPath);
+      }
    }
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
    char *szPrefPath = SDL_GetPrefPath("../..", "Documents");

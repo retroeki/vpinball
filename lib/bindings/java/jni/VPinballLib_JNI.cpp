@@ -485,11 +485,19 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetSoundVol
 
 // Declare the external function from VPinballLib.cpp
 extern "C" void VPinballSetInternalPath(const char* path);
+extern "C" void VPinballSetUserPrefPath(const char* path);
 
 JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetInternalPath(JNIEnv* env, jobject obj, jstring path)
 {
    const char* pPath = env->GetStringUTFChars(path, nullptr);
    VPinballSetInternalPath(pPath);
+   env->ReleaseStringUTFChars(path, pPath);
+}
+
+JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserPrefPath(JNIEnv* env, jobject obj, jstring path)
+{
+   const char* pPath = env->GetStringUTFChars(path, nullptr);
+   VPinballSetUserPrefPath(pPath);
    env->ReleaseStringUTFChars(path, pPath);
 }
 
