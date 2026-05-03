@@ -6,10 +6,6 @@
 
 #include "core/vpversion.h"
 
-#ifdef __ANDROID__
-#include "lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
-
 
 PinSound::~PinSound()
 {
@@ -43,15 +39,8 @@ PinSound* PinSound::CreateFromFile(const string& filename)
    pps->m_name = TitleFromFilename(filename);
    FILE *f;
    if (fopen_s(&f, filename.c_str(), "rb") != 0 || !f) {
-#ifdef __ANDROID__
-      f = AndroidSAF::FOpen(filename, "rb");
-      if (!f) {
-#endif
       ShowError("Could not open sound file.");
       return nullptr;
-#ifdef __ANDROID__
-      }
-#endif
    }
    fseek(f, 0, SEEK_END);
    pps->m_cdata = (int)ftell(f);

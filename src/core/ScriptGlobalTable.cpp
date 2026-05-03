@@ -21,9 +21,6 @@
 #include "serial.h"
 #include <algorithm>
 
-#ifdef __ANDROID__
-#include "lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 static serial Serial;
 
 
@@ -367,19 +364,6 @@ bool ScriptGlobalTable::GetTextFileFromDirectory(const string &filename, const s
          *pContents = MakeWideBSTR(content);
          return true;
       }
-#ifdef __ANDROID__
-      // Fallback: read via SAF bridge if ifstream failed (FUSE access denied)
-      auto data = AndroidSAF::ReadFile(szPath);
-      if (!data.empty()) {
-         string content(data.begin(), data.end());
-         string lowerFilename = filename;
-         std::transform(lowerFilename.begin(), lowerFilename.end(), lowerFilename.begin(), ::tolower);
-         if (lowerFilename.ends_with(".vbs"))
-            content = VPXPluginAPIImpl::GetInstance().ApplyScriptCOMObjectOverrides(content);
-         *pContents = MakeWideBSTR(content);
-         return true;
-      }
-#endif
    }
    return false;
 }

@@ -17,10 +17,6 @@
 #include <pthread.h>
 #endif
 
-#ifdef __ANDROID__
-#include "lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
-
 static const char point = std::use_facet<std::numpunct<char>>(std::locale("")).decimal_point(); // gets the OS locale decimal point (e.g. ',' or '.')
 
 uint64_t mwc64x_state = 4077358422479273989ull;
@@ -450,11 +446,6 @@ vector<uint8_t> read_file(const string& filename, const bool binary)
    std::ifstream file(filename, binary ? (std::ios::binary | std::ios::ate) : std::ios::ate);
    if (!file)
    {
-#ifdef __ANDROID__
-      data = AndroidSAF::ReadFile(filename);
-      if (!data.empty())
-         return data;
-#endif
       const string text = "The file \"" + filename + "\" could not be opened.";
       ShowError(text);
       return data;
@@ -471,10 +462,6 @@ void write_file(const string& filename, const vector<uint8_t>& data, const bool 
    std::ofstream file(filename, binary ? (std::ios::binary | std::ios::trunc) : std::ios::trunc);
    if (!file)
    {
-#ifdef __ANDROID__
-      if (AndroidSAF::WriteFile(filename, data.data(), data.size()))
-         return;
-#endif
       const string text = "The file \"" + filename + "\" could not be opened for writing.";
       ShowError(text);
       return;
@@ -502,14 +489,6 @@ string normalize_path_separators(const string& szPath)
 
 string find_case_insensitive_file_path(const string& szPath)
 {
-#ifdef __ANDROID__
-   // On Android, std::filesystem::exists fails for SAF-only paths (FUSE access denial).
-   // Try direct lookup via SAF bridge — returns path as-is if found (no case-insensitive walk).
-   if (AndroidSAF::FileExists(szPath)) {
-      std::filesystem::path p = std::filesystem::path(normalize_path_separators(szPath)).lexically_normal();
-      return p.string();
-   }
-#endif
    auto fn = [&](auto& self, const string& s) -> string {
       string path = normalize_path_separators(s);
       std::filesystem::path p = std::filesystem::path(path).lexically_normal();
