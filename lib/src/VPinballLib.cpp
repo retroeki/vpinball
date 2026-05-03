@@ -531,8 +531,10 @@ void VPinballLib::SetEventCallback(VPinballEventCallback callback)
                break;
             }
             case VPINBALL_EVENT_WEB_SERVER: {
+               // WebServer::Stop fires this event with nullptr data to signal a
+               // stop. Treat that as an empty URL rather than dereferencing null.
                WebServerData* webServerData = (WebServerData*)data;
-               j["url"] = webServerData->url;
+               j["url"] = webServerData ? webServerData->url : "";
                jsonString = j.dump();
                jsonData = jsonString.c_str();
                break;
