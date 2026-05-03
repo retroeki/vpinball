@@ -13,9 +13,6 @@
 
 #include <SDL3_image/SDL_image.h>
 
-#ifdef __ANDROID__
-#include "../../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 #include <SDL3/SDL_platform.h>
 
 #include <sstream>
@@ -256,39 +253,6 @@ void* AssetManager::Open(AssetSrc* pSrc)
            else
               pAsset = IMG_LoadAnimation(path.c_str());
         }
-#ifdef __ANDROID__
-        // Android fallback: read file via SAF bridge and load from memory
-        if (!pAsset) {
-           // pSrc->GetPath() already includes the base path (e.g. "./TheGooniesDMD/foo.gif").
-           // Resolve to absolute so the bridge can map the prefix to the SAF tree.
-           string tryPath = pSrc->GetPath();
-           if (!tryPath.empty() && tryPath[0] != '/') {
-              std::error_code ec;
-              auto abs = std::filesystem::absolute(tryPath, ec);
-              if (!ec) tryPath = abs.lexically_normal().string();
-           }
-           if (pSrc->GetAssetType() == AssetType_BMFont) {
-              // BitmapFont::Load has its own SAF fallback — pass the resolved path.
-              pAsset = BitmapFont::Create(tryPath);
-              if (pAsset && ((BitmapFont*)pAsset)->GetPageCount() == 0) {
-                 delete (BitmapFont*)pAsset;
-                 pAsset = nullptr;
-              }
-           } else {
-              auto bytes = AndroidSAF::ReadFile(tryPath);
-              if (!bytes.empty()) {
-                 SDL_IOStream* rwops = SDL_IOFromConstMem(bytes.data(), bytes.size());
-                 if (rwops) {
-                    if (pSrc->GetAssetType() != AssetType_GIF)
-                       pAsset = IMG_Load_IO(rwops, false);
-                    else
-                       pAsset = IMG_LoadAnimation_IO(rwops, false);
-                    SDL_CloseIO(rwops);
-                 }
-              }
-           }
-        }
-#endif
       }
       break;
       case AssetSrcType_FlexResource:
