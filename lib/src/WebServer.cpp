@@ -517,6 +517,8 @@ void WebServer::GetRoot(struct mg_connection *c, struct mg_http_message* hm)
    j["active"] = activeType;
    j["library_available"] = (libPath != nullptr && libPath[0] != '\0');
    j["advanced_available"] = (advPath != nullptr && advPath[0] != '\0');
+   j["library_path"] = libPath ? libPath : "";
+   j["advanced_path"] = advPath ? advPath : "";
    string body = j.dump();
    mg_http_reply(c, STATUS_OK, "Content-Type: application/json\r\n", "%s", body.c_str());
 }
