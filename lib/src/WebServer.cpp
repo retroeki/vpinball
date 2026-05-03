@@ -470,8 +470,12 @@ void WebServer::Rename(struct mg_connection *c, struct mg_http_message* hm)
 }
 
 // Two stored web roots (library / advanced) registered by the host. Implemented
-// in VPinballLib.cpp.
-extern "C" const char* VPinballSetActiveWebRoot(int type);
+// in VPinballLib.cpp. SetActiveWebRoot returns the path now serving as the
+// browse root — kept here in g_webBrowseRoot so the file-browser ops use it
+// instead of the global m_myPrefPath (which must stay anchored at the internal
+// app dir for INI/log/user/ writes).
+extern "C" void VPinballSetActiveWebRoot(int type);
+extern "C" const char* VPinballGetActiveWebRoot();
 extern "C" const char* VPinballGetWebLibraryPath();
 extern "C" const char* VPinballGetWebAdvancedPath();
 
@@ -489,7 +493,8 @@ void WebServer::SetRoot(struct mg_connection *c, struct mg_http_message* hm)
       return;
    }
 
-   const char* resolved = VPinballSetActiveWebRoot(t);
+   VPinballSetActiveWebRoot(t);
+   const char* resolved = VPinballGetActiveWebRoot();
    if (resolved == nullptr || resolved[0] == '\0') {
       mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
       return;
@@ -506,7 +511,8 @@ void WebServer::GetRoot(struct mg_connection *c, struct mg_http_message* hm)
 {
    const char* libPath = VPinballGetWebLibraryPath();
    const char* advPath = VPinballGetWebAdvancedPath();
-   const string current = g_pvp ? g_pvp->GetPrefPath() : string();
+   const char* active = VPinballGetActiveWebRoot();
+   const string current = active ? active : (libPath ? libPath : "");
 
    string activeType;
    if (libPath && current.find(libPath) == 0) activeType = "library";
@@ -749,6 +755,14 @@ bool WebServer::ValidatePathParameter(struct mg_connection *c, struct mg_http_me
 
 std::filesystem::path WebServer::BuildPrefPath(const char* relativePath)
 {
+   // Web file-browser root is independent of g_pvp->GetPrefPath. The host
+   // registers a browse root via VPinballSetActiveWebRoot; if unset, fall back
+   // to the live VPinball prefPath so the upstream desktop builds (which never
+   // touch the new API) still work.
+   const char* webRoot = VPinballGetActiveWebRoot();
+   if (webRoot && webRoot[0] != '\0') {
+      return std::filesystem::path(webRoot) / relativePath;
+   }
    return std::filesystem::path(g_pvp->GetPrefPath()) / relativePath;
 }
 

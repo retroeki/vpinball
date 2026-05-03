@@ -20,7 +20,6 @@
 // External function to get pre-set internal path (for Android headless/service mode)
 #ifdef __ANDROID__
 extern "C" const char* VPinballGetInternalPath();
-extern "C" const char* VPinballGetWebLibraryPath();
 #endif
 
 #include <filesystem>
@@ -210,21 +209,18 @@ string VPinball::GetDefaultPrefPath()
    // That would look something like: "C:\Users\bob\AppData\Roaming\VPinballX\"
    path = string(GetAppDataPath()) + PATH_SEPARATOR_CHAR + "VPinballX" + PATH_SEPARATOR_CHAR;
 #elif defined(__ANDROID__)
-   // Default web-server root is the library path (user content). Falls back
-   // to the internal path (bundled assets) so existing behaviour is preserved
-   // if the host hasn't registered a library path.
-   const char* libraryPath = VPinballGetWebLibraryPath();
-   if (libraryPath && libraryPath[0] != '\0') {
-      path = string(libraryPath) + PATH_SEPARATOR_CHAR;
+   // PrefPath is where native writes VPinballX.ini, vpinball.log, user/, etc.
+   // — strictly the internal app folder. The web-server file browser root is
+   // a separate concept handled via g_webBrowseRoot in the WebServer; do NOT
+   // set prefPath to the user library or those files leak into the user's
+   // tables folder.
+   const char* internalPath = VPinballGetInternalPath();
+   if (internalPath && internalPath[0] != '\0') {
+      path = string(internalPath) + PATH_SEPARATOR_CHAR;
    } else {
-      const char* internalPath = VPinballGetInternalPath();
-      if (internalPath && internalPath[0] != '\0') {
-         path = string(internalPath) + PATH_SEPARATOR_CHAR;
-      } else {
-         char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
-         path = szPrefPath;
-         SDL_free(szPrefPath);
-      }
+      char *szPrefPath = SDL_GetPrefPath(NULL, NULL);
+      path = szPrefPath;
+      SDL_free(szPrefPath);
    }
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
    char *szPrefPath = SDL_GetPrefPath("../..", "Documents");

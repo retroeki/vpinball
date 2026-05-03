@@ -131,20 +131,30 @@ extern "C" const char* VPinballGetWebAdvancedPath()
    return g_advancedPath.empty() ? nullptr : g_advancedPath.c_str();
 }
 
-// type 0 = library, type 1 = advanced. Returns the resolved path so callers
-// can echo it back (e.g. the /setroot HTTP response).
-extern "C" const char* VPinballSetActiveWebRoot(int type)
+// Active web-server browse root, kept SEPARATE from g_pvp->m_myPrefPath. The
+// previous design called g_pvp->SetPrefPath() so the WebServer's BuildPrefPath
+// would route file ops at the user library — but m_myPrefPath is also where
+// VPinballX.ini, vpinball.log, and user/ get written, so the side effect was
+// those files leaking into the user's tables folder. WebServer now reads
+// g_activeWebRoot directly via VPinballGetActiveWebRoot.
+static std::string g_activeWebRoot;
+
+// type 0 = library, type 1 = advanced.
+extern "C" void VPinballSetActiveWebRoot(int type)
 {
-   std::string path;
-   {
-      std::lock_guard<std::mutex> lock(g_webPathMutex);
-      path = (type == 1) ? g_advancedPath : g_libraryPath;
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   g_activeWebRoot = (type == 1) ? g_advancedPath : g_libraryPath;
+   PLOGI.printf("VPinballLib: Active web root set to %s (type=%d)", g_activeWebRoot.c_str(), type);
+}
+
+extern "C" const char* VPinballGetActiveWebRoot()
+{
+   std::lock_guard<std::mutex> lock(g_webPathMutex);
+   if (g_activeWebRoot.empty()) {
+      // Default to library path on first read.
+      g_activeWebRoot = g_libraryPath;
    }
-   if (path.empty() || g_pvp == nullptr) return nullptr;
-   g_pvp->SetPrefPath(path);
-   PLOGI.printf("VPinballLib: Active web root set to %s (type=%d)", path.c_str(), type);
-   // Return a static-ish ref via the VPinball instance's stored path.
-   return g_pvp->GetPrefPath().c_str();
+   return g_activeWebRoot.empty() ? nullptr : g_activeWebRoot.c_str();
 }
 
 namespace VPinballLib {
