@@ -3,11 +3,6 @@
 #include "PUPImage.h"
 
 #include <SDL3_image/SDL_image.h>
-#ifdef __ANDROID__
-#include <vector>
-#include <cstdint>
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 namespace PUP {
 
@@ -33,17 +28,6 @@ void PUPImage::Load(const string& szFile)
    }
 
    SDL_Surface* pRawSurface = IMG_Load(szFile.c_str());
-#ifdef __ANDROID__
-   if (!pRawSurface)
-   {
-      std::vector<uint8_t> data = AndroidSAF::ReadFile(szFile);
-      if (!data.empty())
-      {
-         if (SDL_IOStream* io = SDL_IOFromConstMem(data.data(), data.size()))
-            pRawSurface = IMG_Load_IO(io, true);
-      }
-   }
-#endif
    m_pSurface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(pRawSurface, SDL_DestroySurface);
    if (m_pSurface && m_pSurface->format != SDL_PIXELFORMAT_RGBA32)
       m_pSurface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(SDL_ConvertSurface(m_pSurface.get(), SDL_PIXELFORMAT_RGBA32), SDL_DestroySurface);

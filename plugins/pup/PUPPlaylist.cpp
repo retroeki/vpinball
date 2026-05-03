@@ -4,9 +4,6 @@
 
 #include <filesystem>
 #include <algorithm>
-#ifdef __ANDROID__
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 namespace PUP {
 
@@ -59,10 +56,8 @@ PUPPlaylist::PUPPlaylist(PUPManager* manager, const string& szFolder, const stri
    }
 
    std::error_code ec;
-   bool iteratedFs = false;
    for (auto iter = std::filesystem::directory_iterator(m_szBasePath, ec);
         !ec && iter != std::filesystem::directory_iterator(); ++iter) {
-      iteratedFs = true;
       if (iter->is_regular_file(ec)) {
          string szFilename = iter->path().filename().string();
          if (!szFilename.empty() && szFilename[0] != '.') {
@@ -71,16 +66,6 @@ PUPPlaylist::PUPPlaylist(PUPManager* manager, const string& szFolder, const stri
          }
       }
    }
-#ifdef __ANDROID__
-   if (!iteratedFs) {
-      for (const auto& szFilename : AndroidSAF::ListDirectory(m_szBasePath)) {
-         if (!szFilename.empty() && szFilename[0] != '.') {
-            m_files.push_back(szFilename);
-            m_fileMap[lowerCase(szFilename)] = szFilename;
-         }
-      }
-   }
-#endif
    std::ranges::sort(m_files.begin(), m_files.end());
 }
 
@@ -105,10 +90,8 @@ PUPPlaylist* PUPPlaylist::CreateFromCSV(PUPManager* manager, const string& line)
 
    bool hasFiles = false;
    std::error_code ec;
-   bool iteratedFs = false;
    for (auto iter = std::filesystem::directory_iterator(szFolderPath, ec);
         !ec && iter != std::filesystem::directory_iterator(); ++iter) {
-      iteratedFs = true;
       if (iter->is_regular_file(ec)) {
          string szFilename = iter->path().filename().string();
          if (!szFilename.empty() && szFilename[0] != '.') {
@@ -117,16 +100,6 @@ PUPPlaylist* PUPPlaylist::CreateFromCSV(PUPManager* manager, const string& line)
          }
       }
    }
-#ifdef __ANDROID__
-   if (!iteratedFs) {
-      for (const auto& szFilename : AndroidSAF::ListDirectory(szFolderPath)) {
-         if (!szFilename.empty() && szFilename[0] != '.') {
-            hasFiles = true;
-            break;
-         }
-      }
-   }
-#endif
 
    if (!hasFiles) {
       // TODO add to a pup pack audit, we log as info as not a big deal.

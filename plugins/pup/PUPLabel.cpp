@@ -10,11 +10,6 @@
 #include "PUPScreen.h"
 #include "PUPPlaylist.h"
 #include "PUPManager.h"
-#ifdef __ANDROID__
-#include <vector>
-#include <cstdint>
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 #pragma warning(push)
 #pragma warning(disable : 4267)
@@ -538,17 +533,6 @@ PUPLabel::RenderState PUPLabel::UpdateImageTexture(PUP_LABEL_TYPE type, const st
    if (type == PUP_LABEL_TYPE_IMAGE)
    {
       SDL_Surface* image = IMG_Load(szPath.c_str());
-#ifdef __ANDROID__
-      if (!image)
-      {
-         std::vector<uint8_t> data = AndroidSAF::ReadFile(szPath);
-         if (!data.empty())
-         {
-            if (SDL_IOStream* io = SDL_IOFromConstMem(data.data(), data.size()))
-               image = IMG_Load_IO(io, true);
-         }
-      }
-#endif
       if (image && image->format != SDL_PIXELFORMAT_RGBA32) {
          SDL_Surface* newImage = SDL_ConvertSurface(image, SDL_PIXELFORMAT_RGBA32);
          SDL_DestroySurface(image);
@@ -566,17 +550,6 @@ PUPLabel::RenderState PUPLabel::UpdateImageTexture(PUP_LABEL_TYPE type, const st
    else if (type == PUP_LABEL_TYPE_GIF)
    {
       rs.m_pAnimation = IMG_LoadAnimation(szPath.c_str());
-#ifdef __ANDROID__
-      if (!rs.m_pAnimation)
-      {
-         std::vector<uint8_t> data = AndroidSAF::ReadFile(szPath);
-         if (!data.empty())
-         {
-            if (SDL_IOStream* io = SDL_IOFromConstMem(data.data(), data.size()))
-               rs.m_pAnimation = IMG_LoadAnimation_IO(io, true);
-         }
-      }
-#endif
       if (rs.m_pAnimation) {
          SDL_Surface* image = rs.m_pAnimation->frames[0];
          if (image) {

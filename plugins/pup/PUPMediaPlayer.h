@@ -56,10 +56,6 @@ private:
    double m_pauseTimestamp = 0.0;
 
    AVFormatContext* m_pFormatContext = nullptr;
-#ifdef __ANDROID__
-   int m_safFd = -1;
-   AVIOContext* m_pSafAvioContext = nullptr;
-#endif
 
    int m_videoStream = -1;
    AVCodecContext* m_pVideoContext = nullptr;

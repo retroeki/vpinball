@@ -7,12 +7,6 @@
 
 #include <filesystem>
 #include <fstream>
-#ifdef __ANDROID__
-#include <mutex>
-#include <vector>
-#include <cstdint>
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 // External function to store video source dimensions for JNI queries
 extern "C" void SetPUPVideoSourceSize(int width, int height);
@@ -126,20 +120,12 @@ void PUPManager::LoadConfig(const string& szRomName)
    string szScreensPath = find_case_insensitive_file_path(m_szPath + "screens.pup");
    if (!szScreensPath.empty()) {
       std::ifstream fsStream;
-      std::unique_ptr<std::istream> safStream;
       std::istream* in = nullptr;
 
       fsStream.open(szScreensPath, std::ifstream::in);
       if (fsStream.is_open()) {
          in = &fsStream;
       }
-#ifdef __ANDROID__
-      else {
-         safStream = AndroidSAF::OpenFileAsStream(szScreensPath);
-         if (safStream)
-            in = safStream.get();
-      }
-#endif
 
       if (in) {
          string line;
@@ -249,53 +235,18 @@ void PUPManager::LoadFonts()
          if (extension_from_path(szFontPath) != "ttf")
             return;
          TTF_Font* pFont = TTF_OpenFont(szFontPath.c_str(), 8);
-#ifdef __ANDROID__
-         if (!pFont)
-         {
-            // SDL_ttf's internal IO can't see SAF paths on Android.
-            // Read bytes via SAF and feed them through SDL_IOFromConstMem.
-            // Fonts are held for the session, so stash bytes in a static buffer.
-            static std::mutex s_fontBufMutex;
-            static std::vector<std::vector<uint8_t>> s_fontBuffers;
-            std::vector<uint8_t> data = AndroidSAF::ReadFile(szFontPath);
-            if (!data.empty())
-            {
-               std::vector<uint8_t>* persistent;
-               {
-                  std::lock_guard<std::mutex> lock(s_fontBufMutex);
-                  s_fontBuffers.push_back(std::move(data));
-                  persistent = &s_fontBuffers.back();
-               }
-               if (SDL_IOStream* io = SDL_IOFromConstMem(persistent->data(), persistent->size()))
-                  pFont = TTF_OpenFontIO(io, true, 8);
-            }
-         }
-#endif
          if (pFont)
             AddFont(pFont, szFileName);
          else
             LOGE("Failed to load font: %s %s", szFontPath.c_str(), SDL_GetError());
       };
 
-      bool iteratedFs = false;
       for (auto iter = std::filesystem::directory_iterator(szFontsPath, ec);
            !ec && iter != std::filesystem::directory_iterator(); ++iter)
       {
-         iteratedFs = true;
          if (iter->is_regular_file(ec))
             loadFont(iter->path().string(), iter->path().filename().string());
       }
-#ifdef __ANDROID__
-      if (!iteratedFs)
-      {
-         for (const auto& name : AndroidSAF::ListDirectory(szFontsPath))
-         {
-            if (name.empty() || name[0] == '.')
-               continue;
-            loadFont(szFontsPath + name, name);
-         }
-      }
-#endif
    }
    else
    {
@@ -310,20 +261,12 @@ void PUPManager::LoadPlaylists()
       return;
 
    std::ifstream fsStream;
-   std::unique_ptr<std::istream> safStream;
    std::istream* in = nullptr;
 
    fsStream.open(szPlaylistsPath, std::ifstream::in);
    if (fsStream.is_open()) {
       in = &fsStream;
    }
-#ifdef __ANDROID__
-   else {
-      safStream = AndroidSAF::OpenFileAsStream(szPlaylistsPath);
-      if (safStream)
-         in = safStream.get();
-   }
-#endif
 
    if (!in) {
       LOGE("Unable to load %s", szPlaylistsPath.c_str());

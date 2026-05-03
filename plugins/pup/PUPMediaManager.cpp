@@ -4,11 +4,6 @@
 #include "PUPScreen.h"
 
 #include <SDL3_image/SDL_image.h>
-#ifdef __ANDROID__
-#include <vector>
-#include <cstdint>
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 namespace PUP {
 
@@ -167,17 +162,6 @@ void PUPMediaManager::SetMask(const string& path)
    // Defines a transparency mask from the pixel at 0,0 that is applied to the rendering inside this screen
    m_mask.reset();
    SDL_Surface* pRawMask = IMG_Load(path.c_str());
-#ifdef __ANDROID__
-   if (!pRawMask)
-   {
-      std::vector<uint8_t> data = AndroidSAF::ReadFile(path);
-      if (!data.empty())
-      {
-         if (SDL_IOStream* io = SDL_IOFromConstMem(data.data(), data.size()))
-            pRawMask = IMG_Load_IO(io, true);
-      }
-   }
-#endif
    m_mask = std::shared_ptr<SDL_Surface>(pRawMask, SDL_DestroySurface);
    if (m_mask && m_mask->format != SDL_PIXELFORMAT_RGBA32)
       m_mask = std::shared_ptr<SDL_Surface>(SDL_ConvertSurface(m_mask.get(), SDL_PIXELFORMAT_RGBA32), SDL_DestroySurface);

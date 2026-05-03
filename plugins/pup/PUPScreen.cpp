@@ -7,9 +7,6 @@
 #include "PUPPlaylist.h"
 #include "PUPLabel.h"
 #include "PUPMediaManager.h"
-#ifdef __ANDROID__
-#include "../../lib/bindings/java/jni/AndroidSAFBridge.h"
-#endif
 
 namespace PUP {
 
@@ -135,20 +132,12 @@ void PUPScreen::LoadTriggers()
       return;
 
    std::ifstream fsStream;
-   std::unique_ptr<std::istream> safStream;
    std::istream* in = nullptr;
 
    fsStream.open(szPlaylistsPath, std::ifstream::in);
    if (fsStream.is_open()) {
       in = &fsStream;
    }
-#ifdef __ANDROID__
-   else {
-      safStream = AndroidSAF::OpenFileAsStream(szPlaylistsPath);
-      if (safStream)
-         in = safStream.get();
-   }
-#endif
 
    if (!in) {
       LOGE("Unable to load %s", szPlaylistsPath.c_str());
