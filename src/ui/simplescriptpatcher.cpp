@@ -255,24 +255,33 @@ std::string SimpleScriptPatcher::PatchMultiplicationInSubCall(const std::string&
     std::string r = script;
     int count = 0;
 
-    // Match: SubName (expr)*number at statement position
-    // Transform to: SubName number*(expr)
+    // Match: Callee (expr)*number at statement position
+    // Transform to: Callee number*(expr)
     // Example: AddScore (Score+100)*2 -> AddScore 2*(Score+100)
     //
+    // The callee permits dotted method chains with one level of inner-paren args, so
+    // patterns like `DMDScene.GetImage("Dig" & i).SetBounds (i-20)*8, ...` (DUCKTALES,
+    // FNAF) and `vpmTimer.AddTimer (ii-1)*200, ...` (Indy Hannibal) are matched. The
+    // inner-paren content `[^()]*` does not handle nested parens — a chain whose
+    // method args contain another `(...)` (e.g. Defender's `cstr(i)`) is left to
+    // PatchAmbiguousCallParens.
+    //
     // IMPORTANT: We must NOT match array accesses like BGArray(x,y) = value
-    // The pattern uses [^),]+ to exclude expressions with commas (multi-index arrays)
-    // We also check in the callback for trailing = or ( which indicate array access
-    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*)(\w+)[ \t]+\(([^),]+)\)\s*\*\s*(\d+)([ \t]*[^\r\n]*))");
+    // The pattern uses [^),]+ to exclude expressions with commas (multi-index arrays).
+    // The trailing-char guard below additionally blocks ( = ) which indicate array
+    // access / assignment / outer expression. A trailing `,` is allowed because it is
+    // the multi-arg sub-call form (which is the *common* Bug 54177 case).
+    static const RE2 p(R"((?im)(^[ \t]*|:[ \t]*)(\w+(?:\.\w+(?:\([^()]*\))?)*)[ \t]+\(([^),]+)\)\s*\*\s*(\d+)([ \t]*[^\r\n]*))");
 
     r = RE2ReplaceWithCallback(r, p, [&count](const RE2Match& m) -> std::string {
         std::string trailing = m[5];
-        // Don't transform if followed by ( or = or , or )
+        // Don't transform if followed by ( or = or )
         // These indicate array access/assignment or we're inside a larger expression
         if (!trailing.empty()) {
             size_t firstNonSpace = trailing.find_first_not_of(" \t");
             if (firstNonSpace != std::string::npos) {
                 char nextChar = trailing[firstNonSpace];
-                if (nextChar == '(' || nextChar == '=' || nextChar == ',' || nextChar == ')') {
+                if (nextChar == '(' || nextChar == '=' || nextChar == ')') {
                     // This is likely an array access or inside expression - don't transform
                     return std::string(m[0]);  // Return original unchanged
                 }
@@ -1002,15 +1011,27 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
     int totalCount = 0;
 
     // Step 1a: Convert DT variable Array() initialization to class instantiation
-    // Pattern: DT1 = Array(primary, secondary, prim, sw, animate)
-    // To: Set DT1 = (new DropTarget)(primary, secondary, prim, sw, animate)
+    // Pattern: DT1 = Array(primary, secondary, prim, sw, animate[, isDropped])
+    // 5-arg: Set DT1 = (new DropTarget)(args) - uses default init()
+    // 6-arg: Set DT1 = (New DropTarget).Init6(args) - uses Init6() (no empty parens!)
     // Wine compiler fix in compile.c handles (new ClassName)(args) by calling Init explicitly
     // Match DT followed by digits and optional letters (DT1, DT54a) - NOT DTArray!
     // DT\d+\w* matches DT1, DT54, DT54a but not DTArray (which has no digit after DT)
     static const RE2 arrayInit(R"((?im)(^[ \t]*)(DT\d+\w*)\s*=\s*Array\s*\(([^)]+)\))");
     r = RE2ReplaceWithCallback(r, arrayInit, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
-        return m[1] + "Set " + m[2] + " = (new DropTarget)(" + m[3] + ")";
+        std::string args = m[3];
+        // Count commas to determine if 5 or 6 args
+        int commaCount = 0;
+        for (char c : args) {
+            if (c == ',') commaCount++;
+        }
+        if (commaCount >= 5) {
+            // 6+ args - use Init6 (no empty parens - that would call default init with 0 args!)
+            return m[1] + "Set " + m[2] + " = (New DropTarget).Init6(" + args + ")";
+        }
+        // 5 args (4 commas) - use default init via (new Class)(args)
+        return m[1] + "Set " + m[2] + " = (new DropTarget)(" + args + ")";
     });
 
     // Step 1b: Convert inline Array() calls inside DTArray = Array(...) initialization
@@ -1033,10 +1054,14 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
             for (char c : args) {
                 if (c == ',') commaCount++;
             }
-            // DT elements have 5-6 args (primary, secondary, prim, sw, animate[, isDropped])
-            if (commaCount >= 4 && commaCount <= 5) {
+            // DT elements have 5 args (4 commas) or 6 args (5 commas) — 6th is isDropped
+            if (commaCount == 4) {
                 totalCount++;
                 return "(new DropTarget)(" + args + ")";
+            } else if (commaCount == 5) {
+                totalCount++;
+                // No empty parens - that would call default init with 0 args!
+                return "(New DropTarget).Init6(" + args + ")";
             }
             return std::string(inner[0]);
         });
@@ -2159,6 +2184,7 @@ Class DropTarget
   Public Property Get IsDropped(): IsDropped = m_isDropped: End Property
   Public Property Let IsDropped(input): m_isDropped = input: End Property
 
+  ' 5-arg version for VPW tables with Array(primary, secondary, prim, sw, animate)
   Public default Function init(primary, secondary, prim, sw, animate)
     Set m_primary = primary
     Set m_secondary = secondary
@@ -2167,6 +2193,18 @@ Class DropTarget
     m_animate = animate
     m_isDropped = False
     Set Init = Me
+  End Function
+
+  ' 6-arg version called via Init6 for tables with isDropped field
+  ' (e.g. Halloween 1978-1981 (Original 2022) uses Array(primary, secondary, prim, sw, animate, isDropped))
+  Public Function Init6(primary, secondary, prim, sw, animate, isDropped)
+    Set m_primary = primary
+    Set m_secondary = secondary
+    Set m_prim = prim
+    m_sw = sw
+    m_animate = animate
+    m_isDropped = isDropped
+    Set Init6 = Me
   End Function
 End Class
 
