@@ -549,6 +549,18 @@ void VPinballLib::SetEventCallback(VPinballEventCallback callback)
                jsonData = jsonString.c_str();
                break;
             }
+            case VPINBALL_EVENT_WEB_UPLOAD: {
+               WebUploadData* webUploadData = (WebUploadData*)data;
+               if (webUploadData) {
+                  j["folder"] = webUploadData->folder;
+                  j["file"] = webUploadData->file;
+                  j["bytesWritten"] = webUploadData->bytesWritten;
+                  j["totalBytes"] = webUploadData->totalBytes;
+               }
+               jsonString = j.dump();
+               jsonData = jsonString.c_str();
+               break;
+            }
             case VPINBALL_EVENT_COMMAND: {
                CommandData* commandData = (CommandData*)data;
                j["command"] = commandData->command;

@@ -38,6 +38,13 @@ struct WebServerData {
    string url;
 };
 
+struct WebUploadData {
+   string folder;       // path relative to web-root, e.g. "tables" or "" for root
+   string file;         // bare filename, e.g. "AFM_v1.vpx"
+   uint64_t bytesWritten; // cumulative bytes received so far
+   uint64_t totalBytes;   // total file size advertised by client (?length=...)
+};
+
 struct CommandData {
    string command;
    string data;

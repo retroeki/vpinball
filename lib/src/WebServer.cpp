@@ -397,7 +397,24 @@ void WebServer::Upload(struct mg_connection *c, struct mg_http_message* hm)
 
    string path = BuildPrefPath(q);
 
-   if (mg_http_upload(c, hm, &mg_fs_posix, path.c_str(), 1024 * 1024 * 500) == length) {
+   const long bytesWritten = mg_http_upload(c, hm, &mg_fs_posix, path.c_str(), 1024 * 1024 * 500);
+
+   // Per-chunk progress event so the host can render an upload indicator on
+   // the matching library row. mg_http_upload returns the cumulative size of
+   // the file on disk after this chunk; pair that with the client-reported
+   // ?length=... total to derive a percentage. The web client also sends an
+   // empty-body tail POST after the last data chunk to flush — mg_http_upload
+   // returns 0 for that one, which would yank the UI back to 0%, so skip it.
+   if (bytesWritten > 0 && length > 0) {
+      VPinballLib::WebUploadData uploadData;
+      uploadData.folder = q;
+      uploadData.file = file;
+      uploadData.bytesWritten = static_cast<uint64_t>(bytesWritten);
+      uploadData.totalBytes = static_cast<uint64_t>(length);
+      VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_WEB_UPLOAD, &uploadData);
+   }
+
+   if (bytesWritten == length) {
       if (*q == '\0' && file == "VPinballX.ini") {
          g_pvp->m_settings.SetIniPath(path);
          g_pvp->m_settings.Load(true);

@@ -49,7 +49,10 @@ typedef enum {
    VPINBALL_EVENT_WEB_SERVER,
    VPINBALL_EVENT_COMMAND,
    VPINBALL_EVENT_MENU_PRESSED,
-   VPINBALL_EVENT_FATAL_ERROR  // Unrecoverable error (GPU/shader/crash) - player will close after this
+   VPINBALL_EVENT_FATAL_ERROR, // Unrecoverable error (GPU/shader/crash) - player will close after this
+   // Per-chunk web-server upload progress. Fires once per /upload POST so
+   // hosts can render an in-flight indicator on the matching library row.
+   VPINBALL_EVENT_WEB_UPLOAD
 } VPINBALL_EVENT;
 
 // Callbacks
