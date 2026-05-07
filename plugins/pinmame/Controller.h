@@ -64,6 +64,18 @@ public:
    void SetDip(int nNo, int state) { PinmameSetDIP(nNo, state); }
    bool GetSolenoid(int nSolenoid) const { return PinmameGetSolenoid(nSolenoid); }
    bool GetLamp(int nLamp) const { return PinmameGetLamp(nLamp); }
+   // LampCallback is a deprecated VPinMAME accessor that some tables
+   // (e.g. Who Dunnit (Bally 2021)) use as a synonym for Lamp(n). On real
+   // VPinMAME the two return the same value; passthrough.
+   bool GetLampCallback(int n) const { return PinmameGetLamp(n); }
+   // B2S Server passthrough shortcuts. On Windows VPinMAME the Controller
+   // forwards these to the registered B2S Server so the backglass display
+   // updates. Android has no backglass, so no-op stubs let the script run
+   // without crashing while losing nothing visible to the phone user.
+   // FORGE (B2SSetScore), WoZ (B2SSetData) hit these without On Error
+   // Resume Next, so unbinding them killed the table at table_init.
+   void B2SSetScore(int /*score_id*/, int /*value*/) const {}
+   void B2SSetData(int /*data_id*/, int /*value*/) const {}
    int GetGIString(int nString) const { return PinmameGetGI(nString); }
    std::vector<uint8_t> GetNVRAM() const;
    int GetRawDmdWidth();
