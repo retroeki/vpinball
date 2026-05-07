@@ -13,7 +13,7 @@ const AntiStretchHelper Ball::m_ash;
 unsigned int Ball::m_nextBallID = 0;
 unsigned int Ball::GetNextBallID() { unsigned int id = Ball::m_nextBallID; Ball::m_nextBallID++; return id; }
 
-Ball::Ball() : m_id(GetNextBallID())
+Ball::Ball() : m_id(GetNextBallID()), m_scriptId(static_cast<int>(m_id))
 {
    wcsncpy_s(m_wzName, std::size(m_wzName), (L"LiveBall" + std::to_wstring(m_id)).c_str()); // Default name
    m_hitBall.m_d.m_pos = Vertex3Ds(0.f, 0.f, 25.f);
@@ -806,15 +806,13 @@ STDMETHODIMP Ball::put_Mass(float newVal)
 
 STDMETHODIMP Ball::get_ID(int *pVal)
 {
-   *pVal = m_id;
+   *pVal = m_scriptId;
    return S_OK;
 }
 
 STDMETHODIMP Ball::put_ID(int newVal)
 {
-   // ID is not mutable (to guarantee a unique id)
-   if (m_id != newVal)
-      return E_FAIL;
+   m_scriptId = newVal;
    return S_OK;
 }
 

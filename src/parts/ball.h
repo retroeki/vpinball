@@ -221,7 +221,12 @@ private:
    static unsigned int m_nextBallID; // increased for each ball created to have an unique ID for scripts for each ball
    static unsigned int GetNextBallID();
 
-   const unsigned int m_id; // unique ID for each ball
+   const unsigned int m_id; // unique ID for each ball (engine-internal, immutable)
+   int m_scriptId; // script-visible ID. Defaults to m_id but writable from VBScript
+                   // (`ball.id = N`). Wine VBScript propagates put_ID's HRESULT
+                   // as a fatal runtime error, whereas MS VBScript swallows it,
+                   // so refusing the write would crash any table that tags balls
+                   // by id (AC-DC LUCI: CageBall.ID=1000, Cirqus Voltaire, etc).
    PinTable *m_ptable = nullptr;
    RenderDevice *m_rd = nullptr;
    ITexManCacheable *m_pinballEnv = nullptr;
