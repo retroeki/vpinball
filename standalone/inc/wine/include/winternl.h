@@ -659,27 +659,6 @@ typedef struct _TEB
 /***********************************************************************
  * The 32-bit/64-bit version of the PEB and TEB for WoW64
  */
-typedef struct _NT_TIB32
-{
-    ULONG ExceptionList;        /* 0000 */
-    ULONG StackBase;            /* 0004 */
-    ULONG StackLimit;           /* 0008 */
-    ULONG SubSystemTib;         /* 000c */
-    ULONG FiberData;            /* 0010 */
-    ULONG ArbitraryUserPointer; /* 0014 */
-    ULONG Self;                 /* 0018 */
-} NT_TIB32;
-
-typedef struct _NT_TIB64
-{
-    ULONG64 ExceptionList;        /* 0000 */
-    ULONG64 StackBase;            /* 0008 */
-    ULONG64 StackLimit;           /* 0010 */
-    ULONG64 SubSystemTib;         /* 0018 */
-    ULONG64 FiberData;            /* 0020 */
-    ULONG64 ArbitraryUserPointer; /* 0028 */
-    ULONG64 Self;                 /* 0030 */
-} NT_TIB64;
 
 typedef struct _CLIENT_ID32
 {
@@ -1364,81 +1343,88 @@ C_ASSERT( sizeof(TEB) == sizeof(TEB32) );
 
 typedef enum _FILE_INFORMATION_CLASS {
     FileDirectoryInformation = 1,
-    FileFullDirectoryInformation,
-    FileBothDirectoryInformation,
-    FileBasicInformation,
-    FileStandardInformation,
-    FileInternalInformation,
-    FileEaInformation,
-    FileAccessInformation,
-    FileNameInformation,
-    FileRenameInformation,
-    FileLinkInformation,
-    FileNamesInformation,
-    FileDispositionInformation,
-    FilePositionInformation,
-    FileFullEaInformation,
-    FileModeInformation,
-    FileAlignmentInformation,
-    FileAllInformation,
-    FileAllocationInformation,
-    FileEndOfFileInformation,
-    FileAlternateNameInformation,
-    FileStreamInformation,
-    FilePipeInformation,
-    FilePipeLocalInformation,
-    FilePipeRemoteInformation,
-    FileMailslotQueryInformation,
-    FileMailslotSetInformation,
-    FileCompressionInformation,
-    FileObjectIdInformation,
-    FileCompletionInformation,
-    FileMoveClusterInformation,
-    FileQuotaInformation,
-    FileReparsePointInformation,
-    FileNetworkOpenInformation,
-    FileAttributeTagInformation,
-    FileTrackingInformation,
-    FileIdBothDirectoryInformation,
-    FileIdFullDirectoryInformation,
-    FileValidDataLengthInformation,
-    FileShortNameInformation,
-    FileIoCompletionNotificationInformation,
-    FileIoStatusBlockRangeInformation,
-    FileIoPriorityHintInformation,
-    FileSfioReserveInformation,
-    FileSfioVolumeInformation,
-    FileHardLinkInformation,
-    FileProcessIdsUsingFileInformation,
-    FileNormalizedNameInformation,
-    FileNetworkPhysicalNameInformation,
-    FileIdGlobalTxDirectoryInformation,
-    FileIsRemoteDeviceInformation,
-    FileAttributeCacheInformation,
-    FileNumaNodeInformation,
-    FileStandardLinkInformation,
-    FileRemoteProtocolInformation,
-    FileRenameInformationBypassAccessCheck,
-    FileLinkInformationBypassAccessCheck,
-    FileVolumeNameInformation,
-    FileIdInformation,
-    FileIdExtdDirectoryInformation,
-    FileReplaceCompletionInformation,
-    FileHardLinkFullIdInformation,
-    FileIdExtdBothDirectoryInformation,
-    FileDispositionInformationEx,
-    FileRenameInformationEx,
-    FileRenameInformationExBypassAccessCheck,
-    FileDesiredStorageClassInformation,
-    FileStatInformation,
-    FileMemoryPartitionInformation,
-    FileStatLxInformation,
-    FileCaseSensitiveInformation,
-    FileLinkInformationEx,
-    FileLinkInformationExBypassAccessCheck,
-    FileStorageReserveIdInformation,
-    FileCaseSensitiveInformationForceAccessCheck,
-    FileKnownFolderInformation,
+    FileFullDirectoryInformation = 2,
+    FileBothDirectoryInformation = 3,
+    FileBasicInformation = 4,
+    FileStandardInformation = 5,
+    FileInternalInformation = 6,
+    FileEaInformation = 7,
+    FileAccessInformation = 8,
+    FileNameInformation = 9,
+    FileRenameInformation = 10,
+    FileLinkInformation = 11,
+    FileNamesInformation = 12,
+    FileDispositionInformation = 13,
+    FilePositionInformation = 14,
+    FileFullEaInformation = 15,
+    FileModeInformation = 16,
+    FileAlignmentInformation = 17,
+    FileAllInformation = 18,
+    FileAllocationInformation = 19,
+    FileEndOfFileInformation = 20,
+    FileAlternateNameInformation = 21,
+    FileStreamInformation = 22,
+    FilePipeInformation = 23,
+    FilePipeLocalInformation = 24,
+    FilePipeRemoteInformation = 25,
+    FileMailslotQueryInformation = 26,
+    FileMailslotSetInformation = 27,
+    FileCompressionInformation = 28,
+    FileObjectIdInformation = 29,
+    FileCompletionInformation = 30,
+    FileMoveClusterInformation = 31,
+    FileQuotaInformation = 32,
+    FileReparsePointInformation = 33,
+    FileNetworkOpenInformation = 34,
+    FileAttributeTagInformation = 35,
+    FileTrackingInformation = 36,
+    FileIdBothDirectoryInformation = 37,
+    FileIdFullDirectoryInformation = 38,
+    FileValidDataLengthInformation = 39,
+    FileShortNameInformation = 40,
+    FileIoCompletionNotificationInformation = 41,
+    FileIoStatusBlockRangeInformation = 42,
+    FileIoPriorityHintInformation = 43,
+    FileSfioReserveInformation = 44,
+    FileSfioVolumeInformation = 45,
+    FileHardLinkInformation = 46,
+    FileProcessIdsUsingFileInformation = 47,
+    FileNormalizedNameInformation = 48,
+    FileNetworkPhysicalNameInformation = 49,
+    FileIdGlobalTxDirectoryInformation = 50,
+    FileIsRemoteDeviceInformation = 51,
+    FileAttributeCacheInformation = 52,
+    FileNumaNodeInformation = 53,
+    FileStandardLinkInformation = 54,
+    FileRemoteProtocolInformation = 55,
+    FileRenameInformationBypassAccessCheck = 56,
+    FileLinkInformationBypassAccessCheck = 57,
+    FileVolumeNameInformation = 58,
+    FileIdInformation = 59,
+    FileIdExtdDirectoryInformation = 60,
+    FileReplaceCompletionInformation = 61,
+    FileHardLinkFullIdInformation = 62,
+    FileIdExtdBothDirectoryInformation = 63,
+    FileDispositionInformationEx = 64,
+    FileRenameInformationEx = 65,
+    FileRenameInformationExBypassAccessCheck = 66,
+    FileDesiredStorageClassInformation = 67,
+    FileStatInformation = 68,
+    FileMemoryPartitionInformation = 69,
+    FileStatLxInformation = 70,
+    FileCaseSensitiveInformation = 71,
+    FileLinkInformationEx = 72,
+    FileLinkInformationExBypassAccessCheck = 73,
+    FileStorageReserveIdInformation = 74,
+    FileCaseSensitiveInformationForceAccessCheck = 75,
+    FileKnownFolderInformation = 76,
+    FileStatBasicInformation = 77,
+    FileId64ExtdDirectoryInformation = 78,
+    FileId64ExtdBothDirectoryInformation = 79,
+    FileIdAllExtdDirectoryInformation = 80,
+    FileIdAllExtdBothDirectoryInformation = 81,
+    FileStreamReservationInformation = 82,
+    FileMupProviderInfo = 83,
     FileMaximumInformation,
 #ifdef __WINESRC__
     WineFileUnixNameInformation = 1000
@@ -1813,6 +1799,44 @@ typedef struct _FILE_IO_COMPLETION_NOTIFICATION_INFORMATION {
 #define FILE_SKIP_SET_EVENT_ON_HANDLE        0x2
 #define FILE_SKIP_SET_USER_EVENT_ON_FAST_IO  0x4
 
+typedef struct _FILE_ID_EXTD_DIRECTORY_INFORMATION
+{
+    ULONG               NextEntryOffset;
+    ULONG               FileIndex;
+    LARGE_INTEGER       CreationTime;
+    LARGE_INTEGER       LastAccessTime;
+    LARGE_INTEGER       LastWriteTime;
+    LARGE_INTEGER       ChangeTime;
+    LARGE_INTEGER       EndOfFile;
+    LARGE_INTEGER       AllocationSize;
+    ULONG               FileAttributes;
+    ULONG               FileNameLength;
+    ULONG               EaSize;
+    ULONG               ReparsePointTag;
+    FILE_ID_128         FileId;
+    WCHAR               FileName[ANYSIZE_ARRAY];
+} FILE_ID_EXTD_DIRECTORY_INFORMATION, *PFILE_ID_EXTD_DIRECTORY_INFORMATION;
+
+typedef struct _FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION
+{
+    ULONG               NextEntryOffset;
+    ULONG               FileIndex;
+    LARGE_INTEGER       CreationTime;
+    LARGE_INTEGER       LastAccessTime;
+    LARGE_INTEGER       LastWriteTime;
+    LARGE_INTEGER       ChangeTime;
+    LARGE_INTEGER       EndOfFile;
+    LARGE_INTEGER       AllocationSize;
+    ULONG               FileAttributes;
+    ULONG               FileNameLength;
+    ULONG               EaSize;
+    ULONG               ReparsePointTag;
+    FILE_ID_128         FileId;
+    CHAR                ShortNameLength;
+    WCHAR               ShortName[12];
+    WCHAR               FileName[ANYSIZE_ARRAY];
+} FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION, *PFILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION;
+
 #ifdef __WINESRC__
 /* data for WineFileUnixNameInformation */
 typedef struct
@@ -1993,6 +2017,12 @@ typedef enum _PROCESSINFOCLASS {
     ProcessMembershipInformation = 109,
     ProcessEffectiveIoPriority = 110,
     ProcessEffectivePagePriority = 111,
+    ProcessSchedulerSharedData = 112,
+    ProcessSlistRollbackInformation = 113,
+    ProcessNetworkIoCounters = 114,
+    ProcessFindFirstThreadByTebValue = 115,
+    ProcessEnclaveAddressSpaceRestriction = 116,
+    ProcessAvailableCpus = 117,
     MaxProcessInfoClass,
 #ifdef __WINESRC__
     ProcessWineMakeProcessSystem = 1000,
@@ -2252,6 +2282,21 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemPointerAuthInformation = 236,
     SystemSecureKernelDebuggerInformation = 237,
     SystemOriginalImageFeatureInformation = 238,
+    SystemMemoryNumaInformation = 239,
+    SystemMemoryNumaPerformanceInformation = 240,
+    SystemCodeIntegritySignedPoliciesFullInformation = 241,
+    SystemSecureCoreInformation = 242,
+    SystemTrustedAppsRuntimeInformation = 243,
+    SystemBadPageInformationEx = 244,
+    SystemResourceDeadlockTimeout = 245,
+    SystemBreakOnContextUnwindFailureInformation = 246,
+    SystemOslRamdiskInformation = 247,
+    SystemCodeIntegrityPolicyManagementInformation = 248,
+    SystemMemoryNumaCacheInformation = 249,
+    SystemProcessorFeaturesBitMapInformation = 250,
+    SystemRefTraceInformationEx = 251,
+    SystemBasicProcessInformation = 252,
+    SystemHandleCountInformation = 253,
 #ifdef __WINESRC__
     SystemWineVersionInformation = 1000,
 #endif
@@ -2280,61 +2325,65 @@ typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
 
 typedef enum _THREADINFOCLASS {
     ThreadBasicInformation = 0,
-    ThreadTimes,
-    ThreadPriority,
-    ThreadBasePriority,
-    ThreadAffinityMask,
-    ThreadImpersonationToken,
-    ThreadDescriptorTableEntry,
-    ThreadEnableAlignmentFaultFixup,
-    ThreadEventPair_Reusable,
-    ThreadQuerySetWin32StartAddress,
-    ThreadZeroTlsCell,
-    ThreadPerformanceCount,
-    ThreadAmILastThread,
-    ThreadIdealProcessor,
-    ThreadPriorityBoost,
-    ThreadSetTlsArrayAddress,
-    ThreadIsIoPending,
-    ThreadHideFromDebugger,
-    ThreadBreakOnTermination,
-    ThreadSwitchLegacyState,
-    ThreadIsTerminated,
-    ThreadLastSystemCall,
-    ThreadIoPriority,
-    ThreadCycleTime,
-    ThreadPagePriority,
-    ThreadActualBasePriority,
-    ThreadTebInformation,
-    ThreadCSwitchMon,
-    ThreadCSwitchPmu,
-    ThreadWow64Context,
-    ThreadGroupInformation,
-    ThreadUmsInformation,
-    ThreadCounterProfiling,
-    ThreadIdealProcessorEx,
-    ThreadCpuAccountingInformation,
-    ThreadSuspendCount,
-    ThreadHeterogeneousCpuPolicy,
-    ThreadContainerId,
-    ThreadNameInformation,
-    ThreadSelectedCpuSets,
-    ThreadSystemThreadInformation,
-    ThreadActualGroupAffinity,
-    ThreadDynamicCodePolicyInfo,
-    ThreadExplicitCaseSensitivity,
-    ThreadWorkOnBehalfTicket,
-    ThreadSubsystemInformation,
-    ThreadDbgkWerReportActive,
-    ThreadAttachContainer,
-    ThreadManageWritesToExecutableMemory,
-    ThreadPowerThrottlingState,
-    ThreadWorkloadClass,
-    ThreadCreateStateChange,
-    ThreadApplyStateChange,
-    ThreadStrongerBadHandleChecks,
-    ThreadEffectiveIoPriority,
-    ThreadEffectivePagePriority,
+    ThreadTimes = 1,
+    ThreadPriority = 2,
+    ThreadBasePriority = 3,
+    ThreadAffinityMask = 4,
+    ThreadImpersonationToken = 5,
+    ThreadDescriptorTableEntry = 6,
+    ThreadEnableAlignmentFaultFixup = 7,
+    ThreadEventPair_Reusable = 8,
+    ThreadQuerySetWin32StartAddress = 9,
+    ThreadZeroTlsCell = 10,
+    ThreadPerformanceCount = 11,
+    ThreadAmILastThread = 12,
+    ThreadIdealProcessor = 13,
+    ThreadPriorityBoost = 14,
+    ThreadSetTlsArrayAddress = 15,
+    ThreadIsIoPending = 16,
+    ThreadHideFromDebugger = 17,
+    ThreadBreakOnTermination = 18,
+    ThreadSwitchLegacyState = 19,
+    ThreadIsTerminated = 20,
+    ThreadLastSystemCall = 21,
+    ThreadIoPriority = 22,
+    ThreadCycleTime = 23,
+    ThreadPagePriority = 24,
+    ThreadActualBasePriority = 25,
+    ThreadTebInformation = 26,
+    ThreadCSwitchMon = 27,
+    ThreadCSwitchPmu = 28,
+    ThreadWow64Context = 29,
+    ThreadGroupInformation = 30,
+    ThreadUmsInformation = 31,
+    ThreadCounterProfiling = 32,
+    ThreadIdealProcessorEx = 33,
+    ThreadCpuAccountingInformation = 34,
+    ThreadSuspendCount = 35,
+    ThreadHeterogeneousCpuPolicy = 36,
+    ThreadContainerId = 37,
+    ThreadNameInformation = 38,
+    ThreadSelectedCpuSets = 39,
+    ThreadSystemThreadInformation = 40,
+    ThreadActualGroupAffinity = 41,
+    ThreadDynamicCodePolicyInfo = 42,
+    ThreadExplicitCaseSensitivity = 43,
+    ThreadWorkOnBehalfTicket = 44,
+    ThreadSubsystemInformation = 45,
+    ThreadDbgkWerReportActive = 46,
+    ThreadAttachContainer = 47,
+    ThreadManageWritesToExecutableMemory = 48,
+    ThreadPowerThrottlingState= 49,
+    ThreadWorkloadClass = 50,
+    ThreadCreateStateChange = 51,
+    ThreadApplyStateChange = 52,
+    ThreadStrongerBadHandleChecks = 53,
+    ThreadEffectiveIoPriority = 54,
+    ThreadEffectivePagePriority = 55,
+    ThreadUpdateLockOwnership = 56,
+    ThreadSchedulerSharedDataSlot = 57,
+    ThreadTebInformationAtomic = 58,
+    ThreadIndexInformation = 59,
     MaxThreadInfoClass,
 #ifdef __WINESRC__
     ThreadWineNativeThreadName = 1000,
@@ -2383,23 +2432,27 @@ typedef enum _WINSTATIONINFOCLASS {
 } WINSTATIONINFOCLASS;
 
 typedef enum _MEMORY_INFORMATION_CLASS {
-    MemoryBasicInformation,
-    MemoryWorkingSetInformation,
-    MemoryMappedFilenameInformation,
-    MemoryRegionInformation,
-    MemoryWorkingSetExInformation,
-    MemorySharedCommitInformation,
-    MemoryImageInformation,
-    MemoryRegionInformationEx,
-    MemoryPrivilegedBasicInformation,
-    MemoryEnclaveImageInformation,
-    MemoryBasicInformationCapped,
-    MemoryPhysicalContiguityInformation,
-    MemoryBadInformation,
-    MemoryBadInformationAllProcesses,
+    MemoryBasicInformation = 0,
+    MemoryWorkingSetInformation = 1,
+    MemoryMappedFilenameInformation = 2,
+    MemoryRegionInformation = 3,
+    MemoryWorkingSetExInformation = 4,
+    MemorySharedCommitInformation = 5,
+    MemoryImageInformation = 6,
+    MemoryRegionInformationEx = 7,
+    MemoryPrivilegedBasicInformation = 8,
+    MemoryEnclaveImageInformation = 9,
+    MemoryBasicInformationCapped = 10,
+    MemoryPhysicalContiguityInformation = 11,
+    MemoryBadInformation = 12,
+    MemoryBadInformationAllProcesses = 13,
+    MemoryImageExtensionInformation = 14,
 #ifdef __WINESRC__
-    MemoryWineUnixFuncs = 1000,
-    MemoryWineUnixWow64Funcs,
+    MemoryWineLoadUnixLib = 1000,
+    MemoryWineLoadUnixLibWow64,
+    MemoryWineLoadUnixLibByName,
+    MemoryWineLoadUnixLibByNameWow64,
+    MemoryWineUnloadUnixLib,
 #endif
 } MEMORY_INFORMATION_CLASS;
 
@@ -3955,6 +4008,7 @@ typedef union _LDR_DLL_NOTIFICATION_DATA
 typedef void (CALLBACK *PLDR_DLL_NOTIFICATION_FUNCTION)(ULONG, LDR_DLL_NOTIFICATION_DATA*, void*);
 
 /* those defines are (some of the) regular LDR_DATA_TABLE_ENTRY.Flags values */
+#define LDR_DONT_RESOLVE_REFS           0x00000002
 #define LDR_IMAGE_IS_DLL                0x00000004
 #define LDR_LOAD_IN_PROGRESS            0x00001000
 #define LDR_UNLOAD_IN_PROGRESS          0x00002000
@@ -3964,8 +4018,7 @@ typedef void (CALLBACK *PLDR_DLL_NOTIFICATION_FUNCTION)(ULONG, LDR_DLL_NOTIFICAT
 #define LDR_COR_ILONLY                  0x01000000
 #define LDR_REDIRECTED                  0x10000000
 
-/* these ones is Wine specific */
-#define LDR_DONT_RESOLVE_REFS           0x40000000
+/* this one is Wine specific */
 #define LDR_WINE_INTERNAL               0x80000000
 
 /* flag for LdrAddRefDll */
@@ -4094,6 +4147,8 @@ typedef enum _PS_ATTRIBUTE_NUM
     PsAttributeMachineType,
     PsAttributeComponentFilter,
     PsAttributeEnableOptionalXStateFeatures,
+    PsAttributeSupportedMachines,
+    PsAttributeSveVectorLength,
     PsAttributeMax
 } PS_ATTRIBUTE_NUM;
 
@@ -4467,10 +4522,166 @@ typedef struct _KCONTINUE_ARGUMENT
 #define HASH_STRING_ALGORITHM_X65599   1
 #define HASH_STRING_ALGORITHM_INVALID  0xffffffff
 
+/* ALPC */
+/* Connection flags */
+#define ALPC_SYNC_CONNECTION                    0x00020000 /* Synchronous connection request message, note that this doesn't affect normal messages */
+
+/* Port attribute flags */
+#define ALPC_PORTFLG_ALLOWIMPERSONATION         0x00010000 /* Allow server to impersonate the client */
+#define ALPC_PORTFLG_NON_BLOCKING_RECEIVE       0x00040000 /* Return immediately when there is no data to receive */
+#define ALPC_PORTFLG_ALLOW_DUP_OBJECT           0x00080000 /* Allow duplicating objects */
+
+/* Message flags */
+#define ALPC_MSGFLG_NONE                        0x00000000
+#define ALPC_MSGFLG_REPLY_MESSAGE               0x00010000 /* Message is a reply */
+#define ALPC_MSGFLG_SYNC_REQUEST                0x00020000 /* Synchronously send and receive message */
+
+/* Message attribute flags */
+#define ALPC_MESSAGE_SECURITY_ATTRIBUTE         0x80000000
+#define ALPC_MESSAGE_VIEW_ATTRIBUTE             0x40000000
+#define ALPC_MESSAGE_CONTEXT_ATTRIBUTE          0x20000000
+#define ALPC_MESSAGE_HANDLE_ATTRIBUTE           0x10000000
+#define ALPC_MESSAGE_TOKEN_ATTRIBUTE            0x08000000
+#define ALPC_MESSAGE_DIRECT_ATTRIBUTE           0x04000000
+#define ALPC_MESSAGE_WORK_ON_BEHALF_ATTRIBUTE   0x02000000
+#define ALPC_MESSAGE_ATTRIBUTE_ALL              0xfe000000
+
+/* Message types */
+typedef enum _ALPC_MESSAGE_TYPE
+{
+    ALPC_MESSAGE_TYPE_REQUEST = 1,
+    ALPC_MESSAGE_TYPE_REPLY,
+    ALPC_MESSAGE_TYPE_DATAGRAM,
+    ALPC_MESSAGE_TYPE_LOST_REPLY,
+    ALPC_MESSAGE_TYPE_PORT_CLOSED,
+    ALPC_MESSAGE_TYPE_CLIENT_DIED,
+    ALPC_MESSAGE_TYPE_EXCEPTION,
+    ALPC_MESSAGE_TYPE_DEBUG_EVENT,
+    ALPC_MESSAGE_TYPE_ERROR_EVENT,
+    ALPC_MESSAGE_TYPE_CONNECTION_REQUEST,
+    ALPC_MESSAGE_TYPE_CONNECTION_REPLY,
+    ALPC_MESSAGE_TYPE_CANCELED,
+    ALPC_MESSAGE_TYPE_UNREGISTER_PROCESS
+} ALPC_MESSAGE_TYPE;
+
+typedef struct _ALPC_PORT_MESSAGE
+{
+    union
+    {
+        struct
+        {
+            USHORT DataLength;
+            USHORT TotalLength;
+        } DUMMYSTRUCTNAME1;
+        ULONG Length;
+    } DUMMYUNIONNAME1;
+    union
+    {
+        struct
+        {
+            USHORT Type;
+            USHORT DataInfoOffset;
+        } DUMMYSTRUCTNAME2;
+        ULONG ZeroInit;
+    } DUMMYUNIONNAME2;
+    union
+    {
+        CLIENT_ID ClientId;
+        double DoNotUseThisField;
+    } DUMMYUNIONNAME3;
+    ULONG MessageId;
+    union
+    {
+        SIZE_T ClientViewSize;
+        ULONG CallbackId;
+    } DUMMYUNIONNAME4;
+} ALPC_PORT_MESSAGE, *PALPC_PORT_MESSAGE, ALPC_PORT_MESSAGE_HEADER, *PALPC_PORT_MESSAGE_HEADER;
+
+typedef struct _ALPC_MESSAGE_ATTRIBUTES
+{
+    ULONG AllocatedAttributes;
+    ULONG ValidAttributes;
+} ALPC_MESSAGE_ATTRIBUTES, *PALPC_MESSAGE_ATTRIBUTES;
+
+typedef struct _ALPC_SECURITY_ATTR
+{
+    ULONG Flags;
+    SECURITY_QUALITY_OF_SERVICE *QoS;
+    HANDLE ContextHandle;
+} ALPC_SECURITY_ATTR, *PALPC_SECURITY_ATTR;
+
+typedef struct _ALPC_VIEW_ATTR
+{
+    ULONG Flags;
+    HANDLE SectionHandle;
+    void *ViewBase;
+    SIZE_T ViewSize;
+} ALPC_VIEW_ATTR, *PALPC_VIEW_ATTR;
+
+typedef struct _ALPC_CONTEXT_ATTR
+{
+    void *PortContext;
+    void *MessageContext;
+    ULONG Sequence;
+    ULONG MessageId;
+    ULONG CallbackId;
+} ALPC_CONTEXT_ATTR, * PALPC_CONTEXT_ATTR;
+
+typedef struct _ALPC_HANDLE_ATTR
+{
+    ULONG Flags;
+    HANDLE Handle;
+    ULONG ObjectType;
+    ACCESS_MASK DesiredAccess;
+} ALPC_HANDLE_ATTR, *PALPC_HANDLE_ATTR;
+
+typedef struct _ALPC_TOKEN_ATTR
+{
+    ULONGLONG TokenId;
+    ULONGLONG AuthenticationId;
+    ULONGLONG ModifiedId;
+} ALPC_TOKEN_ATTR, *PALPC_TOKEN_ATTR;
+
+typedef struct _ALPC_DIRECT_ATTR
+{
+    HANDLE Event;
+} ALPC_DIRECT_ATTR, *PALPC_DIRECT_ATTR;
+
+typedef struct _ALPC_WORK_ON_BEHALF_ATTR
+{
+    ULONGLONG Ticket;
+} ALPC_WORK_ON_BEHALF_ATTR, *PALPC_WORK_ON_BEHALF_ATTR;
+
+typedef struct _ALPC_BASIC_INFORMATION
+{
+    ULONG Flags;
+    ULONG SequenceNo;
+    PVOID PortContext;
+} ALPC_BASIC_INFORMATION, *PALPC_BASIC_INFORMATION;
+
+typedef struct _ALPC_PORT_ATTRIBUTES
+{
+    ULONG Flags;
+    SECURITY_QUALITY_OF_SERVICE SecurityQos;
+    SIZE_T MaxMessageLength;
+    SIZE_T MemoryBandwidth;
+    SIZE_T MaxPoolUsage;
+    SIZE_T MaxSectionSize;
+    SIZE_T MaxViewSize;
+    SIZE_T MaxTotalSectionSize;
+    ULONG DupObjectTypes;
+#ifdef _WIN64
+    ULONG Reserved;
+#endif
+} ALPC_PORT_ATTRIBUTES, *PALPC_PORT_ATTRIBUTES;
+
 /***********************************************************************
  * Function declarations
  */
 
+NTSYSAPI SIZE_T    WINAPI AlpcGetHeaderSize(ULONG);
+NTSYSAPI void *    WINAPI AlpcGetMessageAttribute(ALPC_MESSAGE_ATTRIBUTES *,ULONG);
+NTSYSAPI NTSTATUS  WINAPI AlpcInitializeMessageAttribute(ULONG,ALPC_MESSAGE_ATTRIBUTES *,SIZE_T,SIZE_T *);
 NTSYSAPI NTSTATUS  WINAPI ApiSetQueryApiSetPresence(const UNICODE_STRING*,BOOLEAN*);
 NTSYSAPI NTSTATUS  WINAPI ApiSetQueryApiSetPresenceEx(const UNICODE_STRING*,BOOLEAN*,BOOLEAN*);
 NTSYSAPI void      WINAPI DbgBreakPoint(void);
@@ -4500,7 +4711,7 @@ NTSYSAPI NTSTATUS  WINAPI LdrGetDllHandle(LPCWSTR, ULONG, const UNICODE_STRING*,
 NTSYSAPI NTSTATUS  WINAPI LdrGetDllHandleEx(ULONG, LPCWSTR, ULONG *, const UNICODE_STRING*, HMODULE*);
 NTSYSAPI NTSTATUS  WINAPI LdrGetDllPath(PCWSTR,ULONG,PWSTR*,PWSTR*);
 NTSYSAPI NTSTATUS  WINAPI LdrGetProcedureAddress(HMODULE, const ANSI_STRING*, ULONG, void**);
-NTSYSAPI NTSTATUS  WINAPI LdrLoadDll(LPCWSTR, DWORD, const UNICODE_STRING*, HMODULE*);
+NTSYSAPI NTSTATUS  WINAPI LdrLoadDll(LPCWSTR, DWORD *, const UNICODE_STRING*, HMODULE*);
 NTSYSAPI NTSTATUS  WINAPI LdrLockLoaderLock(ULONG,ULONG*,ULONG_PTR*);
 IMAGE_BASE_RELOCATION * WINAPI LdrProcessRelocationBlock(void*,UINT,USHORT*,INT_PTR);
 NTSYSAPI NTSTATUS  WINAPI LdrQueryImageFileExecutionOptions(const UNICODE_STRING*,LPCWSTR,ULONG,void*,ULONG,ULONG*);
@@ -4530,6 +4741,18 @@ NTSYSAPI NTSTATUS  WINAPI NtAllocateReserveObject(HANDLE *handle,const OBJECT_AT
 NTSYSAPI NTSTATUS  WINAPI NtAllocateUuids(PULARGE_INTEGER,PULONG,PULONG,PUCHAR);
 NTSYSAPI NTSTATUS  WINAPI NtAllocateVirtualMemory(HANDLE,PVOID*,ULONG_PTR,SIZE_T*,ULONG,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtAllocateVirtualMemoryEx(HANDLE,PVOID*,SIZE_T*,ULONG,ULONG,MEM_EXTENDED_PARAMETER*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcAcceptConnectPort(HANDLE*,HANDLE,DWORD,OBJECT_ATTRIBUTES*,ALPC_PORT_ATTRIBUTES*,void*,ALPC_PORT_MESSAGE*,ALPC_MESSAGE_ATTRIBUTES*,BOOLEAN);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcConnectPort(HANDLE*,UNICODE_STRING*,OBJECT_ATTRIBUTES*,ALPC_PORT_ATTRIBUTES*,DWORD,PSID,ALPC_PORT_MESSAGE*,SIZE_T*, ALPC_MESSAGE_ATTRIBUTES*,ALPC_MESSAGE_ATTRIBUTES*,LARGE_INTEGER*);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcCreatePort(HANDLE*,OBJECT_ATTRIBUTES*,ALPC_PORT_ATTRIBUTES*);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcCreatePortSection(HANDLE,ULONG,HANDLE,SIZE_T,HANDLE*,SIZE_T*);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcCreateSectionView(HANDLE,ULONG,ALPC_VIEW_ATTR *);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcCreateSecurityContext(HANDLE,ULONG,ALPC_SECURITY_ATTR *);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcDeletePortSection(HANDLE, ULONG, HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcDeleteSectionView(HANDLE,ULONG,PVOID);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcDeleteSecurityContext(HANDLE,ULONG,HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcDisconnectPort(HANDLE,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcImpersonateClientOfPort(HANDLE,ALPC_PORT_MESSAGE*,void*);
+NTSYSAPI NTSTATUS  WINAPI NtAlpcSendWaitReceivePort(HANDLE,DWORD,ALPC_PORT_MESSAGE*,ALPC_MESSAGE_ATTRIBUTES*,ALPC_PORT_MESSAGE*, SIZE_T*,ALPC_MESSAGE_ATTRIBUTES*,LARGE_INTEGER*);
 NTSYSAPI NTSTATUS  WINAPI NtAreMappedFilesTheSame(PVOID,PVOID);
 NTSYSAPI NTSTATUS  WINAPI NtAssignProcessToJobObject(HANDLE,HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtCallbackReturn(PVOID,ULONG,NTSTATUS);
@@ -4597,7 +4820,7 @@ NTSYSAPI NTSTATUS  WINAPI NtFlushBuffersFileEx(HANDLE,ULONG,void*,ULONG,IO_STATU
 NTSYSAPI NTSTATUS  WINAPI NtFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
 NTSYSAPI NTSTATUS  WINAPI NtFlushKey(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtFlushProcessWriteBuffers(void);
-NTSYSAPI NTSTATUS  WINAPI NtFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,ULONG);
+NTSYSAPI NTSTATUS  WINAPI NtFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,IO_STATUS_BLOCK*);
 NTSYSAPI NTSTATUS  WINAPI NtFlushWriteBuffer(VOID);
 NTSYSAPI NTSTATUS  WINAPI NtFreeVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtFsControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
@@ -4754,7 +4977,7 @@ NTSYSAPI NTSTATUS  WINAPI NtSetInformationVirtualMemory(HANDLE,VIRTUAL_MEMORY_IN
 NTSYSAPI NTSTATUS  WINAPI NtSetIntervalProfile(ULONG,KPROFILE_SOURCE);
 NTSYSAPI NTSTATUS  WINAPI NtSetIoCompletion(HANDLE,ULONG_PTR,ULONG_PTR,NTSTATUS,SIZE_T);
 NTSYSAPI NTSTATUS  WINAPI NtSetIoCompletionEx(HANDLE,HANDLE,ULONG_PTR,ULONG_PTR,NTSTATUS,SIZE_T);
-NTSYSAPI NTSTATUS  WINAPI NtSetLdtEntries(ULONG,LDT_ENTRY,ULONG,LDT_ENTRY);
+NTSYSAPI NTSTATUS  WINAPI NtSetLdtEntries(ULONG,ULONG,ULONG,ULONG,ULONG,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtSetLowEventPair(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtSetLowWaitHighEventPair(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtSetLowWaitHighThread(VOID);
@@ -4795,6 +5018,7 @@ NTSYSAPI NTSTATUS  WINAPI NtWaitForSingleObject(HANDLE,BOOLEAN,const LARGE_INTEG
 NTSYSAPI NTSTATUS  WINAPI NtWaitForMultipleObjects(ULONG,const HANDLE*,WAIT_TYPE,BOOLEAN,const LARGE_INTEGER*);
 NTSYSAPI NTSTATUS  WINAPI NtWaitHighEventPair(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtWaitLowEventPair(HANDLE);
+NTSYSAPI NTSTATUS  WINAPI NtWorkerFactoryWorkerReady(HANDLE);
 NTSYSAPI NTSTATUS  WINAPI NtWriteFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,const void*,ULONG,PLARGE_INTEGER,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtWriteFileGather(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,FILE_SEGMENT_ELEMENT*,ULONG,PLARGE_INTEGER,PULONG);
 NTSYSAPI NTSTATUS  WINAPI NtWriteRequestData(HANDLE,PLPC_MESSAGE,ULONG,PVOID,ULONG,PULONG);
@@ -5298,6 +5522,10 @@ NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerSubtract(LONGLONG,LONGLONG);
 NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PCHAR);
 #endif
 
+#ifdef WINE_UNIX_LIB
+NTSYSAPI HANDLE    WINAPI PsGetCurrentProcessId(void);
+NTSYSAPI HANDLE    WINAPI PsGetCurrentThreadId(void);
+#endif
 
 /***********************************************************************
  * Inline functions

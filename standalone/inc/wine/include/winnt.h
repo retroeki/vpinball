@@ -499,7 +499,7 @@ typedef ULONG           UCSCHAR;
 /* 'Extended/Wide' numerical types */
 #ifndef _ULONGLONG_
 # define _ULONGLONG_
-# ifdef _MSC_VER
+# if defined(_MSC_VER) || defined(__MINGW32__)
 typedef signed __int64   LONGLONG;
 typedef unsigned __int64 ULONGLONG;
 # else
@@ -620,7 +620,7 @@ typedef DWORD FLONG;
 
 /* Defines */
 
-#ifndef WIN32_NO_STATUS
+#if !defined(WIN32_NO_STATUS) && !defined(UMDF_USING_NTSTATUS) && !defined(_NTSTATUS_)
 
 #define STATUS_WAIT_0                    ((DWORD) 0x00000000)
 #define STATUS_ABANDONED_WAIT_0          ((DWORD) 0x00000080)
@@ -1499,7 +1499,11 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS
 #define XSTATE_AVX512_ZMM_H          6
 #define XSTATE_AVX512_ZMM            7
 #define XSTATE_IPT                   8
+#define XSTATE_PASID                 10
 #define XSTATE_CET_U                 11
+#define XSTATE_CET_S                 12
+#define XSTATE_AMX_TILE_CONFIG       17
+#define XSTATE_AMX_TILE_DATA         18
 #define XSTATE_LWP                   62
 #define MAXIMUM_XSTATE_FEATURES      64
 
@@ -1507,6 +1511,16 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS
 #define XSTATE_MASK_LEGACY_SSE              (1 << XSTATE_LEGACY_SSE)
 #define XSTATE_MASK_LEGACY                  (XSTATE_MASK_LEGACY_FLOATING_POINT | XSTATE_MASK_LEGACY_SSE)
 #define XSTATE_MASK_GSSE                    (1 << XSTATE_GSSE)
+#define XSTATE_MASK_AVX                     XSTATE_MASK_GSSE
+#define XSTATE_MASK_MPX                     ((1 << XSTATE_MPX_BNDREGS) | (1 << XSTATE_MPX_BNDCSR))
+#define XSTATE_MASK_AVX512                  ((1 << XSTATE_AVX512_KMASK) | (1 << XSTATE_AVX512_ZMM_H) | (1 << XSTATE_AVX512_ZMM))
+#define XSTATE_MASK_IPT                     (1 << XSTATE_IPT)
+#define XSTATE_MASK_PASID                   (1 << XSTATE_PASID)
+#define XSTATE_MASK_CET_U                   (1 << XSTATE_CET_U)
+#define XSTATE_MASK_CET_S                   (1 << XSTATE_CET_S)
+#define XSTATE_MASK_AMX_TILE_CONFIG         (1 << XSTATE_AMX_TILE_CONFIG)
+#define XSTATE_MASK_AMX_TILE_DATA           (1 << XSTATE_AMX_TILE_DATA)
+#define XSTATE_MASK_LWP                     ((UINT64)1 << XSTATE_LWP)
 
 typedef struct _XSTATE_FEATURE
 {
@@ -2389,6 +2403,13 @@ typedef void (CALLBACK *PTERMINATION_HANDLER)(BOOLEAN,DWORD64);
 #define EXCEPTION_COLLIDED_UNWIND    0x40
 #define EXCEPTION_SOFTWARE_ORIGINATE 0x80
 
+#define EXCEPTION_UNWIND (EXCEPTION_UNWINDING |EXCEPTION_EXIT_UNWIND \
+                          | EXCEPTION_TARGET_UNWIND | EXCEPTION_COLLIDED_UNWIND)
+
+#define IS_UNWINDING(flags)     ((flags & EXCEPTION_UNWIND) != 0)
+#define IS_DISPATCHING(flags)   ((flags & EXCEPTION_UNWIND) == 0)
+#define IS_TARGET_UNWIND(flags) (flags & EXCEPTION_TARGET_UNWIND)
+
 /*
  * The exception record used by Win32 to give additional information
  * about exception to exception handlers.
@@ -2463,6 +2484,64 @@ typedef struct _EXCEPTION_REGISTRATION_RECORD
 
 typedef LONG (CALLBACK *PVECTORED_EXCEPTION_HANDLER)(PEXCEPTION_POINTERS ExceptionInfo);
 
+/* duplicate the contents of rtlsupportapi.h */
+#ifndef _APISETRTLSUPPORT_
+#define _APISETRTLSUPPORT_
+
+NTSYSAPI void   WINAPI RtlCaptureContext(CONTEXT*);
+NTSYSAPI void   WINAPI RtlCaptureContext2(CONTEXT*);
+NTSYSAPI USHORT WINAPI RtlCaptureStackBackTrace(ULONG,ULONG,void**,ULONG*);
+NTSYSAPI void   WINAPI RtlGetCallersAddress(void**,void**);
+NTSYSAPI void   WINAPI RtlRaiseException(EXCEPTION_RECORD*);
+NTSYSAPI void    CDECL RtlRestoreContext(CONTEXT*,EXCEPTION_RECORD*);
+NTSYSAPI void   WINAPI RtlUnwind(void*,void*,EXCEPTION_RECORD*,void*);
+NTSYSAPI void*  WINAPI RtlPcToFileHeader(void*,void**);
+NTSYSAPI ULONG  WINAPI RtlWalkFrameChain(void**,ULONG,ULONG);
+
+#ifndef __i386__
+
+#define UNWIND_HISTORY_TABLE_SIZE 12
+
+typedef struct _UNWIND_HISTORY_TABLE_ENTRY
+{
+    ULONG_PTR         ImageBase;
+    PRUNTIME_FUNCTION FunctionEntry;
+} UNWIND_HISTORY_TABLE_ENTRY, *PUNWIND_HISTORY_TABLE_ENTRY;
+
+typedef struct _UNWIND_HISTORY_TABLE
+{
+    DWORD     Count;
+    BYTE      LocalHint;
+    BYTE      GlobalHint;
+    BYTE      Search;
+    BYTE      Once;
+    ULONG_PTR LowAddress;
+    ULONG_PTR HighAddress;
+    UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
+} UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
+
+typedef PRUNTIME_FUNCTION (CALLBACK *PGET_RUNTIME_FUNCTION_CALLBACK)(DWORD_PTR,PVOID);
+
+#define RTL_VIRTUAL_UNWIND2_VALIDATE_PAC 0x0001
+
+NTSYSAPI BOOLEAN             CDECL RtlAddFunctionTable(RUNTIME_FUNCTION*,ULONG,ULONG_PTR);
+NTSYSAPI LONG               WINAPI RtlAddGrowableFunctionTable(void**,PRUNTIME_FUNCTION,ULONG,ULONG,ULONG_PTR,ULONG_PTR);
+NTSYSAPI BOOLEAN             CDECL RtlDeleteFunctionTable(RUNTIME_FUNCTION*);
+NTSYSAPI void               WINAPI RtlDeleteGrowableFunctionTable(void*);
+NTSYSAPI void               WINAPI RtlGrowFunctionTable(void*,ULONG);
+NTSYSAPI BOOLEAN             CDECL RtlInstallFunctionTableCallback(ULONG_PTR,ULONG_PTR,ULONG,PGET_RUNTIME_FUNCTION_CALLBACK,PVOID,PCWSTR);
+NTSYSAPI PRUNTIME_FUNCTION  WINAPI RtlLookupFunctionEntry(ULONG_PTR,ULONG_PTR*,UNWIND_HISTORY_TABLE*);
+NTSYSAPI PRUNTIME_FUNCTION  WINAPI RtlLookupFunctionTable(ULONG_PTR,ULONG_PTR*,ULONG*);
+NTSYSAPI void               WINAPI RtlUnwindEx(void*,void*,EXCEPTION_RECORD*,void*,CONTEXT*,UNWIND_HISTORY_TABLE*);
+NTSYSAPI PEXCEPTION_ROUTINE WINAPI RtlVirtualUnwind(ULONG,ULONG_PTR,ULONG_PTR,RUNTIME_FUNCTION*,CONTEXT*,void**,ULONG_PTR*,KNONVOLATILE_CONTEXT_POINTERS*);
+NTSYSAPI LONG               WINAPI RtlVirtualUnwind2(ULONG,ULONG_PTR,ULONG_PTR,RUNTIME_FUNCTION*,CONTEXT*,BOOLEAN*,void**,ULONG_PTR*,KNONVOLATILE_CONTEXT_POINTERS*,ULONG_PTR*,ULONG_PTR*,PEXCEPTION_ROUTINE*,ULONG);
+#ifdef __x86_64__
+NTSYSAPI BOOLEAN            WINAPI RtlIsEcCode(ULONG_PTR);
+#endif
+
+#endif  /* __i386__ */
+#endif  /* _APISETRTLSUPPORT_ */
+
 typedef struct _NT_TIB
 {
 	struct _EXCEPTION_REGISTRATION_RECORD *ExceptionList;
@@ -2476,6 +2555,28 @@ typedef struct _NT_TIB
 	PVOID ArbitraryUserPointer;
 	struct _NT_TIB *Self;
 } NT_TIB, *PNT_TIB;
+
+typedef struct _NT_TIB32
+{
+    ULONG ExceptionList;        /* 0000 */
+    ULONG StackBase;            /* 0004 */
+    ULONG StackLimit;           /* 0008 */
+    ULONG SubSystemTib;         /* 000c */
+    ULONG FiberData;            /* 0010 */
+    ULONG ArbitraryUserPointer; /* 0014 */
+    ULONG Self;                 /* 0018 */
+} NT_TIB32;
+
+typedef struct _NT_TIB64
+{
+    ULONG64 ExceptionList;        /* 0000 */
+    ULONG64 StackBase;            /* 0008 */
+    ULONG64 StackLimit;           /* 0010 */
+    ULONG64 SubSystemTib;         /* 0018 */
+    ULONG64 FiberData;            /* 0020 */
+    ULONG64 ArbitraryUserPointer; /* 0028 */
+    ULONG64 Self;                 /* 0030 */
+} NT_TIB64;
 
 struct _TEB;
 
@@ -2604,6 +2705,7 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 #define IO_REPARSE_TAG_CLOUD_MASK       __MSABI_LONG(0x0000F000)
 #define IO_REPARSE_TAG_APPEXECLINK      __MSABI_LONG(0x8000001B)
 #define IO_REPARSE_TAG_PROJFS           __MSABI_LONG(0x9000001C)
+#define IO_REPARSE_TAG_LX_SYMLINK       __MSABI_LONG(0xA000001D)
 #define IO_REPARSE_TAG_STORAGE_SYNC     __MSABI_LONG(0x8000001E)
 #define IO_REPARSE_TAG_WCI_TOMBSTONE    __MSABI_LONG(0xA000001F)
 #define IO_REPARSE_TAG_UNHANDLED        __MSABI_LONG(0x80000020)
@@ -4247,48 +4349,57 @@ typedef enum _TOKEN_ELEVATION_TYPE {
  */
 
 typedef enum _TOKEN_INFORMATION_CLASS {
-  TokenUser = 1,
-  TokenGroups,
-  TokenPrivileges,
-  TokenOwner,
-  TokenPrimaryGroup,
-  TokenDefaultDacl,
-  TokenSource,
-  TokenType,
-  TokenImpersonationLevel,
-  TokenStatistics,
-  TokenRestrictedSids,
-  TokenSessionId,
-  TokenGroupsAndPrivileges,
-  TokenSessionReference,
-  TokenSandBoxInert,
-  TokenAuditPolicy,
-  TokenOrigin,
-  TokenElevationType,
-  TokenLinkedToken,
-  TokenElevation,
-  TokenHasRestrictions,
-  TokenAccessInformation,
-  TokenVirtualizationAllowed,
-  TokenVirtualizationEnabled,
-  TokenIntegrityLevel,
-  TokenUIAccess,
-  TokenMandatoryPolicy,
-  TokenLogonSid,
-  TokenIsAppContainer,
-  TokenCapabilities,
-  TokenAppContainerSid,
-  TokenAppContainerNumber,
-  TokenUserClaimAttributes,
-  TokenDeviceClaimAttributes,
-  TokenRestrictedUserClaimAttributes,
-  TokenRestrictedDeviceClaimAttributes,
-  TokenDeviceGroups,
-  TokenRestrictedDeviceGroups,
-  TokenSecurityAttributes,
-  TokenIsRestricted,
-  TokenProcessTrustLevel,
-  MaxTokenInfoClass
+    TokenUser = 1,
+    TokenGroups = 2,
+    TokenPrivileges = 3,
+    TokenOwner = 4,
+    TokenPrimaryGroup = 5,
+    TokenDefaultDacl = 6,
+    TokenSource = 7,
+    TokenType = 8,
+    TokenImpersonationLevel = 9,
+    TokenStatistics = 10,
+    TokenRestrictedSids = 11,
+    TokenSessionId = 12,
+    TokenGroupsAndPrivileges = 13,
+    TokenSessionReference = 14,
+    TokenSandBoxInert = 15,
+    TokenAuditPolicy = 16,
+    TokenOrigin = 17,
+    TokenElevationType = 18,
+    TokenLinkedToken = 19,
+    TokenElevation = 20,
+    TokenHasRestrictions = 21,
+    TokenAccessInformation = 22,
+    TokenVirtualizationAllowed = 23,
+    TokenVirtualizationEnabled = 24,
+    TokenIntegrityLevel = 25,
+    TokenUIAccess = 26,
+    TokenMandatoryPolicy = 27,
+    TokenLogonSid = 28,
+    TokenIsAppContainer = 29,
+    TokenCapabilities = 30,
+    TokenAppContainerSid = 31,
+    TokenAppContainerNumber = 32,
+    TokenUserClaimAttributes = 33,
+    TokenDeviceClaimAttributes = 34,
+    TokenRestrictedUserClaimAttributes = 35,
+    TokenRestrictedDeviceClaimAttributes = 36,
+    TokenDeviceGroups = 37,
+    TokenRestrictedDeviceGroups = 38,
+    TokenSecurityAttributes = 39,
+    TokenIsRestricted = 40,
+    TokenProcessTrustLevel = 41,
+    TokenPrivateNameSpace = 42,
+    TokenSingletonAttributes = 43,
+    TokenBnoIsolation = 44,
+    TokenChildProcessFlags = 45,
+    TokenIsLessPrivilegedAppContainer = 46,
+    TokenIsSandboxed = 47,
+    TokenIsAppSilo = 48,
+    TokenLoggingInformation = 49,
+    TokenLearningMode = 50,
+    MaxTokenInfoClass
 } TOKEN_INFORMATION_CLASS;
 
 #define DISABLE_MAX_PRIVILEGE        0x1
@@ -4557,7 +4668,7 @@ typedef DWORD SECURITY_INFORMATION, *PSECURITY_INFORMATION;
 typedef WORD SECURITY_DESCRIPTOR_CONTROL, *PSECURITY_DESCRIPTOR_CONTROL;
 
 /* The security descriptor structure */
-typedef struct {
+typedef struct _SECURITY_DESCRIPTOR_RELATIVE {
     BYTE Revision;
     BYTE Sbz1;
     SECURITY_DESCRIPTOR_CONTROL Control;
@@ -4567,7 +4678,7 @@ typedef struct {
     DWORD Dacl;
 } SECURITY_DESCRIPTOR_RELATIVE, *PISECURITY_DESCRIPTOR_RELATIVE;
 
-typedef struct {
+typedef struct _SECURITY_DESCRIPTOR {
     BYTE Revision;
     BYTE Sbz1;
     SECURITY_DESCRIPTOR_CONTROL Control;
@@ -6282,7 +6393,6 @@ NTSYSAPI VOID WINAPI RtlRunOnceInitialize(PRTL_RUN_ONCE);
 NTSYSAPI DWORD WINAPI RtlRunOnceExecuteOnce(PRTL_RUN_ONCE,PRTL_RUN_ONCE_INIT_FN,PVOID,PVOID*);
 NTSYSAPI DWORD WINAPI RtlRunOnceBeginInitialize(PRTL_RUN_ONCE, DWORD, PVOID*);
 NTSYSAPI DWORD WINAPI RtlRunOnceComplete(PRTL_RUN_ONCE, DWORD, PVOID);
-NTSYSAPI WORD WINAPI RtlCaptureStackBackTrace(DWORD,DWORD,void**,DWORD*);
 
 typedef struct _RTL_BARRIER {
     DWORD Reserved1;
@@ -6547,15 +6657,57 @@ typedef struct _ACTIVATION_CONTEXT_DATA_DLL_REDIRECTION_PATH_SEGMENT
 typedef enum _JOBOBJECTINFOCLASS
 {
     JobObjectBasicAccountingInformation = 1,
-    JobObjectBasicLimitInformation,
-    JobObjectBasicProcessIdList,
-    JobObjectBasicUIRestrictions,
-    JobObjectSecurityLimitInformation,
-    JobObjectEndOfJobTimeInformation,
-    JobObjectAssociateCompletionPortInformation,
-    JobObjectBasicAndIoAccountingInformation,
-    JobObjectExtendedLimitInformation,
-    JobObjectJobSetInformation,
+    JobObjectBasicLimitInformation = 2,
+    JobObjectBasicProcessIdList = 3,
+    JobObjectBasicUIRestrictions = 4,
+    JobObjectSecurityLimitInformation = 5,
+    JobObjectEndOfJobTimeInformation = 6,
+    JobObjectAssociateCompletionPortInformation = 7,
+    JobObjectBasicAndIoAccountingInformation = 8,
+    JobObjectExtendedLimitInformation = 9,
+    JobObjectJobSetInformation = 10,
+    JobObjectGroupInformation = 11,
+    JobObjectNotificationLimitInformation = 12,
+    JobObjectLimitViolationInformation = 13,
+    JobObjectGroupInformationEx = 14,
+    JobObjectCpuRateControlInformation = 15,
+    JobObjectCompletionFilter = 16,
+    JobObjectCompletionCounter = 17,
+    JobObjectFreezeInformation = 18,
+    JobObjectExtendedAccountingInformation = 19,
+    JobObjectWakeInformation = 20,
+    JobObjectBackgroundInformation = 21,
+    JobObjectSchedulingRankBiasInformation = 22,
+    JobObjectTimerVirtualizationInformation = 23,
+    JobObjectCycleTimeNotification = 24,
+    JobObjectClearEvent = 25,
+    JobObjectInterferenceInformation = 26,
+    JobObjectClearPeakJobMemoryUsed = 27,
+    JobObjectMemoryUsageInformation = 28,
+    JobObjectSharedCommit = 29,
+    JobObjectContainerId = 30,
+    JobObjectIoRateControlInformation = 31,
+    JobObjectNetRateControlInformation = 32,
+    JobObjectNotificationLimitInformation2 = 33,
+    JobObjectLimitViolationInformation2 = 34,
+    JobObjectCreateSilo = 35,
+    JobObjectSiloBasicInformation = 36,
+    JobObjectSiloRootDirectory = 37,
+    JobObjectServerSiloBasicInformation = 38,
+    JobObjectServerSiloUserSharedData = 39,
+    JobObjectServerSiloInitialize = 40,
+    JobObjectServerSiloRunningState = 41,
+    JobObjectIoAttribution = 42,
+    JobObjectMemoryPartitionInformation = 43,
+    JobObjectContainerTelemetryId = 44,
+    JobObjectSiloSystemRoot = 45,
+    JobObjectEnergyTrackingState = 46,
+    JobObjectThreadImpersonationInformation = 47,
+    JobObjectIoPriorityLimit = 48,
+    JobObjectPagePriorityLimit = 49,
+    JobObjectServerSiloDiagnosticInformation = 50,
+    JobObjectNetworkAccountingInformation = 51,
+    JobObjectCpuPartition = 52,
     MaxJobObjectInfoClass
 } JOBOBJECTINFOCLASS;
 
@@ -6983,7 +7135,9 @@ typedef enum _FIRMWARE_TYPE
 /* Intrinsic functions */
 
 #define BitScanForward _BitScanForward
+#define BitScanForward64 _BitScanForward64
 #define BitScanReverse _BitScanReverse
+#define BitScanReverse64 _BitScanReverse64
 #define InterlockedAdd _InlineInterlockedAdd
 #define InterlockedAnd _InterlockedAnd
 #define InterlockedAnd64 _InterlockedAnd64
@@ -7008,24 +7162,6 @@ typedef enum _FIRMWARE_TYPE
 
 #ifdef _MSC_VER
 
-#pragma intrinsic(_BitScanForward)
-#pragma intrinsic(_BitScanReverse)
-#pragma intrinsic(_InterlockedAnd)
-#pragma intrinsic(_InterlockedCompareExchange)
-#pragma intrinsic(_InterlockedCompareExchange64)
-#pragma intrinsic(_InterlockedCompareExchangePointer)
-#pragma intrinsic(_InterlockedExchange)
-#pragma intrinsic(_InterlockedExchangeAdd)
-#pragma intrinsic(_InterlockedExchangeAdd16)
-#pragma intrinsic(_InterlockedExchangePointer)
-#pragma intrinsic(_InterlockedIncrement)
-#pragma intrinsic(_InterlockedIncrement16)
-#pragma intrinsic(_InterlockedDecrement)
-#pragma intrinsic(_InterlockedDecrement16)
-#pragma intrinsic(_InterlockedOr)
-#pragma intrinsic(_InterlockedXor)
-#pragma intrinsic(__fastfail)
-
 BOOLEAN   _BitScanForward(unsigned long*,unsigned long);
 BOOLEAN   _BitScanReverse(unsigned long*,unsigned long);
 long      _InterlockedAnd(long volatile *,long);
@@ -7044,9 +7180,37 @@ long      _InterlockedOr(long volatile *,long);
 long      _InterlockedXor(long volatile *,long);
 DECLSPEC_NORETURN void __fastfail(unsigned int);
 
+#pragma intrinsic(_BitScanForward)
+#pragma intrinsic(_BitScanReverse)
+#pragma intrinsic(_InterlockedAnd)
+#pragma intrinsic(_InterlockedCompareExchange)
+#pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedCompareExchangePointer)
+#pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedExchangeAdd)
+#pragma intrinsic(_InterlockedExchangeAdd16)
+#pragma intrinsic(_InterlockedExchangePointer)
+#pragma intrinsic(_InterlockedIncrement)
+#pragma intrinsic(_InterlockedIncrement16)
+#pragma intrinsic(_InterlockedDecrement)
+#pragma intrinsic(_InterlockedDecrement16)
+#pragma intrinsic(_InterlockedOr)
+#pragma intrinsic(_InterlockedXor)
+#pragma intrinsic(__fastfail)
+
+#if defined(_WIN64) || __has_builtin(_BitScanForward64)
+BOOLEAN _BitScanForward64(unsigned long*,unsigned __int64);
+#pragma intrinsic(_BitScanForward64)
+#endif
+
+#if defined(_WIN64) || __has_builtin(_BitScanReverse64)
+BOOLEAN _BitScanReverse64(unsigned long*,unsigned __int64);
+#pragma intrinsic(_BitScanReverse64)
+#endif
+
 #if !defined(__i386__) || __has_builtin(_InterlockedAnd64)
-#pragma intrinsic(_InterlockedAnd64)
 __int64   _InterlockedAnd64(__int64 volatile *, __int64);
+#pragma intrinsic(_InterlockedAnd64)
 #else
 static FORCEINLINE __int64 InterlockedAnd64( __int64 volatile *dest, __int64 val )
 {
@@ -7057,8 +7221,8 @@ static FORCEINLINE __int64 InterlockedAnd64( __int64 volatile *dest, __int64 val
 #endif
 
 #if !defined(__i386__) || __has_builtin(_InterlockedExchangeAdd64)
-#pragma intrinsic(_InterlockedExchangeAdd64)
 __int64   _InterlockedExchangeAdd64(__int64 volatile *, __int64);
+#pragma intrinsic(_InterlockedExchangeAdd64)
 #else
 static FORCEINLINE __int64 InterlockedExchangeAdd64( __int64 volatile *dest, __int64 val )
 {
@@ -7069,8 +7233,8 @@ static FORCEINLINE __int64 InterlockedExchangeAdd64( __int64 volatile *dest, __i
 #endif
 
 #if !defined(__i386__) || __has_builtin(_InterlockedDecrement64)
-#pragma intrinsic(_InterlockedDecrement64)
 __int64   _InterlockedDecrement64(__int64 volatile *);
+#pragma intrinsic(_InterlockedDecrement64)
 #else
 static FORCEINLINE __int64 InterlockedDecrement64( __int64 volatile *dest )
 {
@@ -7079,8 +7243,8 @@ static FORCEINLINE __int64 InterlockedDecrement64( __int64 volatile *dest )
 #endif
 
 #if !defined(__i386__) || __has_builtin(_InterlockedIncrement64)
-#pragma intrinsic(_InterlockedIncrement64)
 __int64   _InterlockedIncrement64(__int64 volatile *);
+#pragma intrinsic(_InterlockedIncrement64)
 #else
 static FORCEINLINE __int64 InterlockedIncrement64( __int64 volatile *dest )
 {
@@ -7089,8 +7253,8 @@ static FORCEINLINE __int64 InterlockedIncrement64( __int64 volatile *dest )
 #endif
 
 #if !defined(__i386__) || __has_builtin(_InterlockedOr64)
-#pragma intrinsic(_InterlockedOr64)
 __int64   _InterlockedOr64(__int64 volatile *, __int64);
+#pragma intrinsic(_InterlockedOr64)
 #else
 static FORCEINLINE __int64 InterlockedOr64( __int64 volatile *dest, __int64 val )
 {
@@ -7101,8 +7265,8 @@ static FORCEINLINE __int64 InterlockedOr64( __int64 volatile *dest, __int64 val 
 #endif
 
 #if !defined(__i386__) || __has_builtin(_InterlockedXor64)
-#pragma intrinsic(_InterlockedXor64)
 __int64   _InterlockedXor64(__int64 volatile *, __int64);
+#pragma intrinsic(_InterlockedXor64)
 #else
 static FORCEINLINE __int64 InterlockedXor64( __int64 volatile *dest, __int64 val )
 {
@@ -7139,8 +7303,8 @@ static FORCEINLINE void MemoryBarrier(void)
 
 #elif defined(__x86_64__)
 
-#pragma intrinsic(__faststorefence)
 void __faststorefence(void);
+#pragma intrinsic(__faststorefence)
 
 static FORCEINLINE void MemoryBarrier(void)
 {
@@ -7177,8 +7341,8 @@ static FORCEINLINE void MemoryBarrier(void)
 #endif  /* _MSC_VER >= 1700 */
 
 #if defined(__i386__) || defined(__x86_64__)
-#pragma intrinsic(_ReadWriteBarrier)
 void _ReadWriteBarrier(void);
+#pragma intrinsic(_ReadWriteBarrier)
 #endif  /* defined(__i386__) || defined(__x86_64__) */
 
 static void __wine_memory_barrier_acq_rel(void)
@@ -7275,9 +7439,21 @@ static FORCEINLINE BOOLEAN WINAPI BitScanForward(DWORD *index, DWORD mask)
     return mask != 0;
 }
 
+static FORCEINLINE BOOLEAN WINAPI BitScanForward64(DWORD *index, DWORD64 mask)
+{
+    *index = __builtin_ctzll( mask );
+    return mask != 0;
+}
+
 static FORCEINLINE BOOLEAN WINAPI BitScanReverse(DWORD *index, DWORD mask)
 {
     *index = 31 - __builtin_clz( mask );
+    return mask != 0;
+}
+
+static FORCEINLINE BOOLEAN WINAPI BitScanReverse64(DWORD *index, DWORD64 mask)
+{
+    *index = 63 - __builtin_clzll( mask );
     return mask != 0;
 }
 
@@ -7513,8 +7689,8 @@ static FORCEINLINE DECLSPEC_NORETURN void __fastfail(unsigned int code)
 
 #if defined(_MSC_VER) && (!defined(__clang__) || !defined(__aarch64__) || __has_builtin(_InterlockedCompareExchange128))
 
-#pragma intrinsic(_InterlockedCompareExchange128)
 unsigned char _InterlockedCompareExchange128(volatile __int64 *, __int64, __int64, __int64 *);
+#pragma intrinsic(_InterlockedCompareExchange128)
 
 #else
 
@@ -7645,6 +7821,9 @@ static FORCEINLINE DWORD64 UnsignedMultiply128( DWORD64 a, DWORD64 b, DWORD64 *h
     return (DWORD64)v;
 }
 #endif
+
+#define Int32x32To64(a,b)  ((INT64)(INT)(a) * (INT64)(INT)(b))
+#define UInt32x32To64(a,b) ((UINT64)(UINT)(a) * (UINT64)(UINT)(b))
 
 #ifdef __cplusplus
 }

@@ -1361,6 +1361,21 @@ DWORD WINAPI GetLogicalDrives(void)
    return 0;
 }
 
+DWORD WINAPI GetShortPathNameW(LPCWSTR lpszLongPath, LPWSTR lpszShortPath, DWORD cchBuffer)
+{
+   /* Android has no 8.3 short paths — return the input unchanged. Wine 11.8's
+    * scrrun File/Folder ShortPath/ShortName getters call this; on Windows it
+    * yields a TEXT.TXT-style legacy name. We give back the long path. */
+   if (!lpszLongPath) return 0;
+   DWORD len = (DWORD)wcslen(lpszLongPath);
+   if (lpszShortPath && cchBuffer > len) {
+      wcsncpy(lpszShortPath, lpszLongPath, cchBuffer);
+      lpszShortPath[len] = L'\0';
+      return len;
+   }
+   return len + 1;
+}
+
 UINT WINAPI GetSystemDirectoryW(LPWSTR lpBuffer, UINT uSize)
 {
    return 0;
