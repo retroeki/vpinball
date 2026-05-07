@@ -2714,8 +2714,15 @@ static HRESULT Global_SetLocale(BuiltinDisp *This, VARIANT *args, unsigned args_
         }
         }
 
+#ifndef __STANDALONE__
         if(!IsValidLocale(new_lcid, LCID_INSTALLED))
             return MAKE_VBSERROR(VBSE_LOCALE_SETTING_NOT_SUPPORTED);
+#endif
+        /* On Android our NLS-data shims make IsValidLocale always return
+         * FALSE, which would reject every SetLocale 1033 call (the standard
+         * VPW init line). Skip the validation and accept whatever LCID the
+         * script asks for; the lcid is recorded into the script context
+         * below either way. */
     }
 
     This->ctx->lcid = new_lcid;
