@@ -690,9 +690,34 @@ static HRESULT do_icall(exec_ctx_t *ctx, VARIANT *res, BSTR identifier, unsigned
 
     TRACE("%s %u\n", debugstr_w(identifier), arg_cnt);
 
+#ifdef __STANDALONE__
+    /* [CTRL-DIAG] Watch for the identifiers we care about in the LoadController flow. */
+    if (identifier && (
+        !wcsicmp(identifier, L"CreatePluginObject") ||
+        !wcsicmp(identifier, L"LoadController") ||
+        !wcsicmp(identifier, L"LoadEM") ||
+        !wcsicmp(identifier, L"LoadVPM") ||
+        !wcsicmp(identifier, L"LoadVPinMAME") ||
+        !wcsicmp(identifier, L"Setting"))) {
+        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_icall identifier=%s arg_cnt=%u is_call=%d", debugstr_w(identifier), arg_cnt, is_call);
+    }
+#endif
+
     hres = lookup_identifier(ctx, identifier, VBDISP_CALLGET, &ref);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+#ifdef __STANDALONE__
+        if (identifier && (
+            !wcsicmp(identifier, L"CreatePluginObject") ||
+            !wcsicmp(identifier, L"LoadController") ||
+            !wcsicmp(identifier, L"LoadEM") ||
+            !wcsicmp(identifier, L"LoadVPM") ||
+            !wcsicmp(identifier, L"LoadVPinMAME") ||
+            !wcsicmp(identifier, L"Setting"))) {
+            EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_icall LOOKUP FAIL identifier=%s hres=0x%08x", debugstr_w(identifier), (unsigned)hres);
+        }
+#endif
         return hres;
+    }
 
     switch(ref.type) {
     case REF_VAR:
@@ -873,12 +898,35 @@ static HRESULT do_mcall(exec_ctx_t *ctx, VARIANT *res)
     DISPID id;
     HRESULT hres;
 
+#ifdef __STANDALONE__
+    /* [CTRL-DIAG] Capture the receiver's variant shape before stack_pop_disp consumes it,
+       so we can distinguish Empty / Nothing / non-dispatch when the call fails. */
+    VARIANT *recv_peek = stack_top(ctx, 0);
+    VARTYPE recv_vt = recv_peek ? V_VT(recv_peek) : 0xFFFF;
+    int recv_is_byref_empty = 0;
+    int recv_is_byref_dispatch_null = 0;
+    if (recv_peek && V_VT(recv_peek) == (VT_VARIANT | VT_BYREF) && V_VARIANTREF(recv_peek)) {
+        VARTYPE rvt = V_VT(V_VARIANTREF(recv_peek));
+        if (rvt == VT_EMPTY) recv_is_byref_empty = 1;
+        if (rvt == VT_DISPATCH && V_DISPATCH(V_VARIANTREF(recv_peek)) == NULL) recv_is_byref_dispatch_null = 1;
+    }
+#endif
+
     hres = stack_pop_disp(ctx, &obj);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+#ifdef __STANDALONE__
+        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_mcall stack_pop_disp FAIL method=%s vt=0x%04x byref_empty=%d byref_dispnull=%d hres=0x%08x",
+            debugstr_w(identifier), recv_vt, recv_is_byref_empty, recv_is_byref_dispatch_null, (unsigned)hres);
+#endif
         return hres;
+    }
 
     if(!obj) {
         WARN("NULL obj\n");
+#ifdef __STANDALONE__
+        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_mcall NULL obj (Nothing) method=%s vt=0x%04x byref_empty=%d byref_dispnull=%d",
+            debugstr_w(identifier), recv_vt, recv_is_byref_empty, recv_is_byref_dispatch_null);
+#endif
         return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
     }
 

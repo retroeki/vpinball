@@ -876,5 +876,12 @@ extern "C" HRESULT external_create_object(const WCHAR *progid, IClassFactory* cf
 extern "C" void external_log_info(const char* format, ...);
 extern "C" void external_log_debug(const char* format, ...);
 extern "C" void external_log_error(const char* format, ...);
+// Script-diagnostic channel switch — enable with env VPX_SCRIPT_DIAG=1.
+// Macros use the `if (!cond) {} else` pattern so they're safe inside an outer
+// `if (X) PLOGI_DIAG << "msg";` — the `else` binds locally, no dangling-else.
+extern "C" int external_diag_enabled(void);
+#define PLOGI_DIAG if (!external_diag_enabled()) {} else PLOGI
+#define PLOGE_DIAG if (!external_diag_enabled()) {} else PLOGE
+#define PLOGW_DIAG if (!external_diag_enabled()) {} else PLOGW
 #endif
 #endif

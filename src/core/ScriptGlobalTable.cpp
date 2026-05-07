@@ -395,28 +395,37 @@ STDMETHODIMP ScriptGlobalTable::get_Setting(BSTR Section, BSTR SettingName, BSTR
       case VPX::Properties::PropertyDef::Type::String: value = settings.GetString(propId.value()); break;
       default: return E_FAIL;
       }
+      PLOGI_DIAG << "[CTRL-DIAG] get_Setting(\"" << sectionSz << "\", \"" << settingSz << "\") = \"" << value << "\"";
       *param = MakeWideBSTR(value);
       return S_OK;
    }
+   PLOGW_DIAG << "[CTRL-DIAG] get_Setting(\"" << sectionSz << "\", \"" << settingSz << "\") -> propId NOT REGISTERED, returning E_FAIL";
    return E_FAIL;
 }
 
 STDMETHODIMP ScriptGlobalTable::GetTextFile(BSTR FileName, BSTR *pContents)
 {
    const string szFileName = MakeString(FileName);
+   PLOGI_DIAG << "[CTRL-DIAG] GetTextFile request: \"" << szFileName << "\"";
 
    for(size_t i = 0; i < std::size(defaultFileNameSearch); ++i)
-      if(GetTextFileFromDirectory(defaultFileNameSearch[i] + szFileName, defaultPathSearch[i], pContents))
+      if(GetTextFileFromDirectory(defaultFileNameSearch[i] + szFileName, defaultPathSearch[i], pContents)) {
+         PLOGI_DIAG << "[CTRL-DIAG] GetTextFile resolved \"" << szFileName << "\" via defaultPath[" << i << "]=\"" << defaultPathSearch[i] << "\"";
          return S_OK;
+      }
 
    // Also search relative to the current table path (important for external storage on Android)
    if (!m_vpinball->m_currentTablePath.empty()) {
       // Search in table directory
-      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + szFileName, string(), pContents))
+      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + szFileName, string(), pContents)) {
+         PLOGI_DIAG << "[CTRL-DIAG] GetTextFile resolved \"" << szFileName << "\" via tablePath \"" << m_vpinball->m_currentTablePath << "\"";
          return S_OK;
+      }
       // Search in scripts subfolder relative to table
-      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents))
+      if (GetTextFileFromDirectory(m_vpinball->m_currentTablePath + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents)) {
+         PLOGI_DIAG << "[CTRL-DIAG] GetTextFile resolved \"" << szFileName << "\" via tablePath/scripts/";
          return S_OK;
+      }
       // Search in parent's scripts folder (e.g., /storage/.../VisualPinballX/scripts/)
       string parentPath = m_vpinball->m_currentTablePath;
       // Remove trailing separator if present
@@ -426,8 +435,10 @@ STDMETHODIMP ScriptGlobalTable::GetTextFile(BSTR FileName, BSTR *pContents)
       size_t lastSep = parentPath.find_last_of("/\\");
       if (lastSep != string::npos) {
          string vpxRoot = parentPath.substr(0, lastSep + 1);
-         if (GetTextFileFromDirectory(vpxRoot + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents))
+         if (GetTextFileFromDirectory(vpxRoot + "scripts" + PATH_SEPARATOR_CHAR + szFileName, string(), pContents)) {
+            PLOGI_DIAG << "[CTRL-DIAG] GetTextFile resolved \"" << szFileName << "\" via vpxRoot \"" << vpxRoot << "scripts/\"";
             return S_OK;
+         }
       }
    }
 
@@ -993,8 +1004,11 @@ STDMETHODIMP ScriptGlobalTable::MaterialColor(BSTR pVal, OLE_COLOR newVal)
 
 STDMETHODIMP ScriptGlobalTable::CreatePluginObject(/*[in]*/ BSTR classId, /*[out, retval]*/ IDispatch** pVal)
 {
+   const string id = MakeString(classId);
+   PLOGI_DIAG << "[CTRL-DIAG] ScriptGlobalTable::CreatePluginObject ENTRY classId=\"" << id << "\"";
    VPXPluginAPIImpl &pi = VPXPluginAPIImpl::GetInstance();
-   *pVal = pi.CreateCOMPluginObject(MakeString(classId));
+   *pVal = pi.CreateCOMPluginObject(id);
+   PLOGI_DIAG << "[CTRL-DIAG] ScriptGlobalTable::CreatePluginObject EXIT classId=\"" << id << "\" result=" << (*pVal ? "ok" : "nullptr");
    return (*pVal != nullptr) ? S_OK : E_FAIL;
 }
 

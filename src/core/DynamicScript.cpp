@@ -687,18 +687,56 @@ HRESULT DynamicTypeLibrary::Invoke(const ScriptClassDef * classDef, void* native
    }
 
    // Search for the right overload (needed for property which are a member with overloads for getters and setters)
-   // FIXME match overload on type and arguments
    const std::vector<int>& members = cd->members[dispIdMember - 1];
    int memberIndex = -1;
    if (wFlags & DISPATCH_METHOD)
    {
+      // Type-aware overload resolution: pick the overload whose parameter types best match
+      // the script-side argument types. Prevents e.g. B2SSetData("HU_Witch_1", 0) from being
+      // routed to B2SSetData(int, int) just because it's registered first.
+      int bestScore = -1;
       for (int i : members)
       {
          const ScriptClassMemberDef& memberDef = cd->classDef->members[i];
-         if (memberDef.nArgs == pDispParams->cArgs)
+         if (memberDef.nArgs != pDispParams->cArgs)
+            continue;
+         int score = 0;
+         for (unsigned int a = 0; a < pDispParams->cArgs; a++)
          {
+            // DISPPARAMS args are reversed
+            const VARIANT* arg = &pDispParams->rgvarg[pDispParams->cArgs - 1 - a];
+            VARTYPE argVt = V_VT(arg);
+            // Dereference byref variants to inspect actual underlying type
+            if (argVt == (VT_VARIANT | VT_BYREF) && V_VARIANTREF(arg))
+               argVt = V_VT(V_VARIANTREF(arg));
+            const ScriptTypeNameDef& paramType = memberDef.callArgType[a];
+            // Resolve aliases to the underlying native type
+            unsigned int paramTypeId = paramType.id;
+            while (paramTypeId < m_types.size() && m_types[paramTypeId].category == TypeDef::TD_ALIAS)
+               paramTypeId = m_types[paramTypeId].aliasDef.typeDef.id;
+            // Score: +10 exact match, +5 numeric/numeric, +1 convertible, 0 mismatch
+            const bool argIsString = (argVt == VT_BSTR);
+            const bool argIsNumeric = (argVt == VT_I1 || argVt == VT_I2 || argVt == VT_I4 || argVt == VT_I8 ||
+                                       argVt == VT_UI1 || argVt == VT_UI2 || argVt == VT_UI4 || argVt == VT_UI8 ||
+                                       argVt == VT_INT || argVt == VT_UINT || argVt == VT_R4 || argVt == VT_R8 || argVt == VT_BOOL);
+            const bool paramIsString = (paramTypeId == (unsigned int)TYPEID_STRING);
+            const bool paramIsNumeric = (paramTypeId == (unsigned int)TYPEID_BOOL || paramTypeId == (unsigned int)TYPEID_INT ||
+                                         paramTypeId == (unsigned int)TYPEID_UINT || paramTypeId == (unsigned int)TYPEID_FLOAT ||
+                                         paramTypeId == (unsigned int)TYPEID_DOUBLE || paramTypeId == (unsigned int)TYPEID_INT8 ||
+                                         paramTypeId == (unsigned int)TYPEID_INT16 || paramTypeId == (unsigned int)TYPEID_INT32 ||
+                                         paramTypeId == (unsigned int)TYPEID_INT64 || paramTypeId == (unsigned int)TYPEID_UINT8 ||
+                                         paramTypeId == (unsigned int)TYPEID_UINT16 || paramTypeId == (unsigned int)TYPEID_UINT32 ||
+                                         paramTypeId == (unsigned int)TYPEID_UINT64);
+            if (argIsString && paramIsString) score += 10;
+            else if (argIsNumeric && paramIsNumeric) score += 10;
+            else if (argIsString && paramIsNumeric) score += 0;  // would need to parse; usually fails
+            else if (argIsNumeric && paramIsString) score += 1;  // convertible via VariantChangeType
+            else score += 1;  // unknown — assume convertible
+         }
+         if (score > bestScore)
+         {
+            bestScore = score;
             memberIndex = i;
-            break;
          }
       }
    }
@@ -755,7 +793,11 @@ HRESULT DynamicTypeLibrary::Invoke(const ScriptClassDef * classDef, void* native
    {
       if (!COMToScriptVariant(&pDispParams->rgvarg[pDispParams->cArgs - 1 - i], memberDef.callArgType[i], args[i]))
       {
-         PLOGE << "Failed to convert a parameter in call to " << classDef->name.name << '.' << memberDef.name.name;
+         const VARIANT* failArg = &pDispParams->rgvarg[pDispParams->cArgs - 1 - i];
+         VARTYPE failVt = V_VT(failArg);
+         VARTYPE failBy = (failVt == (VT_VARIANT|VT_BYREF) && V_VARIANTREF(failArg)) ? V_VT(V_VARIANTREF(failArg)) : 0;
+         PLOGE_DIAG << "[CTRL-DIAG] Failed to convert arg[" << i << "] in call to " << classDef->name.name << '.' << memberDef.name.name
+                    << " — script vt=0x" << std::hex << failVt << " (byref->vt=0x" << failBy << std::dec << ") expected paramType=\"" << memberDef.callArgType[i].name << "\" id=" << memberDef.callArgType[i].id;
          *puArgErr = pDispParams->cArgs - 1 - i;
          return DISP_E_TYPEMISMATCH;
       }

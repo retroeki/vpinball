@@ -15,6 +15,17 @@ namespace B2SLegacy {
 
 LPI_IMPLEMENT
 
+// Mirror of external_diag_enabled() — kept local so the plugin doesn't need to
+// link against the host symbol. Enable both with VPX_SCRIPT_DIAG=1.
+static bool diag_enabled() {
+   static int cached = -1;
+   if (cached < 0) {
+      const char* env = getenv("VPX_SCRIPT_DIAG");
+      cached = (env && *env && *env != '0') ? 1 : 0;
+   }
+   return cached != 0;
+}
+
 static int OnRender(VPXRenderContext2D* const renderCtx, void* context);
 static void OnGetRenderer(const unsigned int msgId, void* context, void* msgData);
 static void OnDevSrcChanged(const unsigned int msgId, void* userData, void* msgData);
@@ -177,7 +188,9 @@ static void RegisterServerObject(void*)
       RegisterServerSCD(regLambda);
       Server_SCD->CreateObject = []()
       {
+         if (diag_enabled()) LPI_LOGI("[CTRL-DIAG] B2SLegacy Server_SCD->CreateObject() invoked");
          auto server = new Server(msgApi, endpointId, vpxApi);
+         if (diag_enabled()) LPI_LOGI("[CTRL-DIAG] B2SLegacy new Server() returned %p", server);
          msgApi->SubscribeMsg(endpointId, onGetAuxRendererId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_AUX_RENDERER), OnGetRenderer, server);
          msgApi->SubscribeMsg(endpointId, onDevChangedMsgId, OnDevSrcChanged, server);
          return static_cast<void*>(server);

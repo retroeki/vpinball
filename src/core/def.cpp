@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include "standalone/PoleStorage.h"
+#include "core/ScriptArrayList.h"
 #endif
 
 #include <charconv>
@@ -868,9 +869,30 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
 {
    // External objects should now be handled using the DynamicScript overrides in 10.8.1.
    // Keeping as a fallback, and to allow for syncing Wine updates to 10.8.0 Standalone.
+   //
+   // NB: the third parameter is actually an `IUnknown**` mis-typed as
+   // `IUnknown*` — global.c calls us as `external_create_object(progid, cf,
+   // (IUnknown*)&obj)`, so what we receive in `obj` is really the address of
+   // the caller's pointer. To write back to the caller, cast the parameter
+   // itself back to `IUnknown**`. (Casting `&obj` only writes to our local
+   // stack copy, which is what the original code did — harmless on the
+   // failure path because the caller ignores the out-pointer when the HRESULT
+   // is non-S_OK, but silently broken on any success path.)
+   IUnknown** ppObj = (IUnknown**)obj;
+   if (ppObj) *ppObj = nullptr;
 
-   IUnknown** ppObj = (IUnknown**)&obj;
-   *ppObj = NULL;
+   // System.Collections.ArrayList — host-side shim. .NET ArrayList COM is not
+   // shipped with Wine on Android; many community VPX tables use it for
+   // dynamic lists (WoZ `modeHaunted.Add 49`, etc.) and crash without this.
+   // Our shim implements the methods scripts actually use (Add/Item/Count/
+   // Clear/Contains/IndexOf/Remove/RemoveAt/Insert/Sort/Reverse/ToArray/Clone
+   // + IEnumVARIANT for `For Each`).
+   if (wcscmp(progid, L"System.Collections.ArrayList") == 0) {
+      IDispatch* arr = CreateScriptArrayList();
+      if (!arr) return E_OUTOFMEMORY;
+      if (ppObj) *ppObj = (IUnknown*)arr;
+      return S_OK;
+   }
 
    const char* const szT = MakeChar(progid);
    PLOGW << "Creating an object of type \"" << szT << "\" is not supported";
@@ -894,6 +916,19 @@ void external_log_info(const char* format, ...)
       free(buffer);
    }
    va_end(args);
+}
+
+// Script-diagnostic channel switch — see vbscript.h for usage.
+// Enable: set env VPX_SCRIPT_DIAG=1 (anything non-empty/non-"0") before launching.
+// Result is cached after first call; flipping requires app restart.
+int external_diag_enabled(void)
+{
+   static int cached = -1;
+   if (cached < 0) {
+      const char* env = getenv("VPX_SCRIPT_DIAG");
+      cached = (env && *env && *env != '0') ? 1 : 0;
+   }
+   return cached;
 }
 
 void external_log_debug(const char* format, ...)

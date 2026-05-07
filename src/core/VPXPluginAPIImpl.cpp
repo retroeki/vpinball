@@ -293,14 +293,17 @@ string VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides(const string& script) con
    std::smatch res;
    string::const_iterator searchStart(script.cbegin());
    std::stringstream result;
+   int matchCount = 0, rewriteCount = 0;
    while (std::regex_search(searchStart, script.cend(), res, re))
    {
+      matchCount++;
       result << res.prefix().str();
       const string className = lowerCase(res[1].str());
       const auto& overrideEntry = m_scriptCOMObjectOverrides.find(className);
       if (overrideEntry != m_scriptCOMObjectOverrides.end())
       {
-         // PLOGI << "COM script object " << className << " overriden to be provided by a plugin";
+         rewriteCount++;
+         PLOGI_DIAG << "[CTRL-DIAG] Script COM rewrite: CreateObject(\"" << res[1].str() << "\") -> CreatePluginObject";
          result << "CreatePluginObject(\"" << className << "\")";
       }
       else
@@ -309,6 +312,8 @@ string VPXPluginAPIImpl::ApplyScriptCOMObjectOverrides(const string& script) con
       }
       searchStart = res.suffix().first;
    }
+   PLOGI_DIAG << "[CTRL-DIAG] ApplyScriptCOMObjectOverrides: " << matchCount << " CreateObject calls scanned, " << rewriteCount << " rewritten ("
+         << m_scriptCOMObjectOverrides.size() << " overrides registered)";
    result << std::string(searchStart, script.cend());
    return result.str();
 }
@@ -318,6 +323,7 @@ IDispatch* VPXPluginAPIImpl::CreateCOMPluginObject(const string& classId)
    // FIXME we are not separating type library per plugin, therefore collision may occur
    VPXPluginAPIImpl& pi = VPXPluginAPIImpl::GetInstance();
    const string className(lowerCase(classId));
+   PLOGI_DIAG << "[CTRL-DIAG] CreateCOMPluginObject called: classId=\"" << classId << "\"";
    const auto& overrideEntry = m_scriptCOMObjectOverrides.find(className);
    if (overrideEntry == m_scriptCOMObjectOverrides.end())
    {
@@ -339,6 +345,7 @@ IDispatch* VPXPluginAPIImpl::CreateCOMPluginObject(const string& classId)
    }
    DynamicDispatch* dd = new DynamicDispatch(&pi.m_dynamicTypeLibrary, classDef, pScriptObject);
    PSC_RELEASE(classDef, pScriptObject);
+   PLOGI_DIAG << "[CTRL-DIAG] CreateCOMPluginObject success: classId=\"" << classId << "\" dispatch=" << dd;
    return dd;
 }
 

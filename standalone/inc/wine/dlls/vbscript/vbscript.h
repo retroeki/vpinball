@@ -38,6 +38,11 @@
 HRESULT external_create_object(const WCHAR *progid, IClassFactory* cf, IUnknown* obj);
 void external_log_info(const char* format, ...);
 void external_log_debug(const char* format, ...);
+/* Returns nonzero if the [CTRL-DIAG] script-diagnostic log channel is enabled.
+   Enable at runtime by setting the env var VPX_SCRIPT_DIAG=1 before app launch.
+   Cached after first call. Default: disabled (zero logging overhead). */
+int external_diag_enabled(void);
+#define EXTERNAL_LOG_DIAG(...) do { if (external_diag_enabled()) external_log_info(__VA_ARGS__); } while (0)
 #endif
 
 typedef struct {

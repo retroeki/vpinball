@@ -569,8 +569,29 @@ HRESULT to_int(VARIANT *v, int *ret)
 
     V_VT(&r) = VT_EMPTY;
     hres = VariantChangeType(&r, v, 0, VT_I4);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+        // [STANDALONE FIX] MS VBScript silently coerces whitespace-only / empty BSTRs to 0,
+        // and many community scripts rely on this (e.g. WoZ ExpandLine: Left(s, Space(n))
+        // — the author wrapped the count in Space() by mistake). Wine is stricter and errors
+        // with TYPE_MISMATCH. Match MS leniency for the whitespace case only — non-whitespace
+        // garbage strings ("abc") still propagate the error so we don't mask real bugs.
+        const VARIANT *src = v;
+        if (V_VT(src) == (VT_VARIANT|VT_BYREF) && V_VARIANTREF(src))
+            src = V_VARIANTREF(src);
+        if (V_VT(src) == VT_BSTR && V_BSTR(src)) {
+            const WCHAR *p = V_BSTR(src);
+            BOOL all_ws = TRUE;
+            while (*p) {
+                if (*p != L' ' && *p != L'\t' && *p != L'\n' && *p != L'\r') { all_ws = FALSE; break; }
+                p++;
+            }
+            if (all_ws) {
+                *ret = 0;
+                return S_OK;
+            }
+        }
         return hres;
+    }
 
     *ret = V_I4(&r);
     return S_OK;
@@ -698,12 +719,18 @@ static IUnknown *create_object(script_ctx_t *ctx, const WCHAR *progid)
 #else
     if (!wcsicmp(progid, L"Scripting.FileSystemObject")) {
         hres = FileSystem_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
+        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
+                          debugstr_w(progid), (unsigned)hres);
     }
     else if (!wcsicmp(progid, L"Scripting.Dictionary")) {
         hres = Dictionary_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
+        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
+                          debugstr_w(progid), (unsigned)hres);
     }
     else {
         hres = external_create_object(progid, cf, (IUnknown*)&obj);
+        external_log_info("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
+                          debugstr_w(progid), (unsigned)hres, obj);
     }
 #endif
     if(FAILED(hres))
@@ -4076,8 +4103,13 @@ static HRESULT format_number_lcid(LCID lcid, VARIANT *var, int ndigits, int nlea
     GetLocaleInfoW(lcid, LOCALE_STHOUSAND, thousands, ARRAY_SIZE(thousands));
 
     if(!GetNumberFormatW(lcid, 0, str, &fmt, buff, ARRAY_SIZE(buff))) {
-        SysFreeString(str);
-        return DISP_E_TYPEMISMATCH;
+        // [STANDALONE FIX] Android NLS shim returns 0 from GetNumberFormatW for some inputs
+        // (NlsValidateLocale returns NULL or get_number_format fails on incomplete NLS data).
+        // Match the graceful fallback pattern from oleaut32/vartype.c:6529 — return the raw
+        // to_string() result so the script gets a usable string instead of TYPE_MISMATCH.
+        WARN("GetNumberFormatW() failed, returning raw number string instead\n");
+        *out = str;
+        return S_OK;
     }
     SysFreeString(str);
 
@@ -4140,8 +4172,11 @@ static HRESULT format_currency_lcid(LCID lcid, VARIANT *var, int ndigits, int nl
     GetLocaleInfoW(lcid, LOCALE_SCURRENCY, currency, ARRAY_SIZE(currency));
 
     if(!GetCurrencyFormatW(lcid, 0, str, &fmt, buff, ARRAY_SIZE(buff))) {
-        SysFreeString(str);
-        return DISP_E_TYPEMISMATCH;
+        // [STANDALONE FIX] Same Android NLS shim issue as format_number_lcid above —
+        // fall back to the raw to_string() result instead of TYPE_MISMATCH.
+        WARN("GetCurrencyFormatW() failed, returning raw number string instead\n");
+        *out = str;
+        return S_OK;
     }
     SysFreeString(str);
 
@@ -4171,10 +4206,18 @@ static HRESULT Global_FormatNumber(BuiltinDisp *This, VARIANT *args, unsigned ar
     TRACE("\n");
     assert(1 <= args_cnt && args_cnt <= 5);
 
+    EXTERNAL_LOG_DIAG("[CTRL-DIAG] Global_FormatNumber called args_cnt=%u arg0_vt=0x%04x", args_cnt, V_VT(args));
     hres = parse_format_args(args, args_cnt, a);
-    if(FAILED(hres)) return hres;
+    if(FAILED(hres)) {
+        EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber parse_format_args FAIL hres=0x%08x", (unsigned)hres);
+        return hres;
+    }
     hres = format_number_lcid(This->ctx->lcid, args, a[0], a[1], a[2], a[3], &str);
-    if(FAILED(hres)) return hres;
+    if(FAILED(hres)) {
+        EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber format_number_lcid FAIL hres=0x%08x", (unsigned)hres);
+        return hres;
+    }
+    EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber OK");
     return return_bstr(res, str);
 }
 
