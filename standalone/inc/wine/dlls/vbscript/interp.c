@@ -677,6 +677,20 @@ static HRESULT variant_call(exec_ctx_t *ctx, VARIANT *v, unsigned arg_cnt, VARIA
         V_VT(res) = VT_BYREF|VT_VARIANT;
         V_BYREF(res) = v;
     }
+#ifdef __STANDALONE__
+    else if (hres == DISP_E_BADINDEX || hres == MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS)) {
+        /* [STANDALONE FIX] Lenient out-of-bounds READ — community scripts
+         * routinely have off-by-one bugs that only land on exact bounds
+         * (AC-DC Premium 1.5: `LampState ((134)*3)` evaluates to
+         * `LampState(402)` against `Dim LampState(200)`). Returning Empty
+         * lets the script keep running with the value silently treated as 0,
+         * matching how the same scripts behave on Windows in similar contexts.
+         * Writes still propagate the error via do_assign_call so we don't
+         * mask actual mutation bugs. */
+        V_VT(res) = VT_EMPTY;
+        hres = S_OK;
+    }
+#endif
 
     stack_popn(ctx, arg_cnt);
     return hres;

@@ -175,6 +175,14 @@ static HRESULT invoke_variant_prop(script_ctx_t *ctx, VARIANT *v, WORD flags, DI
 #ifdef __STANDALONE__
             if (FAILED(hres = array_access(!V_ISBYREF(v) ? V_ARRAY(v) : *V_ARRAYREF(v), dp, &v)))
             {
+                /* [STANDALONE FIX] Same lenient OOB read as interp.c::variant_call —
+                 * out-of-bounds READS return Empty rather than aborting the script.
+                 * See variant_call in interp.c for full rationale. Writes (handled in
+                 * the PROPERTYPUT path below) still propagate errors. */
+                if (hres == DISP_E_BADINDEX || hres == MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS)) {
+                    V_VT(res) = VT_EMPTY;
+                    return S_OK;
+                }
 #else
             if(FAILED(hres = get_array_from_variant(v, &array)))
                 return hres;
