@@ -242,6 +242,11 @@ void PINMAMECALLBACK OnLogMessage(PINMAME_LOG_LEVEL logLevel, const char* format
 static unsigned int onAudioUpdateId;
 static AudioUpdateMsg* audioSrc = nullptr;
 
+// Mirrors the per-game `Settings.Value("sound")` flag from VBScript. Defaults to true at each
+// Controller creation; flipped to false by GameSettings::SetValue when a table wants to silence
+// the ROM emulation (typically because it overlays its own MP3 music via PlayMusic).
+static bool g_runtimeSoundEnabled = true;
+
 static void StopAudioStream()
 {
    if (audioSrc != nullptr)
@@ -263,6 +268,11 @@ int PINMAMECALLBACK OnAudioAvailable(PinmameAudioInfo* p_audioInfo, void* const 
 {
    LOGI("format=%d, channels=%d, sampleRate=%.2f, framesPerSecond=%.2f, samplesPerFrame=%d, bufferSize=%d", p_audioInfo->format, p_audioInfo->channels, p_audioInfo->sampleRate,
       p_audioInfo->framesPerSecond, p_audioInfo->samplesPerFrame, p_audioInfo->bufferSize);
+   if (!enableSoundProp_Val || !g_runtimeSoundEnabled)
+   {
+      StopAudioStream();
+      return p_audioInfo->samplesPerFrame;
+   }
    if (((p_audioInfo->format == PINMAME_AUDIO_FORMAT_INT16) || (p_audioInfo->format == PINMAME_AUDIO_FORMAT_FLOAT))
       && ((p_audioInfo->channels == 1) || (p_audioInfo->channels == 2)))
    {
@@ -282,6 +292,8 @@ int PINMAMECALLBACK OnAudioAvailable(PinmameAudioInfo* p_audioInfo, void* const 
 
 int PINMAMECALLBACK OnAudioUpdated(void* p_buffer, int samples, void* const pUserData)
 {
+   if (!enableSoundProp_Val || !g_runtimeSoundEnabled)
+      return samples;
    if (audioSrc != nullptr)
    {
       // This callback is invoked on the emulation thread, with data only valid in the context of the call.
@@ -301,6 +313,11 @@ int PINMAMECALLBACK OnAudioUpdated(void* p_buffer, int samples, void* const pUse
          }, pendingAudioUpdate);
    }
    return samples;
+}
+
+void SetRuntimeSoundEnabled(bool enabled)
+{
+   g_runtimeSoundEnabled = enabled;
 }
 
 
@@ -369,6 +386,16 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
    {
       assert(controller == nullptr); // We do not support having multiple instance running concurrently
 
+      // Default the per-game runtime gate to enabled. Tables override via
+      // `Game.Settings.Value("sound") = 0` after construction; the global plugin
+      // setting `enableSoundProp_Val` still acts as a master toggle inside the callbacks.
+      g_runtimeSoundEnabled = true;
+
+      // Always register the audio callbacks so per-game runtime overrides can take effect
+      // after the Controller has been constructed (script flow is CreateObject → set
+      // properties → Controller.Run, so config-time gating misses anything the script
+      // does between those steps). The callbacks gate themselves on enableSoundProp_Val
+      // and g_runtimeSoundEnabled.
       PinmameConfig config = {
          PINMAME_AUDIO_FORMAT_INT16,
          44100,
@@ -376,8 +403,8 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
          NULL, // State update => prefer update on request
          NULL, // Display available => prefer state block
          NULL, // Display updated => prefer update on request
-         enableSoundProp_Val ? &OnAudioAvailable : NULL, //
-         enableSoundProp_Val ? &OnAudioUpdated : NULL, //
+         &OnAudioAvailable,
+         &OnAudioUpdated,
          NULL, // Mech available
          NULL, // Mech updated
          NULL, // Solenoid updated => prefer update on request
