@@ -1309,6 +1309,52 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
             return NULL;
         }
         if(!wcsicmp(iter->name, decl->name)) {
+#ifdef __STANDALONE__
+            /* Wine 10.x silently accepted classes with both `Sub Foo` and
+             * `Property Let Foo` (or similar Sub/Function + Property combos)
+             * because they map to different VBDISP slots: Sub/Function/PropGet
+             * → VBDISP_CALLGET, PropLet → VBDISP_LET, PropSet → VBDISP_SET.
+             * Wine 11.8's parser tightened the check to reject any Sub/Function
+             * appearing alongside any same-named member, but that's stricter
+             * than necessary — same-slot conflicts are the real error. The
+             * Lampz/Elvis MOD framework legitimately defines both
+             * `Sub MassAssign(a,b)` and `Property Let MassAssign(a,b)` in one
+             * class; reject only when the new decl collides on the *same*
+             * dispatch slot as something already chained. */
+            #define FUNCDECL_SLOT(t) \
+                ((t) == FUNC_PROPLET ? 1 : ((t) == FUNC_PROPSET ? 2 : 0))
+
+            while(1) {
+                if(FUNCDECL_SLOT(iter->type) == FUNCDECL_SLOT(decl->type)) {
+                    WARN("%s::%s redefined (same dispatch slot)\n",
+                        debugstr_w(class_decl->name), debugstr_w(decl->name));
+                    ctx->error_loc = iter->name_loc;
+                    ctx->hres = MAKE_VBSERROR(VBSE_NAME_REDEFINED);
+                    return NULL;
+                }
+                if(!iter->next_prop_func)
+                    break;
+                iter = iter->next_prop_func;
+            }
+
+            #undef FUNCDECL_SLOT
+
+            /* check_property_args is meaningful for PropGet vs PropLet/Set
+             * (arg count differs by 1). For Sub/Function + PropLet/Set both
+             * sides take the same arg count, which is the default-return
+             * branch. Skip the call when one side is Sub/Function — its
+             * arg-count semantics are unrelated to property arg-count rules. */
+            if(iter->type != FUNC_SUB && iter->type != FUNC_FUNCTION
+                    && decl->type != FUNC_SUB && decl->type != FUNC_FUNCTION) {
+                if(!check_property_args(iter, decl)) {
+                    ctx->error_loc = decl->loc;
+                    ctx->hres = MAKE_VBSERROR(VBSE_PROPERTY_ARG_COUNT_MISMATCH);
+                    return NULL;
+                }
+            }
+            iter->next_prop_func = decl;
+            return class_decl;
+#else
             if(decl->type == FUNC_SUB || decl->type == FUNC_FUNCTION
                     || iter->type == FUNC_SUB || iter->type == FUNC_FUNCTION) {
                 WARN("%s::%s redefined\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
@@ -1336,6 +1382,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
             }
             iter->next_prop_func = decl;
             return class_decl;
+#endif
         }
     }
 
