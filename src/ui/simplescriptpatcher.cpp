@@ -2327,7 +2327,14 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
 
     // ENABLED (upstream-corroborated, "high" confidence):
     result = PatchMultiplicationInSubCall(result);  // Bug 54177; FNAF, IndyJones-Hanibal, Defender VPW
-    result = PatchWScriptShell(result);             // KISS Bigus 1.1, Thundercats 1.0.9
+    // DISABLED 2026-05-08: WScript.Shell is now stubbed at the host level via
+    // ScriptWScriptShell (wired in def.cpp::external_create_object). Scripts
+    // get a real IDispatch with no-op RegRead/RegWrite/Run/Sleep/etc., so
+    // Subs that mix WshShell calls with other init code (Sonic LoadUltraDMD:
+    // WshShell.RegWrite ... then Set UltraDMD = CreateObject(...)) run to
+    // completion instead of having their bodies wholesale-stubbed by the
+    // patcher's regex (which destroyed the post-RegWrite UltraDMD init).
+    // result = PatchWScriptShell(result);             // KISS Bigus 1.1, Thundercats 1.0.9
     result = PatchNewClassCall(result);             // (new Class)(args) - bug class confirmed
     // DISABLED 2026-05-08: Wine 11.8 brings bug 58056 fix (chained array indexing) so
     // original `DTArray = Array(Array(...))` + `DTarray(i)(2).transz` syntax works natively.

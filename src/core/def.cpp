@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include "standalone/PoleStorage.h"
 #include "core/ScriptArrayList.h"
+#include "core/ScriptWScriptShell.h"
 #endif
 
 #include <charconv>
@@ -891,6 +892,22 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
       IDispatch* arr = CreateScriptArrayList();
       if (!arr) return E_OUTOFMEMORY;
       if (ppObj) *ppObj = (IUnknown*)arr;
+      return S_OK;
+   }
+
+   // WScript.Shell — host-side stub. Real WScript.Shell isn't available on
+   // Wine/Android (no Windows registry, no shell exec). Most community VPX
+   // tables only touch RegRead/RegWrite for settings probes (UltraDMD config,
+   // B2S settings, etc.) and Sleep/Run for timing/launches. Stub no-ops let
+   // scripts continue past these calls instead of dying with 424 — and
+   // critically, lets the Sub bodies that wrap WshShell calls reach their
+   // *other* code (e.g. Sonic's LoadUltraDMD does WshShell.RegWrite then
+   // Set UltraDMD = CreateObject(...) — without the stub the Sub would die
+   // on the first RegWrite and UltraDMD would never be created).
+   if (wcscmp(progid, L"WScript.Shell") == 0) {
+      IDispatch* shell = CreateScriptWScriptShell();
+      if (!shell) return E_OUTOFMEMORY;
+      if (ppObj) *ppObj = (IUnknown*)shell;
       return S_OK;
    }
 
