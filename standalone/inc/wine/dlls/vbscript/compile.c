@@ -1188,7 +1188,29 @@ static HRESULT compile_assignment(compile_ctx_t *ctx, expression_t *left, expres
         break;
     case EXPR_CALL:
         call_expr = (call_expression_t*)left;
-#ifndef __STANDALONE__
+#ifdef __STANDALONE__
+        /* Chained-write: LHS is a CALL whose target is itself a CALL — e.g.
+         * `DTArray(i)(j) = x`. The default path below assumes call_expr->call_expr
+         * is an EXPR_MEMBER and does an unsafe cast; for chained writes that
+         * cast yields garbage and the script aborts with VBSE_OBJECT_REQUIRED.
+         * Compile the inner CALL as a normal expression (pushing the inner
+         * receiver variant on the stack), then emit the new OP_assign_call /
+         * OP_set_call opcode which dispatches at runtime based on receiver type
+         * (SAFEARRAY → array_access + assign; DISPATCH → propput on DISPID_VALUE). */
+        if (call_expr->call_expr->type == EXPR_CALL) {
+            hres = compile_expression(ctx, call_expr->call_expr);
+            if (FAILED(hres)) return hres;
+            hres = compile_expression(ctx, value_expr);
+            if (FAILED(hres)) return hres;
+            hres = compile_args(ctx, call_expr->args, &args_cnt);
+            if (FAILED(hres)) return hres;
+            hres = push_instr_uint(ctx, is_set ? OP_set_call : OP_assign_call, args_cnt);
+            if (FAILED(hres)) return hres;
+            if (!emit_catch(ctx, 0))
+                return E_OUTOFMEMORY;
+            return S_OK;
+        }
+#else
         assert(call_expr->call_expr->type == EXPR_MEMBER);
 #endif
         member_expr = (member_expression_t*)call_expr->call_expr;

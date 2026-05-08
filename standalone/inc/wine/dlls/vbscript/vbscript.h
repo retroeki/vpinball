@@ -262,6 +262,7 @@ typedef enum {
 #define OP_LIST                                   \
     X(add,            1, 0,           0)          \
     X(and,            1, 0,           0)          \
+    X(assign_call,    1, ARG_UINT,    0)          \
     X(assign_ident,   1, ARG_BSTR,    ARG_UINT)   \
     X(assign_member,  1, ARG_BSTR,    ARG_UINT)   \
     X(bool,           1, ARG_INT,     0)          \
@@ -316,6 +317,7 @@ typedef enum {
     X(redim_preserve, 1, ARG_BSTR,    ARG_UINT)   \
     X(ret,            0, 0,           0)          \
     X(retval,         1, 0,           0)          \
+    X(set_call,       1, ARG_UINT,    0)          \
     X(set_ident,      1, ARG_BSTR,    ARG_UINT)   \
     X(set_member,     1, ARG_BSTR,    ARG_UINT)   \
     X(stack,          1, ARG_UINT,    0)          \

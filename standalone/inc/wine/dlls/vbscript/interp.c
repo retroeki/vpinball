@@ -1234,6 +1234,94 @@ static HRESULT interp_set_member(exec_ctx_t *ctx)
     return S_OK;
 }
 
+#ifdef __STANDALONE__
+/* Chained-call assignment: handles `expr(args) = value` where the LHS expression
+ * isn't a simple identifier or member access. Compile pushes:
+ *     receiver-variant, value, args[0..arg_cnt-1]   (top of stack last)
+ * The receiver is whatever the inner CALL expression evaluated to — typically a
+ * VT_BYREF|VT_VARIANT pointing to a SAFEARRAY-holding slot (from variant_call's
+ * array path), or a VT_DISPATCH for object-property writes through chained calls.
+ *
+ * Without this opcode, `DTArray(i)(j) = x` style writes fail because the existing
+ * compile_assignment path only handles EXPR_MEMBER as the inner expression and
+ * casts EXPR_CALL inners as members (UB). The READ side already works via
+ * variant_call (Wine bug 58056 fix); this is its WRITE counterpart.
+ */
+static HRESULT do_assign_call(exec_ctx_t *ctx, BOOL is_set)
+{
+    const unsigned arg_cnt = ctx->instr->arg1.uint;
+    DISPPARAMS dp;
+    HRESULT hres;
+    VARIANT *recv;
+
+    TRACE("%u set=%d\n", arg_cnt, is_set);
+
+    /* receiver is below 1 value + arg_cnt args */
+    recv = stack_top(ctx, arg_cnt + 1);
+    if (V_VT(recv) == (VT_VARIANT|VT_BYREF) && V_VARIANTREF(recv))
+        recv = V_VARIANTREF(recv);
+
+    switch (V_VT(recv)) {
+    case VT_ARRAY|VT_BYREF|VT_VARIANT:
+    case VT_ARRAY|VT_VARIANT: {
+        SAFEARRAY *array = (V_VT(recv) & VT_BYREF) ? *V_ARRAYREF(recv) : V_ARRAY(recv);
+        VARIANT *dst;
+
+        vbstack_to_dp(ctx, arg_cnt, FALSE, &dp);
+        hres = array_access(array, &dp, &dst);
+        if (FAILED(hres))
+            return hres;
+
+        /* value lives at stack offset arg_cnt (just above the args) */
+        hres = assign_value(ctx, dst, stack_top(ctx, arg_cnt),
+                            is_set ? DISPATCH_PROPERTYPUTREF : 0);
+        if (FAILED(hres))
+            return hres;
+        break;
+    }
+    case VT_DISPATCH: {
+        IDispatch *obj = V_DISPATCH(recv);
+        if (!obj) {
+            WARN("NULL obj on chained-call assign\n");
+            return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
+        }
+        vbstack_to_dp(ctx, arg_cnt, TRUE, &dp);
+        hres = disp_propput(ctx->script, obj, DISPID_VALUE,
+                            is_set ? DISPATCH_PROPERTYPUTREF : DISPATCH_PROPERTYPUT,
+                            &dp);
+        if (FAILED(hres))
+            return hres;
+        break;
+    }
+    case VT_EMPTY:
+    case VT_NULL:
+        WARN("uninitialised receiver vt=0x%04x for chained assign\n", V_VT(recv));
+        return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
+    default:
+        WARN("unsupported receiver vt=0x%04x for chained assign\n", V_VT(recv));
+        return DISP_E_TYPEMISMATCH;
+    }
+
+    stack_popn(ctx, arg_cnt + 2);
+    return S_OK;
+}
+
+static HRESULT interp_assign_call(exec_ctx_t *ctx)
+{
+    return do_assign_call(ctx, FALSE);
+}
+
+static HRESULT interp_set_call(exec_ctx_t *ctx)
+{
+    return do_assign_call(ctx, TRUE);
+}
+#else
+/* Non-standalone builds: opcode is registered in OP_LIST but never emitted by
+ * compile.c, so the runtime stub just errors. */
+static HRESULT interp_assign_call(exec_ctx_t *ctx) { FIXME("not implemented\n"); return E_NOTIMPL; }
+static HRESULT interp_set_call(exec_ctx_t *ctx)    { FIXME("not implemented\n"); return E_NOTIMPL; }
+#endif
+
 static HRESULT interp_const(exec_ctx_t *ctx)
 {
     BSTR arg = ctx->instr->arg1.bstr;

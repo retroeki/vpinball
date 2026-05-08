@@ -994,13 +994,16 @@ std::string SimpleScriptPatcher::PatchAmbiguousCallParens(const std::string& scr
 // 3. Convert DTArray(i)(n) to DTArray(i).property
 // =============================================================================
 std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
-    // Check if script uses DTArray with chained access
-    if (script.find("DTArray") == std::string::npos) {
+    // Check if script uses DTArray with chained access (case-insensitive — VBScript
+    // identifiers are case-insensitive and AC-DC LUCI's BallSearch uses lowercase
+    // `DTarray(i)(2)` while declaring `Dim DTArray` with capital A).
+    static const RE2 dtArrayMention(R"((?i)\bDTArray\b)");
+    if (!RE2Search(script, dtArrayMention)) {
         return script;  // No DTArray usage
     }
 
     // Check for chained access pattern DTArray(i)(n)
-    static const RE2 checkPattern(R"(DTArray\s*\([^)]+\)\s*\()");
+    static const RE2 checkPattern(R"((?i)DTArray\s*\([^)]+\)\s*\()");
     if (!RE2Search(script, checkPattern)) {
         return script;  // No chained access pattern
     }
@@ -1072,10 +1075,15 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
         return prefix + converted + suffix;
     });
 
-    // Step 2: Convert DTArray(i)(n) to DTArray(i).property in a single pass
+    // Step 2: Convert DTArray(i)(n) to DTArray(i).property in a single pass.
+    // Case-insensitive (?i) — VBScript identifiers are case-insensitive; some scripts
+    // declare `Dim DTArray` but reference it as `DTarray` at call sites (AC-DC LUCI
+    // BallSearch is the canonical example). Without (?i) we'd patch the init but miss
+    // those call sites, leaving DropTarget objects being indexed → ARITY_MISMATCH on
+    // their default `init(...)` member.
     // Index mapping: 0=primary, 1=secondary, 2=prim, 3=sw, 4=animate, 5=isDropped
     static const char* kDTProps[] = { ".primary", ".secondary", ".prim", ".sw", ".animate", ".isDropped" };
-    static const RE2 dtIdxAll(R"(DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-5])\s*\))");
+    static const RE2 dtIdxAll(R"((?i)DTArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-5])\s*\))");
     r = RE2ReplaceWithCallback(r, dtIdxAll, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         int idx = m[2][0] - '0';
@@ -1108,13 +1116,15 @@ std::string SimpleScriptPatcher::PatchDTArray(const std::string& script) {
 // 3. Convert STArray(i)(n) to STArray(i).property
 // =============================================================================
 std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
-    // Check if script uses STArray with chained access
-    if (script.find("STArray") == std::string::npos) {
+    // Check if script uses STArray with chained access (case-insensitive — same
+    // mixed-case-call-site issue as DTArray, see PatchDTArray for context).
+    static const RE2 stArrayMention(R"((?i)\bSTArray\b)");
+    if (!RE2Search(script, stArrayMention)) {
         return script;  // No STArray usage
     }
 
     // Check for chained access pattern STArray(i)(n)
-    static const RE2 checkPattern(R"(STArray\s*\([^)]+\)\s*\()");
+    static const RE2 checkPattern(R"((?i)STArray\s*\([^)]+\)\s*\()");
     if (!RE2Search(script, checkPattern)) {
         return script;  // No chained access pattern
     }
@@ -1184,10 +1194,11 @@ std::string SimpleScriptPatcher::PatchSTArray(const std::string& script) {
         return prefix + converted + suffix;
     });
 
-    // Step 2: Convert STArray(i)(n) to STArray(i).property in a single pass
+    // Step 2: Convert STArray(i)(n) to STArray(i).property in a single pass.
+    // Case-insensitive (?i) — see PatchDTArray for the AC-DC LUCI mixed-case background.
     // Index mapping: 0=primary, 1=prim, 2=sw, 3=animate, 4=id (for 5-element arrays)
     static const char* kSTProps[] = { ".primary", ".prim", ".sw", ".animate", ".id" };
-    static const RE2 stIdxAll(R"(STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-4])\s*\))");
+    static const RE2 stIdxAll(R"((?i)STArray\s*\(\s*([^)]+)\s*\)\s*\(\s*([0-4])\s*\))");
     r = RE2ReplaceWithCallback(r, stIdxAll, [&totalCount](const RE2Match& m) -> std::string {
         totalCount++;
         int idx = m[2][0] - '0';
@@ -2318,8 +2329,17 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     result = PatchMultiplicationInSubCall(result);  // Bug 54177; FNAF, IndyJones-Hanibal, Defender VPW
     result = PatchWScriptShell(result);             // KISS Bigus 1.1, Thundercats 1.0.9
     result = PatchNewClassCall(result);             // (new Class)(args) - bug class confirmed
-    result = PatchDTArray(result);                  // DT class conversion; many WPC tables
-    result = PatchSTArray(result);                  // ST class conversion; Monster Bash, TZ, Dr Who
+    // DISABLED 2026-05-08: Wine 11.8 brings bug 58056 fix (chained array indexing) so
+    // original `DTArray = Array(Array(...))` + `DTarray(i)(2).transz` syntax works natively.
+    // The patcher converted the original arrays into a class hierarchy (Class DropTarget +
+    // Set DT1 = (new DropTarget)(...)) which then required EVERY call site to be rewritten
+    // — fragile, missed mixed-case variants like AC-DC LUCI's `DTarray(i)(2)` lowercase 'a'
+    // in BallSearch, leaving DropTarget objects being indexed → ARITY_MISMATCH on default
+    // init member. Better to leave the original Array(Array(...)) untouched and let Wine
+    // handle native chained indexing. If empirical testing shows regressions on tables that
+    // relied on the conversion, gate this behind a flag rather than re-enabling globally.
+    // result = PatchDTArray(result);                  // DT class conversion; many WPC tables
+    // result = PatchSTArray(result);                  // ST class conversion; Monster Bash, TZ, Dr Who
     result = PatchAmbiguousCallParens(result);      // Defender VPW v1.4
     result = PatchPinUpPlayerFileAccess(result);    // Thundercats 1.0.9
     result = PatchForwardConstantReference(result); // Wheel of Fortune Stern, Flash Gordon VPW, Cactus Canyon
