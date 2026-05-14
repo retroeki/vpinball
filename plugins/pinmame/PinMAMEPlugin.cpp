@@ -206,6 +206,33 @@ static uint32_t endpointId;
 
 static Controller* controller = nullptr;
 
+// Host-side NVRAM query (subscribed in Load, unsubscribed in Unload). Lets
+// the host (VPinballLib) request the running ROM's current NVRAM bytes
+// without going through the script API or the .nv file on disk.
+//
+// Payload struct must match the host's declaration; intentionally simple
+// POD so we don't have to share a header between host and plugin.
+struct PinMAMENvramQuery {
+   uint8_t* buffer;       // caller-provided output buffer
+   int maxBytes;          // capacity of buffer
+   int bytesWritten;      // filled by callback (0 if not a ROM table)
+   int isNvramTable;      // filled by callback (1 if a Controller is running)
+};
+static unsigned int getNvramMsgId = 0;
+static void OnGetNvramRequest(const unsigned int /*msgId*/, void* /*context*/, void* msgData)
+{
+   PinMAMENvramQuery* q = static_cast<PinMAMENvramQuery*>(msgData);
+   if (q == nullptr) return;
+   q->bytesWritten = 0;
+   q->isNvramTable = (controller != nullptr) ? 1 : 0;
+   if (controller == nullptr || q->buffer == nullptr || q->maxBytes <= 0) return;
+   const auto bytes = controller->GetNVRAM();
+   const int n = static_cast<int>(bytes.size());
+   const int copyBytes = (n < q->maxBytes) ? n : q->maxBytes;
+   memcpy(q->buffer, bytes.data(), copyBytes);
+   q->bytesWritten = copyBytes;
+}
+
 PSC_ERROR_IMPLEMENT(scriptApi); // Implement script error
 
 LPI_IMPLEMENT // Implement shared log support
@@ -467,11 +494,21 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
    scriptApi->SetCOMObjectOverride("VPinMAME.Controller", Controller_SCD);
 
    PinmameSetMsgAPI(const_cast<MsgPluginAPI*>(msgApi), endpointId);
+
+   // Host-side NVRAM query subscription.
+   getNvramMsgId = msgApi->GetMsgID("VPINBALL", "GET_NVRAM");
+   msgApi->SubscribeMsg(endpointId, getNvramMsgId, &OnGetNvramRequest, nullptr);
 }
 
 MSGPI_EXPORT void MSGPIAPI PinMAMEPluginUnload()
 {
    PinmameSetMsgAPI(nullptr, 0);
+
+   if (getNvramMsgId != 0) {
+      msgApi->UnsubscribeMsg(getNvramMsgId, &OnGetNvramRequest);
+      msgApi->ReleaseMsgID(getNvramMsgId);
+      getNvramMsgId = 0;
+   }
 
    msgApi->ReleaseMsgID(onAudioUpdateId);
    scriptApi->SetCOMObjectOverride("VPinMAME.Controller", nullptr);

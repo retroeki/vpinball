@@ -136,6 +136,17 @@ VPINBALLAPI float VPinballGetViewZ();
 VPINBALLAPI const char* VPinballGetTableName();
 VPINBALLAPI const char* VPinballGetTableVersion();
 
+// NVRAM (PinMAME-emulated ROM tables only). Reads the running emulator's
+// in-memory NVRAM. Returns the number of bytes written to `buffer`.
+//
+//   buffer       caller-provided buffer
+//   maxBytes     size of `buffer`
+//   isNvramTable [out] 1 if a PinMAME Controller is currently running (ROM
+//                table); 0 for EM / original VPX-only tables.
+//
+// Returns 0 when isNvramTable=0 or when no bytes are available yet.
+VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTable);
+
 // View Mode
 
 VPINBALLAPI VPINBALL_VIEW_MODE VPinballGetViewMode();

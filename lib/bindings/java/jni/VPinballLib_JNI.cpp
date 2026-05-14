@@ -515,6 +515,20 @@ JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetTable
    return env->NewStringUTF(VPinballGetTableVersion());
 }
 
+// Returns the running ROM's NVRAM bytes, or null for EM / non-ROM tables.
+// Sized to PinMAME's max NVRAM (~64 KB). The actual ROM rarely uses that much.
+JNIEXPORT jbyteArray JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetNVRAM(JNIEnv* env, jobject obj)
+{
+   static constexpr int kMaxNvramBytes = 65536;
+   std::vector<uint8_t> buffer(kMaxNvramBytes);
+   int isNvramTable = 0;
+   const int written = VPinballGetNVRAM(buffer.data(), kMaxNvramBytes, &isNvramTable);
+   if (!isNvramTable || written <= 0) return nullptr;
+   jbyteArray result = env->NewByteArray(written);
+   env->SetByteArrayRegion(result, 0, written, reinterpret_cast<const jbyte*>(buffer.data()));
+   return result;
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetTable(JNIEnv* env, jobject obj)
 {
    return VPinballResetTable();

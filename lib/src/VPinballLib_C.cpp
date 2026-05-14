@@ -8,6 +8,7 @@
 
 #include "../include/vpinball/VPinballLib_C.h"
 #include "VPinballLib.h"
+#include "plugins/MsgPluginManager.h"
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
@@ -405,6 +406,29 @@ VPINBALLAPI const char* VPinballGetTableVersion()
    thread_local string tableVersion;
    tableVersion = VPinballLib::VPinballLib::Instance().GetTableVersion();
    return tableVersion.c_str();
+}
+
+// Payload shape must match the PinMAME plugin's PinMAMENvramQuery struct.
+namespace {
+struct VPinballNvramQuery {
+   uint8_t* buffer;
+   int maxBytes;
+   int bytesWritten;
+   int isNvramTable;
+};
+}
+
+VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTable)
+{
+   if (isNvramTable) *isNvramTable = 0;
+   if (!buffer || maxBytes <= 0) return 0;
+   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "GET_NVRAM");
+   VPinballNvramQuery q { buffer, maxBytes, 0, 0 };
+   msgApi.BroadcastMsg(0, msgId, &q);
+   msgApi.ReleaseMsgID(msgId);
+   if (isNvramTable) *isNvramTable = q.isNvramTable;
+   return q.bytesWritten;
 }
 
 VPINBALLAPI VPINBALL_STATUS VPinballResetTable()
