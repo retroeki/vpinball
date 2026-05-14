@@ -21,6 +21,15 @@
 #define STBI_NO_FAILURE_STRINGS
 #include "stb_image.h"
 
+// stb_image_resize2 (v2.18, public domain): SIMD-vectorized resize used to
+// replace FreeImage_Rescale's scalar double-precision bilinear for the
+// 8-bit RGB/RGBA hot path. Also used to bring JpegScaledDecode /
+// PngScaledDecode outputs down to the exact MaxTexDim target (libjpeg DCT
+// scale is only 1/2/4/8, libpng subsampling is integer; both leave the
+// output 1.3-2x larger than requested when the cap is not a power of two).
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "stb_image_resize2.h"
+
 #ifdef __STANDALONE__
 #include <fstream>
 #include <iostream>
@@ -46,6 +55,75 @@ extern "C" {
 #include <ImathBox.h>
 #include <half.h>
 #define TEX_LOG(...) __android_log_print(ANDROID_LOG_WARN, "VPinball_Mem", __VA_ARGS__)
+
+// Bilinear downsize a uint8 BaseTexture so its largest dimension is at most
+// `maxDim`, preserving aspect ratio. Returns the input unchanged when it
+// already fits or when its format isn't a uint8 layout we handle. Used to
+// close the rounding gap left by JpegScaledDecode (libjpeg's DCT scale is
+// only 1/2/4/8) and PngScaledDecode (integer subsample): when maxDim is
+// not a power of two of the source, both leave a result still larger than
+// requested. stbir's SIMD bilinear is much cheaper than running the result
+// through FreeImage_Rescale's scalar double-precision path.
+static std::shared_ptr<BaseTexture> ResizeUint8ToFit(
+   const std::shared_ptr<BaseTexture>& src, const unsigned int maxDim, const bool isImageData) noexcept
+{
+   if (!src || maxDim == 0)
+      return src;
+   const unsigned int srcW = src->width();
+   const unsigned int srcH = src->height();
+   if (srcW <= maxDim && srcH <= maxDim)
+      return src;
+
+   // Preserve aspect ratio: scale the larger axis to maxDim, derive the smaller.
+   unsigned int dstW, dstH;
+   if (srcW >= srcH) {
+      dstW = maxDim;
+      dstH = (unsigned int)(((uint64_t)srcH * (uint64_t)maxDim) / (uint64_t)srcW);
+      if (dstH < 1) dstH = 1;
+   } else {
+      dstH = maxDim;
+      dstW = (unsigned int)(((uint64_t)srcW * (uint64_t)maxDim) / (uint64_t)srcH);
+      if (dstW < 1) dstW = 1;
+   }
+
+   int channels;
+   stbir_pixel_layout layout;
+   bool srgb;
+   switch (src->m_format) {
+      case BaseTexture::SRGB:  channels = 3; layout = STBIR_RGB;      srgb = isImageData; break;
+      case BaseTexture::RGB:   channels = 3; layout = STBIR_RGB;      srgb = false;       break;
+      case BaseTexture::SRGBA: channels = 4; layout = STBIR_RGBA;     srgb = isImageData; break;
+      case BaseTexture::RGBA:  channels = 4; layout = STBIR_RGBA;     srgb = false;       break;
+      case BaseTexture::BW:    channels = 1; layout = STBIR_1CHANNEL; srgb = false;       break;
+      default:
+         // Float/half formats, or anything else this helper doesn't speak. Caller
+         // falls back to FreeImage_Rescale or whatever its pre-existing path was.
+         return src;
+   }
+
+   auto dst = BaseTexture::Create(dstW, dstH, src->m_format);
+   if (!dst)
+      return src; // OOM: keep oversized source rather than dropping the texture.
+
+   const int srcStride = (int)srcW * channels;
+   const int dstStride = (int)dstW * channels;
+   const unsigned char* const srcPixels = static_cast<const unsigned char*>(src->data());
+   unsigned char* const dstPixels = static_cast<unsigned char*>(dst->data());
+
+   unsigned char* out = srgb
+      ? stbir_resize_uint8_srgb(srcPixels, (int)srcW, (int)srcH, srcStride,
+                                dstPixels, (int)dstW, (int)dstH, dstStride, layout)
+      : stbir_resize_uint8_linear(srcPixels, (int)srcW, (int)srcH, srcStride,
+                                  dstPixels, (int)dstW, (int)dstH, dstStride, layout);
+   if (!out)
+      return src; // Resize failed for some reason: don't lose the texture.
+
+   // Carry forward the source's "real" dimensions (the unscaled originals from
+   // the file header) so the renderer can report them where they matter.
+   dst->m_realWidth = src->m_realWidth ? src->m_realWidth : srcW;
+   dst->m_realHeight = src->m_realHeight ? src->m_realHeight : srcH;
+   return dst;
+}
 
 // JPEG scaled decode: decode large JPEGs at 1/2, 1/4, or 1/8 scale at the DCT level.
 // This avoids allocating full-resolution pixel data (e.g., 256MB for an 8K texture),
@@ -151,7 +229,13 @@ static std::shared_ptr<BaseTexture> JpegScaledDecode(const void* data, const siz
    // TEX_LOG("JPEG scaled decode: %ux%u -> %ux%u (1/%u) | Peak RAM saved: ~%zuMB",
    //    imgW, imgH, outW, outH, scale_denom, savedMB);
 
-   return tex;
+   // libjpeg's DCT scale denominator is restricted to 1/2/4/8. When the user
+   // cap isn't a power of two of the source (e.g. 8192 with maxDim=1536:
+   // denom 4 leaves 2048, denom 8 drops to 1024 below target), the output
+   // is still above maxTexDim. Close the gap with a SIMD bilinear step
+   // rather than letting the texture-loading path log "due to low memory"
+   // and the renderer hold an oversized buffer.
+   return ResizeUint8ToFit(tex, maxTexDim, isImageData);
 }
 
 // PNG scaled decode: read header for dimensions, then decode row-by-row with subsampling.
@@ -235,10 +319,11 @@ static std::shared_ptr<BaseTexture> PngScaledDecode(const void* data, const size
       }
    }
 
-   if (scale_denom <= 1) {
-      png_destroy_read_struct(&png_ptr, &info_ptr, nullptr);
-      return nullptr;
-   }
+   // scale_denom == 1 means the source already fits maxTexDim. We previously
+   // returned nullptr here and let FreeImage_LoadFromMemory + FreeImage_Rescale
+   // handle it, but FreeImage's decoder + rescale is significantly slower than
+   // a straight libpng row-by-row decode. Stay on this path and skip the
+   // subsampling step at the bottom of the loop.
 
    // Normalize all PNG variants to 8-bit RGB or RGBA:
    if (color_type == PNG_COLOR_TYPE_PALETTE)
@@ -301,10 +386,17 @@ static std::shared_ptr<BaseTexture> PngScaledDecode(const void* data, const size
       if (outY >= outH)
          break;
 
-      // Subsample every scale_denom-th pixel
       uint8_t* dstRow = dst + (size_t)outY * dstRowBytes;
-      for (unsigned int srcX = 0, dstX = 0; srcX < imgW && dstX < outW; srcX += scale_denom, dstX++) {
-         memcpy(dstRow + (size_t)dstX * channels, rowBuf + (size_t)srcX * channels, channels);
+      if (scale_denom == 1) {
+         // Whole-row copy when no subsampling is needed: avoids the per-pixel
+         // memcpy hot loop below. Matters because the no-resize path now runs
+         // for every PNG that already fits maxTexDim.
+         memcpy(dstRow, rowBuf, dstRowBytes);
+      } else {
+         // Subsample every scale_denom-th pixel
+         for (unsigned int srcX = 0, dstX = 0; srcX < imgW && dstX < outW; srcX += scale_denom, dstX++) {
+            memcpy(dstRow + (size_t)dstX * channels, rowBuf + (size_t)srcX * channels, channels);
+         }
       }
       outY++;
    }
@@ -321,7 +413,11 @@ static std::shared_ptr<BaseTexture> PngScaledDecode(const void* data, const size
    // TEX_LOG("PNG scaled decode: %ux%u -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
    //    imgW, imgH, outW, outH, scale_denom, channels, fullMB, outMB);
 
-   return tex;
+   // Integer subsample (scale_denom 2/4/8) leaves the output at imgW/denom,
+   // which is rarely the maxTexDim cap. Bring it down to exact target so the
+   // texture-load path stops logging "due to low memory" for power-of-two
+   // PNGs that just happened to round up.
+   return ResizeUint8ToFit(tex, maxTexDim, isImageData);
 }
 
 // EXR scaled decode: use OpenEXR scanline API (already in libfreeimage.so) to decode
@@ -550,15 +646,22 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromFile(const string& filename,
 std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const size_t size, const bool isImageData, unsigned int maxTexDimension, bool resizeOnLowMem) noexcept
 {
    std::shared_ptr<BaseTexture> tex;
-   
-   // Try to load using fast JPG path via stbi if no texture resize must be triggered
-   if (maxTexDimension == 0 && !resizeOnLowMem)
+
+   // Try to load using fast JPG path via stbi when no resize is needed. We
+   // peek at the header dimensions first via stbi_info_from_memory so we can
+   // take the fast path even when the caller passed a maxTexDimension cap,
+   // as long as the source already fits inside it. Without this check, every
+   // JPEG in a table with MaxTexDim>0 (most users) skipped stbi entirely and
+   // fell through to FreeImage even when no resize was needed.
+   if (!resizeOnLowMem)
    {
-      int x, y, channels_in_file = 0;
+      int x = 0, y = 0, channels_in_file = 0;
       const int ok = stbi_info_from_memory(static_cast<stbi_uc const *>(data), static_cast<int>(size), &x, &y, &channels_in_file); // Request stbi to convert image to BW, SRGB or SRGBA
       assert(channels_in_file != 2);
       assert(channels_in_file <= 4); // 2 or >4 should never happen for JPEGs (4 also not, but we handle it anyway)
-      unsigned char * const __restrict stbi_data = (ok && channels_in_file != 2 && channels_in_file <= 4) ?
+      const bool fitsCap = (maxTexDimension == 0)
+                        || (ok && (unsigned)x <= maxTexDimension && (unsigned)y <= maxTexDimension);
+      unsigned char * const __restrict stbi_data = (fitsCap && ok && channels_in_file != 2 && channels_in_file <= 4) ?
           stbi_load_from_memory(static_cast<stbi_uc const *>(data), static_cast<int>(size), &x, &y, &channels_in_file, channels_in_file) :
           nullptr;
       if (stbi_data) // will only enter this path for JPG files
@@ -671,6 +774,56 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
    return tex;
 }
 
+// Fast-path resize for 24- and 32-bit FIT_BITMAP using stb_image_resize2's
+// SIMD bilinear. FreeImage's own FreeImage_Rescale is a scalar
+// double-precision two-pass implementation (FreeImageToolkit/Resize.cpp) that
+// is significantly slower for the common JPEG/PNG/BMP cases that decode into
+// 24/32-bit packed buffers. Returns nullptr when the source isn't a format
+// this helper handles (palettized, 1-bit, 16-bit gray, FP16/FP32, etc.) or
+// when the destination allocation fails. Caller falls back to
+// FreeImage_Rescale on nullptr.
+//
+// FreeImage's 24/32-bit FIT_BITMAP on little-endian platforms is BGR/BGRA
+// byte layout (FI_RGBA_RED=2, FI_RGBA_GREEN=1, FI_RGBA_BLUE=0,
+// FI_RGBA_ALPHA=3). stbir is order-agnostic across the three R/G/B
+// channels for the resize itself, so we tell it the input is BGR(A) and
+// get matching BGR(A) on output without any swizzle.
+static FIBITMAP* RescaleFIBitmap_stbir(FIBITMAP* const src, const unsigned int dstW, const unsigned int dstH, const bool isImageData) noexcept
+{
+   if (FreeImage_GetImageType(src) != FIT_BITMAP)
+      return nullptr;
+   const unsigned int bpp = FreeImage_GetBPP(src);
+   if (bpp != 24 && bpp != 32)
+      return nullptr;
+
+   const unsigned int srcW = FreeImage_GetWidth(src);
+   const unsigned int srcH = FreeImage_GetHeight(src);
+   FIBITMAP* const dst = FreeImage_Allocate((int)dstW, (int)dstH, (int)bpp);
+   if (dst == nullptr)
+      return nullptr;
+
+#if (FI_RGBA_RED == 2) && (FI_RGBA_GREEN == 1) && (FI_RGBA_BLUE == 0) && (FI_RGBA_ALPHA == 3)
+   const stbir_pixel_layout layout = (bpp == 32) ? STBIR_BGRA : STBIR_BGR;
+#else
+   const stbir_pixel_layout layout = (bpp == 32) ? STBIR_RGBA : STBIR_RGB;
+#endif
+   const int srcStride = (int)FreeImage_GetPitch(src);
+   const int dstStride = (int)FreeImage_GetPitch(dst);
+   const unsigned char* const srcBits = FreeImage_GetBits(src);
+   unsigned char* const dstBits = FreeImage_GetBits(dst);
+
+   unsigned char* const result = isImageData
+      ? stbir_resize_uint8_srgb(srcBits, (int)srcW, (int)srcH, srcStride,
+                                dstBits, (int)dstW, (int)dstH, dstStride, layout)
+      : stbir_resize_uint8_linear(srcBits, (int)srcW, (int)srcH, srcStride,
+                                  dstBits, (int)dstW, (int)dstH, dstStride, layout);
+   if (result == nullptr) {
+      FreeImage_Unload(dst);
+      return nullptr;
+   }
+   return dst;
+}
+
 std::shared_ptr<BaseTexture> BaseTexture::CreateFromFreeImage(FIBITMAP* dib, const bool isImageData, unsigned int maxTexDim, bool resizeOnLowMem) noexcept
 {
    // check if Textures exceed the maximum texture dimension
@@ -707,7 +860,12 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromFreeImage(FIBITMAP* dib, con
              newHeight = min(pictureHeight * newWidth / pictureWidth,  maxTexDim);
          else
              newWidth  = min(pictureWidth * newHeight / pictureHeight, maxTexDim);
-         dibResized = FreeImage_Rescale(dib, newWidth, newHeight, FILTER_BILINEAR); //!! use a better filter in case scale ratio is pretty high?
+         // Try the stbir fast path first; falls back to FreeImage_Rescale when
+         // the source isn't a 24/32-bit FIT_BITMAP (palettized PNG, FP16/FP32
+         // HDR, etc) or when the stbir-allocated destination FIBITMAP fails.
+         dibResized = RescaleFIBitmap_stbir(dib, newWidth, newHeight, isImageData);
+         if (dibResized == nullptr)
+            dibResized = FreeImage_Rescale(dib, newWidth, newHeight, FILTER_BILINEAR); //!! use a better filter in case scale ratio is pretty high?
       }
       else if (pictureWidth < MIN_TEXTURE_SIZE || pictureHeight < MIN_TEXTURE_SIZE)
       {
