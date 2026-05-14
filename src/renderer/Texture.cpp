@@ -125,6 +125,64 @@ static std::shared_ptr<BaseTexture> ResizeUint8ToFit(
    return dst;
 }
 
+// Half-float (FP16) sibling of ResizeUint8ToFit, used to close the rounding
+// gap left by ExrScaledDecode (OpenEXR scanline subsample is integer, same
+// 1/2/4/8 family as JPEG/PNG). EXR Nestmap-style 8K HDR textures used to
+// land at 2048x2048 when MaxTexDim=1536, holding 1.7x more pixels than the
+// renderer asked for. stbir's medium API speaks HALF_FLOAT natively, so we
+// can downsize the FP16 buffer directly without widening to FP32 and back.
+static std::shared_ptr<BaseTexture> ResizeHalfFloatToFit(
+   const std::shared_ptr<BaseTexture>& src, const unsigned int maxDim) noexcept
+{
+   if (!src || maxDim == 0)
+      return src;
+   const unsigned int srcW = src->width();
+   const unsigned int srcH = src->height();
+   if (srcW <= maxDim && srcH <= maxDim)
+      return src;
+
+   unsigned int dstW, dstH;
+   if (srcW >= srcH) {
+      dstW = maxDim;
+      dstH = (unsigned int)(((uint64_t)srcH * (uint64_t)maxDim) / (uint64_t)srcW);
+      if (dstH < 1) dstH = 1;
+   } else {
+      dstH = maxDim;
+      dstW = (unsigned int)(((uint64_t)srcW * (uint64_t)maxDim) / (uint64_t)srcH);
+      if (dstW < 1) dstW = 1;
+   }
+
+   int channels;
+   stbir_pixel_layout layout;
+   switch (src->m_format) {
+      case BaseTexture::RGB_FP16:  channels = 3; layout = STBIR_RGB;  break;
+      case BaseTexture::RGBA_FP16: channels = 4; layout = STBIR_RGBA; break;
+      default:
+         // FP32 / BW_FP32 / other unusual formats: leave alone. Same conservative
+         // bail-out as the uint8 helper, caller keeps the oversized buffer.
+         return src;
+   }
+
+   auto dst = BaseTexture::Create(dstW, dstH, src->m_format);
+   if (!dst)
+      return src;
+
+   const int srcStride = (int)srcW * channels * (int)sizeof(uint16_t);
+   const int dstStride = (int)dstW * channels * (int)sizeof(uint16_t);
+
+   void* const out = stbir_resize(
+      src->data(), (int)srcW, (int)srcH, srcStride,
+      dst->data(), (int)dstW, (int)dstH, dstStride,
+      layout, STBIR_TYPE_HALF_FLOAT,
+      STBIR_EDGE_CLAMP, STBIR_FILTER_TRIANGLE);
+   if (out == nullptr)
+      return src;
+
+   dst->m_realWidth = src->m_realWidth ? src->m_realWidth : srcW;
+   dst->m_realHeight = src->m_realHeight ? src->m_realHeight : srcH;
+   return dst;
+}
+
 // JPEG scaled decode: decode large JPEGs at 1/2, 1/4, or 1/8 scale at the DCT level.
 // This avoids allocating full-resolution pixel data (e.g., 256MB for an 8K texture),
 // instead decoding directly to ~2K resolution (~12MB).
@@ -564,7 +622,11 @@ static std::shared_ptr<BaseTexture> ExrScaledDecode(const void* data, const size
       // TEX_LOG("EXR scaled decode: %dx%d -> %ux%u (1/%u ch=%u) | Avoided ~%zuMB full decode, output ~%zuMB",
       //    imgW, imgH, outW, outH, scale_denom, numCh, fullMB, outMB);
 
-      return tex;
+      // Same rounding gap as JPEG/PNG: OpenEXR scanline subsample is integer
+      // 1/2/4/8. Bring the result down to exact maxTexDim with a half-float
+      // SIMD bilinear so the renderer doesn't hold 1.7x more pixels than the
+      // user asked for (the 8K VLM.Nestmap case).
+      return ResizeHalfFloatToFit(tex, maxTexDim);
 
    } catch (const std::exception& e) {
       TEX_LOG("EXR scaled decode failed: %s", e.what());
