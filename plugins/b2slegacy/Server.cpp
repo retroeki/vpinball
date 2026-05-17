@@ -1620,6 +1620,12 @@ void Server::HideBackglassForm()
 void Server::KillBackglassForm()
 {
    if (m_pFormBackglass) {
+      // Clear the running flag BEFORE deleting so concurrent PinMAME callbacks
+      // (MyB2SSetData et al.) bail out of their IsBackglassRunning() guard
+      // instead of dereferencing a freed/nulled m_pFormBackglass. This shows up
+      // during Reset Table, where the form is torn down while PinMAME is still
+      // emitting lamp/data events.
+      m_pB2SData->SetBackglassVisible(false);
       delete m_pFormBackglass;
       m_pFormBackglass = nullptr;
    }
