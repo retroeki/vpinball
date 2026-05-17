@@ -1455,9 +1455,6 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
       const int cropW = static_cast<int>(static_cast<float>(wndW) * scaleX);
       const int cropH = static_cast<int>(static_cast<float>(wndH) * scaleY);
 
-      PLOGI.printf("[DMDCapture] live crop: wnd=(%d,%d %dx%d) backbuf=%dx%d frame=%dx%d scale=(%.3f,%.3f) → crop=(%d,%d %dx%d)",
-         wndX, wndY, wndW, wndH, bbW, bbH, frameW, frameH, scaleX, scaleY, cropX, cropY, cropW, cropH);
-
       {
          std::lock_guard<std::mutex> lock(self->m_scoreViewCapture.mutex);
          self->m_scoreViewCapture.cropX = cropX;
@@ -1518,10 +1515,6 @@ void VPinballLib::DeliverScoreViewCapture(const uint32_t* framePixels, uint32_t 
    if (cy < 0) cy = 0;
    if (cx + cw > (int)frameWidth) cw = (int)frameWidth - cx;
    if (cy + ch > (int)frameHeight) ch = (int)frameHeight - cy;
-
-   PLOGI.printf("[DMDCapture] deliver: frame=%ux%u yflip=%d swapRB=%d requestedCrop=%d,%d %dx%d clampedCrop=%d,%d %dx%d",
-      frameWidth, frameHeight, yflip ? 1 : 0, swapRB ? 1 : 0,
-      origCropX, origCropY, origCropW, origCropH, cx, cy, cw, ch);
 
    if (cw <= 0 || ch <= 0)
    {

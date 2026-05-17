@@ -233,6 +233,56 @@ static void OnGetNvramRequest(const unsigned int /*msgId*/, void* /*context*/, v
    q->bytesWritten = copyBytes;
 }
 
+// Host-side direct switch write (mirrors the GET_NVRAM pattern). Lets the
+// host (VPinballLib) drive a PinMAME switch as a level signal — used by the
+// in-game coin-door latch so tables with toggleKeyCoinDoor=False (real-cabinet
+// mode) see the door as held open instead of momentarily pulsed.
+//
+// Payload struct must match the host's declaration in VPinballLib_C.cpp.
+struct PinMAMESwitchSet {
+   int switchNum;
+   int state;
+   int handled;
+};
+static unsigned int setSwitchMsgId = 0;
+static void OnSetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, void* msgData)
+{
+   PinMAMESwitchSet* s = static_cast<PinMAMESwitchSet*>(msgData);
+   if (s == nullptr) {
+      LOGE("[SetSwitch] msgData=nullptr");
+      return;
+   }
+   s->handled = 0;
+   if (controller == nullptr) {
+      LOGE("[SetSwitch] no controller running, sw=%d state=%d ignored", s->switchNum, s->state);
+      return;
+   }
+   const bool prev = controller->GetSwitch(s->switchNum);
+   controller->SetSwitch(s->switchNum, s->state != 0);
+   const bool now = controller->GetSwitch(s->switchNum);
+   LOGI("[SetSwitch] sw=%d state=%d (prev=%d → now=%d)", s->switchNum, s->state, prev ? 1 : 0, now ? 1 : 0);
+   s->handled = 1;
+}
+
+// Host-side direct switch read (matches OnSetSwitchRequest but read-only).
+// Payload struct must match the host's declaration in VPinballLib_C.cpp.
+struct PinMAMESwitchGet {
+   int switchNum;
+   int value;
+   int handled;
+};
+static unsigned int getSwitchMsgId = 0;
+static void OnGetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, void* msgData)
+{
+   PinMAMESwitchGet* g = static_cast<PinMAMESwitchGet*>(msgData);
+   if (g == nullptr) return;
+   g->handled = 0;
+   if (controller == nullptr) return;
+   g->value = controller->GetSwitch(g->switchNum) ? 1 : 0;
+   g->handled = 1;
+   LOGI("[GetSwitch] sw=%d value=%d", g->switchNum, g->value);
+}
+
 PSC_ERROR_IMPLEMENT(scriptApi); // Implement script error
 
 LPI_IMPLEMENT // Implement shared log support
@@ -240,6 +290,21 @@ LPI_IMPLEMENT // Implement shared log support
 MSGPI_BOOL_VAL_SETTING(enableSoundProp, "Sound", "Enable Sound", "Enable sound emulation", true, true);
 MSGPI_STRING_VAL_SETTING(pinMAMEPathProp, "PinMAMEPath", "PinMAME Path", "Folder that contains PinMAME subfolders (roms, nvram, ...)", true, "", 1024);
 MSGPI_INT_VAL_SETTING(cheatProp, "Cheat", "Cheat Mode", "", true, 0, 0xFFFF, 0);
+// Output sample rate from PinMAME, in Hz. The default 0 means "auto":
+// on Android the host audio engine (AAudio) runs at 48000 so we pick that
+// to skip one resample stage in our pipeline. Manual values worth trying
+// when a ROM sounds rough:
+//   22050 — pre-DCS WPC (Creature From The Black Lagoon, Funhouse, Twilight Zone)
+//   32000 — DCS / DCS-95 Williams (Indiana Jones, Star Wars, Medieval Madness)
+//   48000 — modern Stern SAM/SPIKE; matches Android device rate
+//   96000 — highest quality, double the CPU cost in PinMAME's resampler
+// PinMAME 3.6+ resamples any output rate cleanly, so this is mostly about
+// matching downstream stages to avoid stacked non-integer ratios.
+MSGPI_INT_VAL_SETTING(audioSampleRateProp, "AudioSampleRate", "Audio Sample Rate (Hz)",
+   "Output sample rate from PinMAME, in Hz. 0 = auto (matches the audio device, typically 48000 on Android). "
+   "Common manual values: 22050 for pre-DCS WPC tables (Creature From The Black Lagoon, Funhouse, Twilight Zone), "
+   "32000 for DCS Williams (Indiana Jones, Medieval Madness), 48000 for modern Stern, 96000 for max quality.",
+   true, 0, 96000, 0);
 
 void PINMAMECALLBACK OnLogMessage(PINMAME_LOG_LEVEL logLevel, const char* format, va_list args, void* const pUserData)
 {
@@ -387,6 +452,7 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
    msgApi->RegisterSetting(endpointId, &enableSoundProp);
    msgApi->RegisterSetting(endpointId, &pinMAMEPathProp);
    msgApi->RegisterSetting(endpointId, &cheatProp);
+   msgApi->RegisterSetting(endpointId, &audioSampleRateProp);
 
    // Setup our contribution to the controller messages
    onAudioUpdateId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_AUDIO_ON_UPDATE_MSG);
@@ -423,9 +489,26 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
       // properties → Controller.Run, so config-time gating misses anything the script
       // does between those steps). The callbacks gate themselves on enableSoundProp_Val
       // and g_runtimeSoundEnabled.
+      // Pick the output sample rate. 0 in the INI means "auto" — on Android
+      // we default to 48000 to match AAudio's device rate so miniaudio does no
+      // resampling. Without this auto path the host pipeline would do
+      // PinMAME (rom rate → 44100) → miniaudio (44100 → 48000), stacking two
+      // non-integer ratios; bad tables already at the edge of PinMAME's
+      // internal resampler can audibly suffer.
+      int requestedSampleRate = audioSampleRateProp_Val;
+      if (requestedSampleRate <= 0)
+      {
+#ifdef __ANDROID__
+         requestedSampleRate = 48000;
+#else
+         requestedSampleRate = 44100;
+#endif
+      }
+      LOGI("PinMAME audio sample rate: %d Hz (user setting: %d, 0=auto)", requestedSampleRate, audioSampleRateProp_Val);
+
       PinmameConfig config = {
          PINMAME_AUDIO_FORMAT_INT16,
-         44100,
+         requestedSampleRate,
          "",
          NULL, // State update => prefer update on request
          NULL, // Display available => prefer state block
@@ -498,6 +581,17 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
    // Host-side NVRAM query subscription.
    getNvramMsgId = msgApi->GetMsgID("VPINBALL", "GET_NVRAM");
    msgApi->SubscribeMsg(endpointId, getNvramMsgId, &OnGetNvramRequest, nullptr);
+
+   // Host-side direct switch write subscription (used by the in-game coin-door
+   // latch in com.retroeki.pinball — see project memory
+   // "coin-door-key-mode-mismatch").
+   setSwitchMsgId = msgApi->GetMsgID("VPINBALL", "SET_SWITCH");
+   msgApi->SubscribeMsg(endpointId, setSwitchMsgId, &OnSetSwitchRequest, nullptr);
+
+   // Host-side direct switch read — pairs with SET_SWITCH; the host uses it to
+   // seed UI state from the ROM-side switch matrix (e.g. coin-door image).
+   getSwitchMsgId = msgApi->GetMsgID("VPINBALL", "GET_SWITCH");
+   msgApi->SubscribeMsg(endpointId, getSwitchMsgId, &OnGetSwitchRequest, nullptr);
 }
 
 MSGPI_EXPORT void MSGPIAPI PinMAMEPluginUnload()
@@ -508,6 +602,18 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginUnload()
       msgApi->UnsubscribeMsg(getNvramMsgId, &OnGetNvramRequest);
       msgApi->ReleaseMsgID(getNvramMsgId);
       getNvramMsgId = 0;
+   }
+
+   if (setSwitchMsgId != 0) {
+      msgApi->UnsubscribeMsg(setSwitchMsgId, &OnSetSwitchRequest);
+      msgApi->ReleaseMsgID(setSwitchMsgId);
+      setSwitchMsgId = 0;
+   }
+
+   if (getSwitchMsgId != 0) {
+      msgApi->UnsubscribeMsg(getSwitchMsgId, &OnGetSwitchRequest);
+      msgApi->ReleaseMsgID(getSwitchMsgId);
+      getSwitchMsgId = 0;
    }
 
    msgApi->ReleaseMsgID(onAudioUpdateId);

@@ -436,3 +436,41 @@ VPINBALLAPI VPINBALL_STATUS VPinballResetTable()
    return VPinballLib::VPinballLib::Instance().ResetTable();
 }
 
+// Payload shape must match the PinMAME plugin's PinMAMESwitchSet struct.
+namespace {
+struct VPinballSwitchSet {
+   int switchNum;
+   int state;
+   int handled;
+};
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballSetSwitch(int switchNum, int state)
+{
+   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "SET_SWITCH");
+   VPinballSwitchSet s { switchNum, state, 0 };
+   msgApi.BroadcastMsg(0, msgId, &s);
+   msgApi.ReleaseMsgID(msgId);
+   return s.handled ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+// Payload shape must match the PinMAME plugin's PinMAMESwitchGet struct.
+namespace {
+struct VPinballSwitchGet {
+   int switchNum;
+   int value;
+   int handled;
+};
+}
+
+VPINBALLAPI int VPinballGetSwitch(int switchNum)
+{
+   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "GET_SWITCH");
+   VPinballSwitchGet g { switchNum, 0, 0 };
+   msgApi.BroadcastMsg(0, msgId, &g);
+   msgApi.ReleaseMsgID(msgId);
+   return g.handled ? g.value : -1;
+}
+

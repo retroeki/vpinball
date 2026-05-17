@@ -534,6 +534,16 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetTable(
    return VPinballResetTable();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetSwitch(JNIEnv* env, jobject obj, jint switchNum, jint state)
+{
+   return VPinballSetSwitch(switchNum, state);
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetSwitch(JNIEnv* env, jobject obj, jint switchNum)
+{
+   return VPinballGetSwitch(switchNum);
+}
+
 #ifdef ENABLE_XR
 JNIEXPORT jboolean JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInitOpenXR(JNIEnv* env, jobject obj, jobject activity)
 {

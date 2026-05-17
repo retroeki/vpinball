@@ -169,3 +169,17 @@ VPINBALLAPI int VPinballGetSoundVolume();
 // Table control
 VPINBALLAPI VPINBALL_STATUS VPinballResetTable();
 
+// Direct PinMAME switch write. Bypasses the keyboard / SDL path so the host
+// can drive switches as level signals (e.g. coin-door latch) regardless of
+// the table script's toggleKeyCoinDoor / momentary mode. state: 0 = inactive,
+// non-zero = active. Returns FAILURE when no PinMAME Controller is currently
+// running (EM / original VPX-only tables).
+VPINBALLAPI VPINBALL_STATUS VPinballSetSwitch(int switchNum, int state);
+
+// Direct PinMAME switch read. Returns 0 or 1 for the live matrix bit (after
+// per-table polarity inversion applied by core_getSw). Returns -1 if no
+// Controller is currently running. Used by the host to seed UI state — e.g.
+// reading sw 22 at Service-screen entry to know whether the coin door is
+// open or closed in the ROM's view.
+VPINBALLAPI int VPinballGetSwitch(int switchNum);
+
