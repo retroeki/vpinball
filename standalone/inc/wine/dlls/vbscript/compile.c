@@ -2206,7 +2206,7 @@ static HRESULT check_script_collisions(compile_ctx_t *ctx, script_ctx_t *script)
     for(i = 0; i < var_cnt; i++) {
         if(lookup_script_identifier(ctx, script, vars[i].name)) {
 #ifdef __STANDALONE__
-            external_log_info("%s redefined", debugstr_w(vars[i].name));
+            EXTERNAL_LOG_DIAG("%s redefined", debugstr_w(vars[i].name));
 #else
             return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
 #endif
@@ -2216,7 +2216,7 @@ static HRESULT check_script_collisions(compile_ctx_t *ctx, script_ctx_t *script)
     for(class = ctx->code->classes; class; class = class->next) {
         if(lookup_script_identifier(ctx, script, class->name)) {
 #ifdef __STANDALONE__
-            external_log_info("%s redefined", debugstr_w(class->name));
+            EXTERNAL_LOG_DIAG("%s redefined", debugstr_w(class->name));
 #else
             return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
 #endif

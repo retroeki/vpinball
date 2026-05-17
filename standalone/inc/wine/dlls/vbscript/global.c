@@ -719,17 +719,17 @@ static IUnknown *create_object(script_ctx_t *ctx, const WCHAR *progid)
 #else
     if (!wcsicmp(progid, L"Scripting.FileSystemObject")) {
         hres = FileSystem_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
+        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
                           debugstr_w(progid), (unsigned)hres);
     }
     else if (!wcsicmp(progid, L"Scripting.Dictionary")) {
         hres = Dictionary_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
+        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
                           debugstr_w(progid), (unsigned)hres);
     }
     else {
         hres = external_create_object(progid, cf, (IUnknown*)&obj);
-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
+        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
                           debugstr_w(progid), (unsigned)hres, obj);
     }
 #endif
