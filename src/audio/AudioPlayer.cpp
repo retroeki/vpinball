@@ -6,9 +6,23 @@
 #include "SoundPlayer.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_audio.h>
+#ifdef __ANDROID__
+#include <sched.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #define MA_ENABLE_ONLY_SPECIFIC_BACKENDS
 #define MA_ENABLE_CUSTOM
+#ifdef __ANDROID__
+// On Android we use miniaudio's built-in AAudio backend so our mixing runs
+// inside AAudio's privileged data-callback thread (SCHED_FIFO, granted by the
+// audio framework when LOW_LATENCY perfMode is requested). That bypasses SDL's
+// audio worker thread which runs at nice -20 / SCHED_OTHER and gets preempted
+// by Android View / GPU work happening in the same :native_process.
+#define MA_ENABLE_AAUDIO
+#endif
 #include "miniaudio/extras/stb_vorbis.c"
 #include "miniaudio/miniaudio.h"
 #include "miniaudio/miniaudio.c"
@@ -21,6 +35,25 @@ struct ma_device_ex
    SDL_AudioDeviceID deviceID;
    SDL_AudioStream* stream;
    vector<uint8_t> buffer;
+
+   // Audio-thread diagnostics. Single-writer (the SDL audio worker thread)
+   // so no synchronization needed. Used to isolate app-side mixing slowness
+   // from platform-side HAL/DSP throttling when audio pops are reported.
+   uint64_t diagLastCallbackNs = 0;
+   uint64_t diagPeriodNs = 0;          // expected gap between callbacks
+   uint64_t diagWindowStartNs = 0;     // start of current ~5s summary window
+   uint64_t diagLastImmediateLogNs = 0; // rate-limit on per-event log emission
+   uint32_t diagCallbackCount = 0;
+   uint32_t diagSlowCallbacks = 0;     // mixing time > 25% of period
+   uint32_t diagLateGaps = 0;          // inter-arrival > 1.5x period
+   uint64_t diagMaxMixNs = 0;
+   uint64_t diagMaxGapNs = 0;
+   const char* diagLabel = "";
+
+   // One-shot flag: first audio callback on this device tries to promote the
+   // SDL audio worker thread to a real-time scheduling class so the kernel
+   // stops preempting it for normal threads. Logs the actual outcome.
+   bool threadPriorityAttempted = false;
 };
 
 static ma_result ma_context_enumerate_devices__sdl(ma_context* pContext, ma_enum_devices_callback_proc callback, void* pUserData)
@@ -87,16 +120,281 @@ static ma_result ma_context_get_device_info__sdl(ma_context* pContext, ma_device
    return MA_SUCCESS;
 }
 
+#ifdef __ANDROID__
+// Called on the SDL audio worker thread the first time we see it. Tries to
+// upgrade the thread's scheduling class so the kernel doesn't preempt it for
+// normal threads. SCHED_FIFO usually requires CAP_SYS_NICE on Android; if it
+// fails we fall back to maxing the nice value. Also pins the thread to the
+// big-core cluster so we don't share a core with Compose / GC work on the
+// little cluster. Logs the actual outcome.
+static void TryPromoteAudioThread(const char* label)
+{
+   const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+
+   // --- 1. Scheduling class / priority ---
+   const int oldPolicy = sched_getscheduler(0);
+   const int oldNice = getpriority(PRIO_PROCESS, 0);
+
+   struct sched_param param = {};
+   param.sched_priority = 1; // Lowest SCHED_FIFO priority; we don't need to outrank AAudio's own thread.
+   const int rcFifo = sched_setscheduler(0, SCHED_FIFO, &param);
+   const int fifoErrno = (rcFifo == 0) ? 0 : errno;
+   if (rcFifo == 0)
+   {
+      const int newPolicy = sched_getscheduler(0);
+      PLOGI << "[AudioDiag " << label << "] tid=" << tid
+            << " promoted to SCHED_FIFO (was policy=" << oldPolicy
+            << ", nice=" << oldNice << ", now policy=" << newPolicy
+            << ", prio=" << param.sched_priority << ')';
+   }
+   else
+   {
+      const int rcNice = setpriority(PRIO_PROCESS, 0, -20);
+      const int niceErrno = (rcNice == 0) ? 0 : errno;
+      const int newNice = getpriority(PRIO_PROCESS, 0);
+      PLOGI << "[AudioDiag " << label << "] tid=" << tid
+            << " SCHED_FIFO denied (errno=" << fifoErrno
+            << "), setpriority(-20) rc=" << rcNice
+            << " errno=" << niceErrno
+            << " policy=" << oldPolicy << " oldNice=" << oldNice << " newNice=" << newNice;
+   }
+
+   // --- 2. CPU affinity: pin to big cores ---
+   // ARM big.LITTLE convention on recent Snapdragon: 0-3 little (A510 efficient),
+   // 4-6 big (A710/A715 performance), 7 prime (X3/X4). Pin to 4-7 so the audio
+   // thread stays out of the throttle-prone little cluster.
+   cpu_set_t currentMask;
+   CPU_ZERO(&currentMask);
+   const int rcGet = sched_getaffinity(0, sizeof(currentMask), &currentMask);
+   const int currentCount = (rcGet == 0) ? CPU_COUNT(&currentMask) : -1;
+
+   cpu_set_t newMask;
+   CPU_ZERO(&newMask);
+   int pinned = 0;
+   for (int cpu = 4; cpu < CPU_SETSIZE && cpu < 8; ++cpu)
+   {
+      // Only set bits the kernel currently allows us to use, so a device with
+      // fewer than 8 cores or one that's offlined a big core doesn't trip us.
+      if (rcGet == 0 && CPU_ISSET(cpu, &currentMask))
+      {
+         CPU_SET(cpu, &newMask);
+         ++pinned;
+      }
+   }
+
+   if (pinned == 0)
+   {
+      PLOGI << "[AudioDiag " << label << "] affinity skip: no big cores available "
+            << "(getaffinity rc=" << rcGet << ", currentCount=" << currentCount << ')';
+      return;
+   }
+
+   const int rcSet = sched_setaffinity(0, sizeof(newMask), &newMask);
+   const int setErrno = (rcSet == 0) ? 0 : errno;
+
+   // Read back to confirm what actually stuck.
+   cpu_set_t actualMask;
+   CPU_ZERO(&actualMask);
+   sched_getaffinity(0, sizeof(actualMask), &actualMask);
+
+   PLOGI << "[AudioDiag " << label << "] affinity: setaffinity rc=" << rcSet
+         << " errno=" << setErrno
+         << " requested=4-7 (" << pinned << " bits)"
+         << " actualMask=" << std::hex
+         << (CPU_ISSET(0, &actualMask) ? "0" : "")
+         << (CPU_ISSET(1, &actualMask) ? "1" : "")
+         << (CPU_ISSET(2, &actualMask) ? "2" : "")
+         << (CPU_ISSET(3, &actualMask) ? "3" : "")
+         << (CPU_ISSET(4, &actualMask) ? "4" : "")
+         << (CPU_ISSET(5, &actualMask) ? "5" : "")
+         << (CPU_ISSET(6, &actualMask) ? "6" : "")
+         << (CPU_ISSET(7, &actualMask) ? "7" : "")
+         << std::dec;
+}
+#endif
+
 void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, int additional_amount, const int total_amount)
 {
    auto pDevice = static_cast<ma_device_ex*>(pUserData);
+
+#ifdef __ANDROID__
+   if (!pDevice->threadPriorityAttempted)
+   {
+      pDevice->threadPriorityAttempted = true;
+      TryPromoteAudioThread(pDevice->diagLabel);
+   }
+#endif
+
+   const uint64_t entryNs = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+
+   // Resizing on the audio thread would malloc; we pre-size in ma_device_init__sdl,
+   // but keep a defensive resize in case the device asks for a larger chunk.
    if ((int)pDevice->buffer.size() < total_amount)
       pDevice->buffer.resize(total_amount);
+
    const int sizePerMAFrame = ma_get_bytes_per_frame(pDevice->device.playback.internalFormat, pDevice->device.playback.internalChannels);
    const int nFrames = total_amount / sizePerMAFrame;
    ma_device__read_frames_from_client(&pDevice->device, nFrames, pDevice->buffer.data());
    SDL_PutAudioStreamData(stream, pDevice->buffer.data(), nFrames * sizePerMAFrame);
+
+   const uint64_t exitNs = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+   const uint64_t mixNs = exitNs - entryNs;
+   const uint64_t gapNs = pDevice->diagLastCallbackNs ? entryNs - pDevice->diagLastCallbackNs : 0;
+   pDevice->diagLastCallbackNs = entryNs;
+
+   if (pDevice->diagWindowStartNs == 0)
+      pDevice->diagWindowStartNs = entryNs;
+
+   pDevice->diagCallbackCount++;
+   if (mixNs > pDevice->diagMaxMixNs) pDevice->diagMaxMixNs = mixNs;
+   if (gapNs > pDevice->diagMaxGapNs) pDevice->diagMaxGapNs = gapNs;
+
+   // Tighter thresholds than the original: slow = mixing exceeded 25% of period budget
+   // (still well under the deadline, but warns us we're trending up); late = gap exceeded
+   // 1.5x period, the smallest gap that can produce audible underrun.
+   const uint64_t slowThresholdNs = pDevice->diagPeriodNs ? (pDevice->diagPeriodNs / 4) : 1000000;
+   const uint64_t lateThresholdNs = pDevice->diagPeriodNs ? (pDevice->diagPeriodNs * 3 / 2) : 24000000;
+   const bool isSlow = mixNs > slowThresholdNs;
+   const bool isLate = gapNs > lateThresholdNs;
+   if (isSlow) pDevice->diagSlowCallbacks++;
+   if (isLate) pDevice->diagLateGaps++;
+
+   // Immediate emission on a slow or late callback, rate-limited so a sustained
+   // problem doesn't flood the log. Catches one-off events (e.g. menu transitions)
+   // that the 5-second summary would otherwise swallow.
+   if (isSlow || isLate)
+   {
+      const uint64_t sinceLastImmediateNs = entryNs - pDevice->diagLastImmediateLogNs;
+      if (sinceLastImmediateNs > 250000000ULL)
+      {
+         pDevice->diagLastImmediateLogNs = entryNs;
+         PLOGI << "[AudioDiag " << pDevice->diagLabel << "] "
+               << (isSlow ? "SLOW " : "")
+               << (isLate ? "LATE " : "")
+               << "mix=" << (mixNs / 1000) << "us"
+               << " gap=" << (gapNs / 1000) << "us"
+               << " period=" << (pDevice->diagPeriodNs / 1000) << "us"
+               << " thresholds=slow>" << (slowThresholdNs / 1000) << "us/late>" << (lateThresholdNs / 1000) << "us";
+      }
+   }
+
+   // 5-second summary if anything triggered in the window.
+   const uint64_t windowNs = entryNs - pDevice->diagWindowStartNs;
+   if (windowNs >= 5000000000ULL)
+   {
+      if (pDevice->diagSlowCallbacks > 0 || pDevice->diagLateGaps > 0)
+      {
+         PLOGI << "[AudioDiag " << pDevice->diagLabel << "] window cb=" << pDevice->diagCallbackCount
+               << " slow=" << pDevice->diagSlowCallbacks
+               << " late=" << pDevice->diagLateGaps
+               << " maxMix=" << (pDevice->diagMaxMixNs / 1000) << "us"
+               << " maxGap=" << (pDevice->diagMaxGapNs / 1000) << "us"
+               << " period=" << (pDevice->diagPeriodNs / 1000) << "us";
+      }
+      pDevice->diagWindowStartNs = entryNs;
+      pDevice->diagCallbackCount = 0;
+      pDevice->diagSlowCallbacks = 0;
+      pDevice->diagLateGaps = 0;
+      pDevice->diagMaxMixNs = 0;
+      pDevice->diagMaxGapNs = 0;
+   }
 }
+
+#ifdef __ANDROID__
+// AAudio data callback. miniaudio calls this from AAudio's realtime SCHED_FIFO
+// thread (granted because we requested LOW_LATENCY perfMode). The actual
+// mixing is delegated to ma_engine_data_callback_internal; this wrapper only
+// adds the same timing diagnostic we use on the SDL custom backend so we can
+// verify the priority gain empirically.
+static void ma_data_callback_aaudio_diag(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
+{
+   auto pDeviceEx = reinterpret_cast<ma_device_ex*>(pDevice);
+
+   // First call: log what scheduling policy we actually landed on so we know
+   // whether AAudio actually gave us SCHED_FIFO.
+   if (!pDeviceEx->threadPriorityAttempted)
+   {
+      pDeviceEx->threadPriorityAttempted = true;
+      const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
+      const int policy = sched_getscheduler(0);
+      const int nice = getpriority(PRIO_PROCESS, 0);
+      PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] AAudio data callback thread tid=" << tid
+            << " policy=" << policy << " (0=OTHER,1=FIFO,2=RR)"
+            << " nice=" << nice;
+      // Lazily compute the expected period from frameCount the first time we see it.
+      const ma_uint32 sampleRate = pDevice->playback.internalSampleRate;
+      if (sampleRate > 0 && pDeviceEx->diagPeriodNs == 0)
+         pDeviceEx->diagPeriodNs = static_cast<uint64_t>(frameCount) * 1000000000ULL / sampleRate;
+   }
+
+   const uint64_t entryNs = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+
+   // Run the actual mixing on AAudio's realtime thread.
+   ma_engine_data_callback_internal(pDevice, pOutput, pInput, frameCount);
+
+   const uint64_t exitNs = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count());
+   const uint64_t mixNs = exitNs - entryNs;
+   const uint64_t gapNs = pDeviceEx->diagLastCallbackNs ? entryNs - pDeviceEx->diagLastCallbackNs : 0;
+   pDeviceEx->diagLastCallbackNs = entryNs;
+
+   if (pDeviceEx->diagWindowStartNs == 0)
+      pDeviceEx->diagWindowStartNs = entryNs;
+
+   pDeviceEx->diagCallbackCount++;
+   if (mixNs > pDeviceEx->diagMaxMixNs) pDeviceEx->diagMaxMixNs = mixNs;
+   if (gapNs > pDeviceEx->diagMaxGapNs) pDeviceEx->diagMaxGapNs = gapNs;
+
+   const uint64_t slowThresholdNs = pDeviceEx->diagPeriodNs ? (pDeviceEx->diagPeriodNs / 4) : 1000000;
+   const uint64_t lateThresholdNs = pDeviceEx->diagPeriodNs ? (pDeviceEx->diagPeriodNs * 3 / 2) : 24000000;
+   const bool isSlow = mixNs > slowThresholdNs;
+   const bool isLate = gapNs > lateThresholdNs;
+   if (isSlow) pDeviceEx->diagSlowCallbacks++;
+   if (isLate) pDeviceEx->diagLateGaps++;
+
+   if (isSlow || isLate)
+   {
+      const uint64_t sinceLastImmediateNs = entryNs - pDeviceEx->diagLastImmediateLogNs;
+      if (sinceLastImmediateNs > 250000000ULL)
+      {
+         pDeviceEx->diagLastImmediateLogNs = entryNs;
+         PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] "
+               << (isSlow ? "SLOW " : "")
+               << (isLate ? "LATE " : "")
+               << "mix=" << (mixNs / 1000) << "us"
+               << " gap=" << (gapNs / 1000) << "us"
+               << " period=" << (pDeviceEx->diagPeriodNs / 1000) << "us";
+      }
+   }
+
+   const uint64_t windowNs = entryNs - pDeviceEx->diagWindowStartNs;
+   if (windowNs >= 5000000000ULL)
+   {
+      if (pDeviceEx->diagSlowCallbacks > 0 || pDeviceEx->diagLateGaps > 0)
+      {
+         PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] window cb=" << pDeviceEx->diagCallbackCount
+               << " slow=" << pDeviceEx->diagSlowCallbacks
+               << " late=" << pDeviceEx->diagLateGaps
+               << " maxMix=" << (pDeviceEx->diagMaxMixNs / 1000) << "us"
+               << " maxGap=" << (pDeviceEx->diagMaxGapNs / 1000) << "us"
+               << " period=" << (pDeviceEx->diagPeriodNs / 1000) << "us";
+      }
+      pDeviceEx->diagWindowStartNs = entryNs;
+      pDeviceEx->diagCallbackCount = 0;
+      pDeviceEx->diagSlowCallbacks = 0;
+      pDeviceEx->diagLateGaps = 0;
+      pDeviceEx->diagMaxMixNs = 0;
+      pDeviceEx->diagMaxGapNs = 0;
+   }
+}
+#endif
 
 static ma_result ma_device_init__sdl(ma_device* pDevice, const ma_device_config* pConfig, ma_device_descriptor* pDescriptorPlayback, ma_device_descriptor* pDescriptorCapture)
 {
@@ -151,7 +449,21 @@ static ma_result ma_device_init__sdl(ma_device* pDevice, const ma_device_config*
    // TODO check that the default channel map matches SDL channel map
    ma_channel_map_init_standard(ma_standard_channel_map_default, pDescriptorPlayback->channelMap, std::size(pDescriptorPlayback->channelMap), pDescriptorPlayback->channels);
 
-   PLOGI << "Audio device initialized. Device: '" << SDL_GetAudioDeviceName(pDeviceEx->deviceID) << "', Freq : " << specs.freq << ", Format: " << SDL_GetAudioFormatName(specs.format) << ", Channels: " << specs.channels << ", Driver: " << SDL_GetCurrentAudioDriver();
+   // Pre-size the mixing buffer so the audio callback never reallocates on the hot path.
+   // SDL typically asks for one period at a time, but request bursts can occur on stream
+   // restart; size for 4 periods which covers any realistic ask.
+   const int frameBytes = ma_get_bytes_per_frame(deviceFormat, specs.channels);
+   const size_t preallocBytes = static_cast<size_t>(periodSizeInFrames) * frameBytes * 4;
+   pDeviceEx->buffer.reserve(preallocBytes);
+   pDeviceEx->buffer.resize(preallocBytes);
+
+   // Stash the expected callback period so the audio-thread diagnostic can flag
+   // slow mixing (>50% of period) and late arrivals (>4x period).
+   pDeviceEx->diagPeriodNs = specs.freq > 0
+      ? (static_cast<uint64_t>(periodSizeInFrames) * 1000000000ULL / static_cast<uint64_t>(specs.freq))
+      : 0;
+
+   PLOGI << "Audio device initialized. Device: '" << SDL_GetAudioDeviceName(pDeviceEx->deviceID) << "', Freq : " << specs.freq << ", Format: " << SDL_GetAudioFormatName(specs.format) << ", Channels: " << specs.channels << ", Driver: " << SDL_GetCurrentAudioDriver() << ", period=" << periodSizeInFrames << "fr/" << (pDeviceEx->diagPeriodNs / 1000) << "us, prealloc=" << preallocBytes << "B";
    return MA_SUCCESS;
 }
 
@@ -206,6 +518,21 @@ namespace VPX
 AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldDevice, SoundConfigTypes playfieldSoundMode)
    : m_soundMode3D(playfieldSoundMode)
 {
+#ifdef __ANDROID__
+   // Android: both main mixing AND streamed audio (PinMAME, music, AltSound,
+   // PuP) go through miniaudio's AAudio backend. Sound effects run on the
+   // ma_engine that the AAudio backend opens; streamed audio rides on top
+   // of the same engine via AudioStreamPlayer's custom data source. Every
+   // audio sample on Android ultimately mixes inside AAudio's SCHED_FIFO
+   // data callback, which is what eliminates the SDL-worker preemption pops.
+   (void)backglassDevice;
+   (void)playfieldDevice;
+
+   m_maContext = std::make_unique<ma_context>();
+   static constexpr ma_backend backends[] = { ma_backend_aaudio };
+   ma_context_init(backends, std::size(backends), nullptr, m_maContext.get());
+   m_maContext->pUserData = this;
+#else
    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
       return;
 
@@ -231,7 +558,6 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
       }
    }
 
-   ma_result result;
    ma_context_config contextConfig;
    contextConfig = ma_context_config_init();
    contextConfig.custom.onContextInit = ma_context_init__sdl;
@@ -240,7 +566,9 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
    static constexpr ma_backend backends[] = { ma_backend_custom };
    ma_context_init(backends, std::size(backends), &contextConfig, m_maContext.get());
    m_maContext->pUserData = this;
+#endif
 
+#ifndef __ANDROID__
    struct SDLDeviceInfo
    {
       int id;
@@ -254,74 +582,78 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
       }
       return (ma_bool32)MA_TRUE;
    };
+#endif
 
-   {
-      SDLDeviceInfo deviceInfo { m_backglassAudioDevice, {} };
+   auto initDevice = [&](std::unique_ptr<ma_device_ex>& outDevice, std::unique_ptr<ma_engine>& outEngine,
+                         const char* label, [[maybe_unused]] int sdlDeviceID) {
+      outDevice = std::make_unique<ma_device_ex>();
+      outDevice->diagLabel = label;
+      ma_device_config deviceConfig = ma_device_config_init(ma_device_type_playback);
+      deviceConfig.playback.format = ma_format_f32;
+      deviceConfig.noPreSilencedOutputBuffer = MA_TRUE;
+      deviceConfig.noClip = MA_TRUE;
+#ifdef __ANDROID__
+      // Default playback device. AAudio LOW_LATENCY perfMode is the miniaudio
+      // AAudio backend default, which is what we want — that's why AAudio
+      // hands us a SCHED_FIFO data callback thread.
+      deviceConfig.playback.pDeviceID = nullptr;
+      // Tag the stream as interactive game audio. Android's developer guide
+      // recommends this for any latency-sensitive playback so the audio
+      // framework picks the most aggressive routing it can deliver. Has zero
+      // effect on wired output (already on the fast path), but on BT some
+      // HALs prefer game-tagged streams for whatever low-latency profile the
+      // codec exposes.
+      deviceConfig.aaudio.usage = ma_aaudio_usage_game;
+      // Short, transient effects (flipper hits, bumper sounds) and music are
+      // both legitimate here — sonification fits better since flipper hits
+      // dominate volume-wise and benefit most from low-latency routing.
+      deviceConfig.aaudio.contentType = ma_aaudio_content_type_sonification;
+      const ma_result result = ma_device_init(m_maContext.get(), &deviceConfig, reinterpret_cast<ma_device*>(outDevice.get()));
+#else
+      SDLDeviceInfo deviceInfo { sdlDeviceID, {} };
       ma_context_get_device_info(m_maContext.get(), ma_device_type_playback, nullptr, &deviceInfo.dev);
       ma_context_enumerate_devices(m_maContext.get(), selectDevice, &deviceInfo);
-
-      m_backglassDevice = std::make_unique<ma_device_ex>();
-      ma_device_config deviceConfig;
-      deviceConfig = ma_device_config_init(ma_device_type_playback);
       deviceConfig.playback.pDeviceID = &deviceInfo.dev.id;
-      deviceConfig.playback.format = ma_format_f32;
-      deviceConfig.noPreSilencedOutputBuffer = MA_TRUE; // We'll always be outputting to every frame in the callback so there's no need for a pre-silenced buffer.
-      deviceConfig.noClip = MA_TRUE; // The engine will do clipping itself.
-      result = ma_device_init(m_maContext.get(), &deviceConfig, reinterpret_cast<ma_device*>(m_backglassDevice.get()));
+      const ma_result result = ma_device_init(m_maContext.get(), &deviceConfig, reinterpret_cast<ma_device*>(outDevice.get()));
+#endif
 
       if (result == MA_SUCCESS)
       {
-         ma_engine_config engineConfig;
-         engineConfig = ma_engine_config_init();
+         ma_engine_config engineConfig = ma_engine_config_init();
          engineConfig.pContext = m_maContext.get();
-         engineConfig.pDevice = &m_backglassDevice->device;
+         engineConfig.pDevice = &outDevice->device;
          engineConfig.noAutoStart = MA_TRUE;
-         m_backglassEngine = std::make_unique<ma_engine>();
-         result = ma_engine_init(&engineConfig, m_backglassEngine.get());
-         m_backglassDevice->device.onData = ma_engine_data_callback_internal;
-         m_backglassDevice->device.pUserData = m_backglassEngine.get();
-         ma_engine_start(m_backglassEngine.get());
+         outEngine = std::make_unique<ma_engine>();
+         ma_engine_init(&engineConfig, outEngine.get());
+#ifdef __ANDROID__
+         // Use the diagnostic wrapper so we can verify SCHED_FIFO inheritance
+         // and measure mixing time on AAudio's RT callback thread.
+         outDevice->device.onData = ma_data_callback_aaudio_diag;
+#else
+         outDevice->device.onData = ma_engine_data_callback_internal;
+#endif
+         outDevice->device.pUserData = outEngine.get();
+         ma_engine_start(outEngine.get());
       }
       else
       {
-         PLOGE << "Failed to initialize miniaudio for backglass sounds";
-         m_backglassDevice = nullptr;
+         PLOGE << "Failed to initialize miniaudio for " << label << " sounds";
+         outDevice = nullptr;
       }
-   }
+   };
 
-   {
-      SDLDeviceInfo deviceInfo { m_playfieldAudioDevice, {} };
-      ma_context_get_device_info(m_maContext.get(), ma_device_type_playback, nullptr, &deviceInfo.dev);
-      ma_context_enumerate_devices(m_maContext.get(), selectDevice, &deviceInfo);
-
-      m_playfieldDevice = std::make_unique<ma_device_ex>();
-      ma_device_config deviceConfig;
-      deviceConfig = ma_device_config_init(ma_device_type_playback);
-      deviceConfig.playback.pDeviceID = &deviceInfo.dev.id;
-      deviceConfig.playback.format = ma_format_f32;
-      deviceConfig.noPreSilencedOutputBuffer = MA_TRUE; // We'll always be outputting to every frame in the callback so there's no need for a pre-silenced buffer.
-      deviceConfig.noClip = MA_TRUE; // The engine will do clipping itself.
-      result = ma_device_init(m_maContext.get(), &deviceConfig, reinterpret_cast<ma_device*>(m_playfieldDevice.get()));
-
-      if (result == MA_SUCCESS)
-      {
-         ma_engine_config engineConfig;
-         engineConfig = ma_engine_config_init();
-         engineConfig.pContext = m_maContext.get();
-         engineConfig.pDevice = &m_playfieldDevice->device;
-         engineConfig.noAutoStart = MA_TRUE;
-         m_playfieldEngine = std::make_unique<ma_engine>();
-         result = ma_engine_init(&engineConfig, m_playfieldEngine.get());
-         m_playfieldDevice->device.onData = ma_engine_data_callback_internal;
-         m_playfieldDevice->device.pUserData = m_playfieldEngine.get();
-         ma_engine_start(m_playfieldEngine.get());
-      }
-      else
-      {
-         PLOGE << "Failed to initialize miniaudio for playfield sounds";
-         m_playfieldDevice = nullptr;
-      }
-   }
+   initDevice(m_backglassDevice, m_backglassEngine, "backglass",
+#ifdef __ANDROID__
+              0);
+#else
+              m_backglassAudioDevice);
+#endif
+   initDevice(m_playfieldDevice, m_playfieldEngine, "playfield",
+#ifdef __ANDROID__
+              0);
+#else
+              m_playfieldAudioDevice);
+#endif
 }
 
 AudioPlayer::~AudioPlayer()
@@ -381,6 +713,14 @@ void AudioPlayer::SetMainVolume(float backglassVolume, float playfieldVolume)
 
 AudioPlayer::AudioStreamID AudioPlayer::OpenAudioStream(const string& name, int frequency, int channels, bool isFloat)
 {
+#ifdef __ANDROID__
+   if (!m_backglassEngine)
+   {
+      PLOGE << "OpenAudioStream: backglass engine not initialized";
+      return nullptr;
+   }
+   std::unique_ptr<AudioStreamPlayer> audioStream = AudioStreamPlayer::Create(m_backglassEngine.get(), frequency, channels, isFloat);
+#else
    if (m_backglassSDLDevice == 0)
    {
       SDL_AudioSpec deviceSpec;
@@ -388,6 +728,7 @@ AudioPlayer::AudioStreamID AudioPlayer::OpenAudioStream(const string& name, int 
       m_backglassSDLDevice = SDL_OpenAudioDevice(m_backglassAudioDevice, hasDeviceSpec ? & deviceSpec : nullptr);
    }
    std::unique_ptr<AudioStreamPlayer> audioStream = AudioStreamPlayer::Create(m_backglassSDLDevice, frequency, channels, isFloat);
+#endif
    if (audioStream == nullptr)
       return nullptr;
    AudioStreamID stream = std::move(audioStream);
