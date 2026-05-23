@@ -2307,8 +2307,7 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     s_patchReport = "";
     s_needsDropTargetClass = false;
     s_needsStandupTargetClass = false;
-    PLOGI.printf("SimpleScriptPatcher: ========== STARTING PATCH PROCESS ==========");
-    PLOGI.printf("SimpleScriptPatcher: Input script length: %zu characters", script.length());
+    PLOGI.printf("SimpleScriptPatcher: patching script (%zu chars)", script.length());
 
     std::string result = StripBOM(script);
     // Keep only an input pointer for later GLF diagnostic checks (no copy).
@@ -2427,10 +2426,8 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
 
     // Final logging and script dump
     if (patched) {
-        PLOGI.printf("SimpleScriptPatcher: ========== PATCHES APPLIED ==========");
+        PLOGI.printf("SimpleScriptPatcher: patches applied (output %zu chars)", result.length());
         PLOGI.printf("%s", s_patchReport.c_str());
-        PLOGI.printf("SimpleScriptPatcher: Output script length: %zu characters", result.length());
-        PLOGI.printf("SimpleScriptPatcher: =====================================");
 
         // Debug: Check if GLF patch survived to the end (only if script uses GLF)
         if (original.find("glf_funcRefMap") != std::string::npos) {

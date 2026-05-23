@@ -11,6 +11,19 @@
 #include <bx/math.h>
 #include <bimg/decode.h>
 #include <bgfx/platform.h>
+#include <atomic>
+// Defined in RenderDevice.cpp. Tracks whether the BGFX context is currently alive
+// (true between bgfx::init and bgfx::shutdown, false otherwise).
+//
+// Why this is needed: shared_ptr<Sampler> instances can be held in places that
+// outlive RenderDevice - m_pendingTextureUploads, RenderTarget samplers, Shader::
+// m_samplers, plugin-side caches, etc. When the last reference drops AFTER
+// bgfx::shutdown has run, Sampler::~Sampler below would otherwise call
+// bgfx::destroy on a handle whose backing BGFX state has been freed - a UAF that
+// crashes in pthread_mutex_lock at NULL+0x1c0 (BGFX's internal command-queue
+// mutex). bgfx::isValid() does NOT detect this; it only compares the handle to
+// the kInvalidHandle sentinel.
+extern std::atomic<bool> g_bgfxIsAlive;
 #endif
 
 Sampler::Sampler(RenderDevice* rd, string name, std::shared_ptr<const BaseTexture> surf, const bool force_linear_rgb)
@@ -162,6 +175,14 @@ namespace bgfx { extern void release(const bgfx::Memory* _mem); }
 Sampler::~Sampler()
 {
    #if defined(ENABLE_BGFX)
+   // Guard: skip bgfx::destroy if BGFX has already been shut down. The texture
+   // handles below are still numerically valid (bgfx::isValid would return true)
+   // but the BGFX context backing them has been freed - calling destroy would
+   // dereference a freed internal mutex and SIGSEGV. We deliberately leak the
+   // handle rather than crash; the context is gone, so there's nothing real to
+   // free. See the extern g_bgfxIsAlive declaration at the top of this file.
+   if (!g_bgfxIsAlive.load())
+      return;
    if (m_textureUpdate)
       bgfx::release(m_textureUpdate);
    if (bgfx::isValid(m_nomipsTexture))

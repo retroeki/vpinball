@@ -12,6 +12,8 @@
 #include <sstream>
 #include <iomanip>
 #include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <filesystem>
 #include <map>
 #include <algorithm>
@@ -247,6 +249,32 @@ void WebServer::Update()
       Start();
    else if (!enabled && m_run)
       Stop();
+}
+
+// Re-query the active Wi-Fi/ethernet IP and re-emit VPINBALL_EVENT_WEB_SERVER so
+// the host UI + foreground notification pick up the new URL. The listening
+// socket is bound to 0.0.0.0 so it normally survives a Wi-Fi reconnect or DHCP
+// renewal — only m_url goes stale. The host pings /info and calls this when the
+// probe fails; if the socket really is dead the listener is unchanged and the
+// host falls back to a manual disable/enable toggle.
+void WebServer::RefreshUrl()
+{
+   if (!m_run)
+      return;
+
+   const auto portPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>("Standalone"s, "WebServerPort"s, ""s, ""s, false, INT_MIN, INT_MAX, 2112));
+   const int port = g_pvp->m_settings.GetInt(portPropId);
+
+   const string ip = GetIPAddress();
+   if (!ip.empty())
+      m_url = "http://" + ip + ':' + std::to_string(port);
+   else
+      m_url.clear();
+
+   PLOGI.printf("Web server URL refreshed: %s", m_url.c_str());
+
+   VPinballLib::WebServerData webServerData = { m_url };
+   VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_WEB_SERVER, &webServerData);
 }
 
 string WebServer::GetUrl()
@@ -732,28 +760,50 @@ string WebServer::GetIPAddress()
    if (getifaddrs(&ifaddr) == -1)
       return string();
 
+   string result;
    for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
       if (ifa->ifa_addr == nullptr)
          continue;
 
-      int family = ifa->ifa_addr->sa_family;
+      if (ifa->ifa_addr->sa_family != AF_INET)
+         continue;
 
-      if (family == AF_INET) {
-         if (strncmp(ifa->ifa_name, "wlan", 4) == 0 || strncmp(ifa->ifa_name, "eth", 3) == 0 || strncmp(ifa->ifa_name, "en", 2) == 0) {
-            char host[NI_MAXHOST];
-            int s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            freeifaddrs(ifaddr);
-            if (s != 0)
-               return string();
-            else
-               return host;
-         }
+      // Walk wlan* / eth* / en* only — the upstream filter. Skip loopback and
+      // anything else that isn't a real network the user's PC could reach.
+      if (strncmp(ifa->ifa_name, "wlan", 4) != 0
+         && strncmp(ifa->ifa_name, "eth", 3) != 0
+         && strncmp(ifa->ifa_name, "en", 2) != 0)
+         continue;
+
+      // Skip interfaces that aren't actually operational. On Android, Wi-Fi
+      // going down (airplane mode, Wi-Fi off) doesn't drop the wlan0 address
+      // from getifaddrs() — the kernel still reports the cached IP — but
+      // IFF_RUNNING clears, so this check is the one that matters. IFF_UP
+      // alone isn't enough; lots of stale-but-not-running interfaces have it.
+      if ((ifa->ifa_flags & IFF_UP) == 0)
+         continue;
+      if ((ifa->ifa_flags & IFF_RUNNING) == 0)
+         continue;
+      if (ifa->ifa_flags & IFF_LOOPBACK)
+         continue;
+
+      // Skip link-local 169.254.0.0/16 — set when DHCP hasn't yielded an
+      // address. The server is technically bound there but no client on the
+      // user's LAN can reach it.
+      struct sockaddr_in* sin = (struct sockaddr_in*)ifa->ifa_addr;
+      const uint32_t addr = ntohl(sin->sin_addr.s_addr);
+      if ((addr & 0xFFFF0000u) == 0xA9FE0000u) // 169.254.0.0/16
+         continue;
+
+      char host[NI_MAXHOST];
+      if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST) == 0) {
+         result = host;
+         break;
       }
    }
 
    freeifaddrs(ifaddr);
-
-   return string();
+   return result;
 }
 
 bool WebServer::ValidatePathParameter(struct mg_connection *c, struct mg_http_message* hm, const char* paramName, string& outValue)

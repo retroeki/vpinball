@@ -88,6 +88,7 @@ public:
    VPINBALL_STATUS ResetIni();
    VPINBALL_STATUS ResetTableIni();
    void UpdateWebServer();
+   void RefreshWebServer();
    VPINBALL_STATUS LoadTable(const string& tablePath);
    void CancelLoading();
    VPINBALL_STATUS ExtractTableScript();

@@ -155,6 +155,11 @@ VPINBALLAPI void VPinballUpdateWebServer()
    VPinballLib::VPinballLib::Instance().UpdateWebServer();
 }
 
+VPINBALLAPI void VPinballRefreshWebServer()
+{
+   VPinballLib::VPinballLib::Instance().RefreshWebServer();
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballLoadTable(const char* pPath)
 {
    if (pPath == nullptr)

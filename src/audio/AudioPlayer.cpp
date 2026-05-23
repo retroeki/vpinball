@@ -142,7 +142,7 @@ static void TryPromoteAudioThread(const char* label)
    if (rcFifo == 0)
    {
       const int newPolicy = sched_getscheduler(0);
-      PLOGI << "[AudioDiag " << label << "] tid=" << tid
+      PLOGD << "[AudioDiag " << label << "] tid=" << tid
             << " promoted to SCHED_FIFO (was policy=" << oldPolicy
             << ", nice=" << oldNice << ", now policy=" << newPolicy
             << ", prio=" << param.sched_priority << ')';
@@ -152,7 +152,7 @@ static void TryPromoteAudioThread(const char* label)
       const int rcNice = setpriority(PRIO_PROCESS, 0, -20);
       const int niceErrno = (rcNice == 0) ? 0 : errno;
       const int newNice = getpriority(PRIO_PROCESS, 0);
-      PLOGI << "[AudioDiag " << label << "] tid=" << tid
+      PLOGD << "[AudioDiag " << label << "] tid=" << tid
             << " SCHED_FIFO denied (errno=" << fifoErrno
             << "), setpriority(-20) rc=" << rcNice
             << " errno=" << niceErrno
@@ -184,7 +184,7 @@ static void TryPromoteAudioThread(const char* label)
 
    if (pinned == 0)
    {
-      PLOGI << "[AudioDiag " << label << "] affinity skip: no big cores available "
+      PLOGD << "[AudioDiag " << label << "] affinity skip: no big cores available "
             << "(getaffinity rc=" << rcGet << ", currentCount=" << currentCount << ')';
       return;
    }
@@ -197,7 +197,7 @@ static void TryPromoteAudioThread(const char* label)
    CPU_ZERO(&actualMask);
    sched_getaffinity(0, sizeof(actualMask), &actualMask);
 
-   PLOGI << "[AudioDiag " << label << "] affinity: setaffinity rc=" << rcSet
+   PLOGD << "[AudioDiag " << label << "] affinity: setaffinity rc=" << rcSet
          << " errno=" << setErrno
          << " requested=4-7 (" << pinned << " bits)"
          << " actualMask=" << std::hex
@@ -272,7 +272,7 @@ void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, i
       if (sinceLastImmediateNs > 250000000ULL)
       {
          pDevice->diagLastImmediateLogNs = entryNs;
-         PLOGI << "[AudioDiag " << pDevice->diagLabel << "] "
+         PLOGD << "[AudioDiag " << pDevice->diagLabel << "] "
                << (isSlow ? "SLOW " : "")
                << (isLate ? "LATE " : "")
                << "mix=" << (mixNs / 1000) << "us"
@@ -288,7 +288,7 @@ void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, i
    {
       if (pDevice->diagSlowCallbacks > 0 || pDevice->diagLateGaps > 0)
       {
-         PLOGI << "[AudioDiag " << pDevice->diagLabel << "] window cb=" << pDevice->diagCallbackCount
+         PLOGD << "[AudioDiag " << pDevice->diagLabel << "] window cb=" << pDevice->diagCallbackCount
                << " slow=" << pDevice->diagSlowCallbacks
                << " late=" << pDevice->diagLateGaps
                << " maxMix=" << (pDevice->diagMaxMixNs / 1000) << "us"
@@ -322,7 +322,7 @@ static void ma_data_callback_aaudio_diag(ma_device* pDevice, void* pOutput, cons
       const pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
       const int policy = sched_getscheduler(0);
       const int nice = getpriority(PRIO_PROCESS, 0);
-      PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] AAudio data callback thread tid=" << tid
+      PLOGD << "[AudioDiag " << pDeviceEx->diagLabel << "] AAudio data callback thread tid=" << tid
             << " policy=" << policy << " (0=OTHER,1=FIFO,2=RR)"
             << " nice=" << nice;
       // Lazily compute the expected period from frameCount the first time we see it.
@@ -365,7 +365,7 @@ static void ma_data_callback_aaudio_diag(ma_device* pDevice, void* pOutput, cons
       if (sinceLastImmediateNs > 250000000ULL)
       {
          pDeviceEx->diagLastImmediateLogNs = entryNs;
-         PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] "
+         PLOGD << "[AudioDiag " << pDeviceEx->diagLabel << "] "
                << (isSlow ? "SLOW " : "")
                << (isLate ? "LATE " : "")
                << "mix=" << (mixNs / 1000) << "us"
@@ -379,7 +379,7 @@ static void ma_data_callback_aaudio_diag(ma_device* pDevice, void* pOutput, cons
    {
       if (pDeviceEx->diagSlowCallbacks > 0 || pDeviceEx->diagLateGaps > 0)
       {
-         PLOGI << "[AudioDiag " << pDeviceEx->diagLabel << "] window cb=" << pDeviceEx->diagCallbackCount
+         PLOGD << "[AudioDiag " << pDeviceEx->diagLabel << "] window cb=" << pDeviceEx->diagCallbackCount
                << " slow=" << pDeviceEx->diagSlowCallbacks
                << " late=" << pDeviceEx->diagLateGaps
                << " maxMix=" << (pDeviceEx->diagMaxMixNs / 1000) << "us"
@@ -427,7 +427,7 @@ static ma_result ma_device_init__sdl(ma_device* pDevice, const ma_device_config*
       case SDL_AUDIO_S32: deviceFormat = ma_format_s32; break;
       case SDL_AUDIO_F32: deviceFormat = ma_format_f32; break;
       default:
-         PLOGI << "Unsupported SDL audio format " << SDL_GetAudioFormatName(specs.format) << " (0x" << std::hex << specs.format << std::dec << "), forcing to F32";
+         PLOGD << "Unsupported SDL audio format " << SDL_GetAudioFormatName(specs.format) << " (0x" << std::hex << specs.format << std::dec << "), forcing to F32";
          specs.format = SDL_AUDIO_F32;
          if (!SDL_SetAudioStreamFormat(pDeviceEx->stream, nullptr, &specs))
          {
@@ -463,7 +463,7 @@ static ma_result ma_device_init__sdl(ma_device* pDevice, const ma_device_config*
       ? (static_cast<uint64_t>(periodSizeInFrames) * 1000000000ULL / static_cast<uint64_t>(specs.freq))
       : 0;
 
-   PLOGI << "Audio device initialized. Device: '" << SDL_GetAudioDeviceName(pDeviceEx->deviceID) << "', Freq : " << specs.freq << ", Format: " << SDL_GetAudioFormatName(specs.format) << ", Channels: " << specs.channels << ", Driver: " << SDL_GetCurrentAudioDriver() << ", period=" << periodSizeInFrames << "fr/" << (pDeviceEx->diagPeriodNs / 1000) << "us, prealloc=" << preallocBytes << "B";
+   PLOGD << "Audio device initialized. Device: '" << SDL_GetAudioDeviceName(pDeviceEx->deviceID) << "', Freq : " << specs.freq << ", Format: " << SDL_GetAudioFormatName(specs.format) << ", Channels: " << specs.channels << ", Driver: " << SDL_GetCurrentAudioDriver() << ", period=" << periodSizeInFrames << "fr/" << (pDeviceEx->diagPeriodNs / 1000) << "us, prealloc=" << preallocBytes << "B";
    return MA_SUCCESS;
 }
 
@@ -550,11 +550,11 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
       SDL_free(pAudioList);
       if (m_playfieldAudioDevice == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
       {
-         PLOGI << "Table sound device was not found (" << playfieldDevice << "), using default: " << GetPlayfieldDeviceName().c_str();
+         PLOGD << "Table sound device was not found (" << playfieldDevice << "), using default: " << GetPlayfieldDeviceName().c_str();
       }
       if (m_backglassAudioDevice == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
       {
-         PLOGI << "Backglass sound device was not found (" << backglassDevice << "), using default: " << GetBackglassDeviceName().c_str();
+         PLOGD << "Backglass sound device was not found (" << backglassDevice << "), using default: " << GetBackglassDeviceName().c_str();
       }
    }
 

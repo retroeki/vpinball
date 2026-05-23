@@ -86,6 +86,7 @@ VPINBALLAPI VPINBALL_STATUS VPinballResetTableIni();
 // Web Server
 
 VPINBALLAPI void VPinballUpdateWebServer();
+VPINBALLAPI void VPinballRefreshWebServer();
 
 // Player
 

@@ -803,6 +803,11 @@ void VPinballLib::UpdateWebServer()
    m_webServer.Update();
 }
 
+void VPinballLib::RefreshWebServer()
+{
+   m_webServer.RefreshUrl();
+}
+
 VPINBALL_STATUS VPinballLib::LoadTable(const string& tablePath)
 {
    PLOGI.printf("LoadTable called with path: %s", tablePath.c_str());

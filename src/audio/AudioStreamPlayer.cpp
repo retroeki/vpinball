@@ -314,7 +314,7 @@ void AudioStreamPlayer::Enqueue(const uint8_t* buffer, int length)
       m_startTimestamp = SDL_GetTicks();
       m_streamedTotal = 0;
       m_resync = false;
-      PLOGI << "Audio stream sync was lost and reseted";
+      PLOGD << "Audio stream sync was lost and reseted";
    }
 
    const ma_uint32 totalFrames = static_cast<ma_uint32>(length) / a.bytesPerFrame;

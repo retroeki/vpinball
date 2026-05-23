@@ -42,6 +42,24 @@
 #pragma pop_macro("_WIN64")
 #endif
 
+// Tracks the BGFX context lifetime so destructors in other translation units can
+// avoid a use-after-free on freed BGFX internals.
+//
+// Background: Samplers (and similar BGFX-handle owners) can be held by shared_ptrs
+// in places that outlive RenderDevice - m_pendingTextureUploads, RenderTarget
+// samplers, Shader::m_samplers cache, plugin caches, etc. When such a sampler is
+// finally destroyed AFTER bgfx::shutdown has run, calling bgfx::destroy() on its
+// handle dereferences BGFX's now-freed internal command-queue mutex and SIGSEGVs
+// in pthread_mutex_lock (si_addr = NULL+0x1c0 on arm64). bgfx::isValid() does NOT
+// catch this - it only checks the handle's numeric value against the invalid
+// sentinel; it has no knowledge of whether the context is alive.
+//
+// Set true after a successful bgfx::init in RenderThread, set false in RenderThread
+// immediately before bgfx::shutdown. Sampler::~Sampler reads it via an extern
+// declaration in Sampler.cpp and no-ops its destroy calls when false (handle leaks,
+// but the context is gone so the leak is meaningless).
+std::atomic<bool> g_bgfxIsAlive{false};
+
 #elif defined(ENABLE_OPENGL)
 #include "typedefs3D.h"
 #include "TextureManager.h"
@@ -188,14 +206,36 @@ static void vpinball_sigsegv_handler(int sig, siginfo_t* info, void* context)
 
    CRASH_LOG("Signal handler called with signal %d", sig);
 
-   // Store PC from ucontext (async-signal-safe)
-   // Note: _Unwind_Backtrace is NOT async-signal-safe so we can't use it here
+   // Store fault PC from ucontext as frame[0] - this is the actual crash site and is
+   // strictly async-signal-safe to read.
    ucontext_t* uc = (ucontext_t*)context;
    if (uc) {
       // ARM64: PC is in uc_mcontext.pc
       s_crashBacktrace[0] = (uintptr_t)uc->uc_mcontext.pc;
       s_crashBacktraceSize.store(1);
       CRASH_LOG("Fault PC: 0x%lx, si_addr: %p", (unsigned long)uc->uc_mcontext.pc, info ? info->si_addr : nullptr);
+   }
+
+   // Walk the rest of the stack. Without this, the watchdog thread only had the
+   // single ucontext PC to report - which is almost always pthread_mutex_lock,
+   // memcpy, or similar - giving zero signal about WHO passed the bad pointer.
+   //
+   // _Unwind_Backtrace is not strictly async-signal-safe per POSIX, but bionic's
+   // implementation is in practice - Crashpad, Breakpad and Firebase Crashlytics
+   // all rely on it from signal handlers on Android. Worst case it returns fewer
+   // frames than ideal; we still have the trusted ucontext PC at frame[0].
+   //
+   // The first few captured frames will be handler/trampoline noise (this function,
+   // libsigchain's Handler, __kernel_rt_sigreturn) - the real culprit shows up a
+   // few frames down. The watchdog formatter at the top of crash_watchdog_thread
+   // already iterates the full s_crashBacktrace array and resolves each frame via
+   // dladdr, so no other code needs to change to consume the extra frames.
+   {
+      int existing = s_crashBacktraceSize.load();
+      int additional = capture_backtrace(&s_crashBacktrace[existing], MAX_BACKTRACE_FRAMES - existing);
+      if (additional > 0) {
+         s_crashBacktraceSize.store(existing + additional);
+      }
    }
 
    // Notify watchdog thread (sem_post is async-signal-safe)
@@ -706,6 +746,9 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
       PLOGE << "BGFX initialization failed";
       exit(-1);
    }
+   // Context is now live - other TUs (Sampler::~Sampler etc.) may now safely
+   // call bgfx::destroy on handles they hold. See g_bgfxIsAlive declaration above.
+   g_bgfxIsAlive.store(true);
    
    #ifdef ENABLE_XR
    if (g_pplayer->m_vrDevice)
@@ -961,6 +1004,11 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
    rd->m_frameReadySem.wait();
    delete rd->m_outputWnd[0]->GetBackBuffer();
    rd->m_outputWnd[0]->SetBackBuffer(nullptr);
+   // Mark the context dead BEFORE bgfx::shutdown so any straggler destructors
+   // that fire after this point (e.g. Samplers still held in plugin caches or
+   // m_pendingTextureUploads-style queues) skip their bgfx::destroy calls.
+   // See g_bgfxIsAlive declaration at the top of this file.
+   g_bgfxIsAlive.store(false);
    bgfx::shutdown();
 }
 

@@ -481,13 +481,15 @@ void MsgPlugin::Load(const MsgPluginAPI* msgAPI)
    }
    m_msgAPI = msgAPI;
    m_loadPlugin(m_endpointId, m_msgAPI);
+   // Success boilerplate — 7+ plugins on Android, all load identically every
+   // run. Demoted to PLOGD so a failure (PLOGE above) isn't buried in noise.
    if (m_loader)
    {
-      PLOGI << "Plugin " << m_id << " loaded (library: " << m_library << ')';
+      PLOGD << "Plugin " << m_id << " loaded (library: " << m_library << ')';
    }
    else
    {
-      PLOGI << "Plugin " << m_id << " loaded (statically linked plugin)";
+      PLOGD << "Plugin " << m_id << " loaded (statically linked plugin)";
    }
    unsigned int msgId = m_msgAPI->GetMsgID(MSGPI_NAMESPACE, MSGPI_EVT_ON_PLUGIN_LOADED);
    m_msgAPI->BroadcastMsg(m_endpointId, msgId, const_cast<char*>(m_id.c_str()));

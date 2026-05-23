@@ -7,11 +7,38 @@
 #include <assert.h>
 #include <sstream>
 #include <charconv>
+#include <unordered_set>
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
 using std::string;
 using namespace std::string_literals;
+
+// Tracks live ResURIResolver instances so static message callbacks can safely
+// detect a stale userData pointer before dereferencing it.
+//
+// The bug this works around lives in MsgPluginManager::UnsubscribeMsg, whose
+// signature is `(msgId, callback)` - it has NO userData parameter, so it matches
+// subscriptions by callback function pointer only and erases the first match it
+// finds. Multiple ResURIResolver instances coexist in a typical session (one in
+// Player::m_resURIResolver, plus one each owned by the B2SRenderer, ScoreView,
+// and B2SLegacy::Form plugins), and they ALL subscribe with the same static
+// callback (OnDisplaySrcChanged et al.) just with different `this` as userData.
+// As a result, when one resolver calls Unsubscribe in BeginDestruction, the
+// manager may erase a DIFFERENT resolver's subscription, leaving the
+// to-be-destroyed resolver's entry in the subscriber list. After that resolver
+// is freed, the next BroadcastMsg invokes the static callback with a dangling
+// userData pointer - SIGSEGV at NULL+offset inside the callback.
+//
+// Fixing this in the plugin manager would mean changing the C ABI of the
+// MsgPluginAPI struct used by every plugin. Containing it here is cheaper and
+// also defuses the same latent bug for any future plugin that creates a
+// ResURIResolver.
+//
+// Threading: MsgPluginManager asserts single-threaded API usage; Subscribe/
+// Unsubscribe/Broadcast all run on the API thread, and resolver ctors/dtors
+// happen on the same thread because they call those APIs. So no mutex needed.
+static std::unordered_set<const ResURIResolver*> s_liveResolvers;
 
 ResURIResolver::ResURIResolver(const MsgPluginAPI &msgAPI, unsigned int endpointId, bool trackDisplays, bool trackSegDisplays, bool trackInputs, bool trackDevices)
    : m_msgAPI(msgAPI)
@@ -25,6 +52,10 @@ ResURIResolver::ResURIResolver(const MsgPluginAPI &msgAPI, unsigned int endpoint
    , m_getDisplaySrcMsgId(trackDisplays ? m_msgAPI.GetMsgID(CTLPI_NAMESPACE, CTLPI_DISPLAY_GET_SRC_MSG) : 0)
    , m_onDisplayChangedMsgId(trackDisplays ? m_msgAPI.GetMsgID(CTLPI_NAMESPACE, CTLPI_DISPLAY_ON_SRC_CHG_MSG) : 0)
 {
+   // Register this instance as live. Paired with s_liveResolvers.erase() in
+   // BeginDestruction (which the destructor also calls). See the comment on
+   // s_liveResolvers above for why this tracking is necessary.
+   s_liveResolvers.insert(this);
    if (trackDisplays)
    {
       m_msgAPI.SubscribeMsg(m_endpointId, m_onDisplayChangedMsgId, OnDisplaySrcChanged, this);
@@ -52,6 +83,11 @@ void ResURIResolver::BeginDestruction()
    if (m_isDestroyed)
       return;
    m_isDestroyed = true;
+
+   // Remove from live set FIRST so any callback that fires before the unsubscribe
+   // completes (or any callback that survives the unsubscribe due to the manager's
+   // first-match-by-callback semantics) will see this instance as dead.
+   s_liveResolvers.erase(this);
 
    // Unsubscribe from all messages immediately to prevent callbacks on stale pointers
    if (m_onInputChangedMsgId)
@@ -113,6 +149,13 @@ bool ResURIResolver::try_parse_int(const string &str, int &value)
 void ResURIResolver::OnInputSrcChanged(const unsigned int msgId, void *userData, void *msgData)
 {
    ResURIResolver* me = static_cast<ResURIResolver *>(userData);
+   // Guard against a stale `this` - userData may point to a freed resolver if the
+   // plugin manager's Unsubscribe erased a different instance's subscription. The
+   // m_isDestroyed check below would crash on a freed `me`; this check runs first
+   // and is safe because s_liveResolvers is a pointer-keyed set. See the comment
+   // on s_liveResolvers at the top of the file for the full background.
+   if (s_liveResolvers.count(me) == 0)
+      return;
    if (me->m_isDestroyed)
       return;
    GetInputSrcMsg getSrcMsg = { 0, 0, nullptr };
@@ -127,6 +170,9 @@ void ResURIResolver::OnInputSrcChanged(const unsigned int msgId, void *userData,
 void ResURIResolver::OnDevSrcChanged(const unsigned int msgId, void *userData, void *msgData)
 {
    ResURIResolver* me = static_cast<ResURIResolver *>(userData);
+   // Stale-`this` guard - see comment on s_liveResolvers above.
+   if (s_liveResolvers.count(me) == 0)
+      return;
    if (me->m_isDestroyed)
       return;
    GetDevSrcMsg getSrcMsg = { 0, 0, nullptr };
@@ -141,6 +187,9 @@ void ResURIResolver::OnDevSrcChanged(const unsigned int msgId, void *userData, v
 void ResURIResolver::OnSegSrcChanged(const unsigned int msgId, void *userData, void *msgData)
 {
    ResURIResolver* me = static_cast<ResURIResolver *>(userData);
+   // Stale-`this` guard - see comment on s_liveResolvers above.
+   if (s_liveResolvers.count(me) == 0)
+      return;
    if (me->m_isDestroyed)
       return;
    GetSegSrcMsg getSrcMsg = { 0, 0, nullptr };
@@ -155,6 +204,13 @@ void ResURIResolver::OnSegSrcChanged(const unsigned int msgId, void *userData, v
 void ResURIResolver::OnDisplaySrcChanged(const unsigned int msgId, void *userData, void *msgData)
 {
    ResURIResolver* me = static_cast<ResURIResolver *>(userData);
+   // Stale-`this` guard - see comment on s_liveResolvers above. This callback in
+   // particular was the one observed crashing during table-exit teardown: FlexDMD's
+   // dtor (released by VBScript engine cleanup) broadcasts an OnDmdSrcChanged
+   // message, which fans out to every resolver subscribed to that ID - including
+   // the one belonging to a Player that had already been freed.
+   if (s_liveResolvers.count(me) == 0)
+      return;
    if (me->m_isDestroyed)
       return;
    GetDisplaySrcMsg getSrcMsg = { 0, 0, nullptr };

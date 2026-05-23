@@ -416,7 +416,9 @@ void ScoreView::Parse(const std::filesystem::path& path, std::istream& content)
    // TODO avoid duplicates
    m_invalidBestLayout = true;
    m_layouts.push_back(layout);
-   LOGI("ScoreView::Parse: Loaded layout from %s (%.0fx%.0f, %d visuals)", path.c_str(), layout.width, layout.height, (int)layout.visuals.size());
+   // Per-layout load detail is debug-only; the "ScoreView: N layouts loaded"
+   // summary in ScoreViewPlugin is sufficient for release/crash logs.
+   LOGD("ScoreView::Parse: Loaded layout from %s (%.0fx%.0f, %d visuals)", path.c_str(), layout.width, layout.height, (int)layout.visuals.size());
    #undef CHECK_FIELD
 }
 

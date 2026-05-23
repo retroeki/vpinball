@@ -170,12 +170,18 @@ void Logger::SetupLogger(const bool enable)
       if (!initialized)
       {
          initialized = true;
-         const string szLogPath = g_pvp->GetPrefPath() + "vpinball.log";
-         static plog::RollingFileAppender<ThreadAwareTxtFormatter<false>> fileAppender(szLogPath.c_str(), 1024 * 1024 * 5, 1);
          static DebugAppender debugAppender;
          plog::Logger<PLOG_DEFAULT_INSTANCE_ID>::getInstance()->addAppender(&debugAppender);
+#ifndef __ANDROID__
+         // vpinball.log file appender — disabled on Android because the host
+         // crash reporter captures from logcat (see VPinballCrashReportCapture.kt)
+         // and nothing else reads the file. Skipping it removes the per-PLOG
+         // disk flush from every INFO/WARN/ERROR call site.
+         const string szLogPath = g_pvp->GetPrefPath() + "vpinball.log";
+         static plog::RollingFileAppender<ThreadAwareTxtFormatter<false>> fileAppender(szLogPath.c_str(), 1024 * 1024 * 5, 1);
          plog::Logger<PLOG_DEFAULT_INSTANCE_ID>::getInstance()->addAppender(&fileAppender);
          plog::Logger<PLOG_NO_DBG_OUT_INSTANCE_ID>::getInstance()->addAppender(&fileAppender);
+#endif
 
 #ifdef __STANDALONE__
 #ifndef __ANDROID__

@@ -29,19 +29,26 @@ InputManager::InputManager()
 
    CreateInputActions();
 
-   // Touch screen support
+   // Touch screen support — collect all device names into a single summary
+   // line rather than one PLOGI per device (4-5 lines per startup on phones).
    int nTouchDevices;
    SDL_TouchID* touchDevices = SDL_GetTouchDevices(&nTouchDevices);
+   std::string touchDeviceSummary;
    for (int i = 0; i < nTouchDevices; i++)
    {
-      PLOGI << "Touch device detected: '" << SDL_GetTouchDeviceName(touchDevices[i]) << "' "
-            << ((SDL_GetTouchDeviceType(touchDevices[i]) == SDL_TOUCH_DEVICE_DIRECT) ? " - Enabling touch support" : " - Skipping (not a touch screen)");
-      if (SDL_GetTouchDeviceType(touchDevices[i]) == SDL_TOUCH_DEVICE_DIRECT)
+      const bool isDirect = SDL_GetTouchDeviceType(touchDevices[i]) == SDL_TOUCH_DEVICE_DIRECT;
+      if (isDirect)
          m_supportsTouch = true;
+      if (!touchDeviceSummary.empty())
+         touchDeviceSummary += ", ";
+      touchDeviceSummary += '\'';
+      touchDeviceSummary += SDL_GetTouchDeviceName(touchDevices[i]);
+      touchDeviceSummary += isDirect ? "'(direct)" : "'(skip)";
    }
    if (touchDevices)
       SDL_free(touchDevices);
-   PLOGI << "Touch support: nTouchDevices=" << nTouchDevices << " m_supportsTouch=" << m_supportsTouch;
+   PLOGI << "Touch support: nTouchDevices=" << nTouchDevices << " m_supportsTouch=" << m_supportsTouch
+         << (touchDeviceSummary.empty() ? "" : " devices=") << touchDeviceSummary;
    const bool touchZonesForced = settings.GetStandalone_TouchZonesForced();
    const bool touchZonesEnabled = settings.GetPlayer_TouchZonesEnabled() || touchZonesForced;
    PLOGI << "TouchZonesEnabled setting=" << settings.GetPlayer_TouchZonesEnabled() << " forced=" << touchZonesForced;
@@ -62,8 +69,10 @@ InputManager::InputManager()
       addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
       addTouchRegion(RECT { 50, 30, 100, 60 }, GetRightNudgeActionId());
       addTouchRegion(RECT { 0, 60, 30, 90 }, GetLeftFlipperActionId());
+      addTouchRegion(RECT { 0, 60, 30, 90 }, GetStagedLeftFlipperActionId());
       addTouchRegion(RECT { 30, 60, 70, 100 }, GetCenterNudgeActionId());
       addTouchRegion(RECT { 70, 60, 100, 90 }, GetRightFlipperActionId());
+      addTouchRegion(RECT { 70, 60, 100, 90 }, GetStagedRightFlipperActionId());
       addTouchRegion(RECT { 0, 90, 30, 100 }, GetStartActionId());
       addTouchRegion(RECT { 70, 90, 100, 100 }, GetLaunchBallActionId());
    }
@@ -615,14 +624,10 @@ void InputManager::PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t ti
 
 void InputManager::PushTouchEvent(float relativeX, float relativeY, uint64_t timestampNs, bool isPressed)
 {
-   static int touchLogCount = 0;
    POINT point;
    point.x = (int)((float)g_pplayer->m_playfieldWnd->GetWidth() * relativeX);
    point.y = (int)((float)g_pplayer->m_playfieldWnd->GetHeight() * relativeY);
-   if (touchLogCount < 20) {
-      touchLogCount++;
-      PLOGI << "PushTouchEvent: rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
-   }
+   PLOGD << "PushTouchEvent: rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
    for (auto& region : m_touchRegionMap)
    {
       if (const bool wasPressed = m_inputActions[region.actionId]->GetDirectState(region.directStateSlot); wasPressed == isPressed)

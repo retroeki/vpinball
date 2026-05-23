@@ -20,6 +20,7 @@ public:
    static void LogAppender(const string& formattedLog);
    static void BroadcastStatus();
    void Update();
+   void RefreshUrl();
    bool IsRunning() { return m_run; }
    string GetUrl();
 

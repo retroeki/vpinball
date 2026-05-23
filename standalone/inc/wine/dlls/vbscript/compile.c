@@ -26,9 +26,15 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
-#define COMPILE_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
+/* COMPILE_LOG is reserved for compile failures and stays at ERROR severity so it
+ * surfaces in error-filtered logcat views. Routine progress (function/class
+ * compile, parse_script success, etc.) goes through COMPILE_INFO so it doesn't
+ * masquerade as 17+ false errors before every real one. */
+#define COMPILE_LOG(...)  __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
+#define COMPILE_INFO(...) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__)
 #else
-#define COMPILE_LOG(...) fprintf(stderr, __VA_ARGS__)
+#define COMPILE_LOG(...)  fprintf(stderr, __VA_ARGS__)
+#define COMPILE_INFO(...) fprintf(stderr, __VA_ARGS__)
 #endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
@@ -2327,9 +2333,9 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
     }
 
     ctx.parser.lcid = script->lcid;
-    COMPILE_LOG("Starting parse_script...\n");
+    COMPILE_INFO("Starting parse_script...\n");
     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
-    COMPILE_LOG("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
+    COMPILE_INFO("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
     if(FAILED(hres)) {
         if(ctx.parser.error_loc != -1)
             ctx.loc = ctx.parser.error_loc;
@@ -2339,7 +2345,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         return hres;
     }
 
-    COMPILE_LOG("Compiling main code (global scope)...\n");
+    COMPILE_INFO("Compiling main code (global scope)...\n");
     hres = compile_func(&ctx, ctx.parser.stats, &ctx.code->main_code);
     if(FAILED(hres)) {
         COMPILE_LOG("compile_func (main) FAILED: hres=0x%08lx\n", (unsigned long)hres);
@@ -2347,7 +2353,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         release_compiler(&ctx);
         return hres;
     }
-    COMPILE_LOG("Main code compiled OK\n");
+    COMPILE_INFO("Main code compiled OK\n");
 
     code->option_explicit = ctx.parser.option_explicit;
     ctx.global_consts = ctx.const_decls;
@@ -2357,11 +2363,11 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         int func_count = 0;
         for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next)
             func_count++;
-        COMPILE_LOG("Compiling %d functions...\n", func_count);
+        COMPILE_INFO("Compiling %d functions...\n", func_count);
     }
 
     for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next) {
-        COMPILE_LOG("Compiling function: %ls\n", func_decl->name);
+        COMPILE_INFO("Compiling function: %ls\n", func_decl->name);
         hres = create_function(&ctx, func_decl, &new_func);
         if(FAILED(hres)) {
             COMPILE_LOG("create_function FAILED for '%ls': hres=0x%08lx\n", func_decl->name, (unsigned long)hres);
@@ -2373,10 +2379,10 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
         new_func->next = ctx.code->funcs;
         ctx.code->funcs = new_func;
     }
-    COMPILE_LOG("All functions compiled OK\n");
+    COMPILE_INFO("All functions compiled OK\n");
 
     for(class_decl = ctx.parser.class_decls; class_decl; class_decl = class_decl->next) {
-        COMPILE_LOG("Compiling class: %ls\n", class_decl->name);
+        COMPILE_INFO("Compiling class: %ls\n", class_decl->name);
         hres = compile_class(&ctx, class_decl);
         if(FAILED(hres)) {
             COMPILE_LOG("compile_class FAILED for '%ls': hres=0x%08lx\n", class_decl->name, (unsigned long)hres);
@@ -2385,7 +2391,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
             return hres;
         }
     }
-    COMPILE_LOG("All classes compiled OK\n");
+    COMPILE_INFO("All classes compiled OK\n");
 
     hres = check_script_collisions(&ctx, script);
     if(FAILED(hres) && !skip_collisions) {
