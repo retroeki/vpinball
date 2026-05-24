@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include "standalone/PoleStorage.h"
 #include "core/ScriptArrayList.h"
+#include "core/ScriptShellApplication.h"
 #include "core/ScriptWScriptShell.h"
 #endif
 
@@ -906,6 +907,23 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
    // on the first RegWrite and UltraDMD would never be created).
    if (wcscmp(progid, L"WScript.Shell") == 0) {
       IDispatch* shell = CreateScriptWScriptShell();
+      if (!shell) return E_OUTOFMEMORY;
+      if (ppObj) *ppObj = (IUnknown*)shell;
+      return S_OK;
+   }
+
+   // Shell.Application — host-side stub. The Windows Shell COM has no
+   // equivalent on Android (no Explorer, no namespace, no shell exec).
+   // Community tables (notably the Munsters Original 2020 series) call
+   // `CreateObject("shell.application")` to use Shell.NameSpace +
+   // Folder.GetDetailsOf for PuP video metadata. Without this stub the
+   // CreateObject raises VBSE_CANT_CREATE_OBJECT and the table dies at
+   // script load. The stub returns Empty from every method; defensive
+   // callers (`if not objFolder is nothing then ...`) degrade cleanly.
+   // Case-insensitive match — Munsters uses lowercase "shell.application"
+   // while the canonical Microsoft casing is "Shell.Application".
+   if (wcsicmp(progid, L"Shell.Application") == 0) {
+      IDispatch* shell = CreateScriptShellApplication();
       if (!shell) return E_OUTOFMEMORY;
       if (ppObj) *ppObj = (IUnknown*)shell;
       return S_OK;

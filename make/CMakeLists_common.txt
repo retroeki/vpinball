@@ -24,6 +24,8 @@ set(VPX_SOURCES
    src/core/def.cpp
    src/core/ScriptArrayList.h
    src/core/ScriptArrayList.cpp
+   src/core/ScriptShellApplication.h
+   src/core/ScriptShellApplication.cpp
    src/core/ScriptWScriptShell.h
    src/core/ScriptWScriptShell.cpp
    src/core/dispid.h
