@@ -11,6 +11,7 @@
 #define DISPID_Table_ZPD 1042
 #define DISPID_Table_OverridePhysics 1043
 #define DISPID_Table_Offset 1045
+#define DISPID_Table_InclinationFS 1046
 #define DISPID_Table_Nudge 21
 #define DISPID_Table_Height 13
 #define DISPID_Table_Width 14

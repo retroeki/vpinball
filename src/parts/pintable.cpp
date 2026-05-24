@@ -7058,6 +7058,21 @@ STDMETHODIMP PinTable::put_Inclination(float newVal)
    return S_OK;
 }
 
+// InclinationFS — non-standard property referenced by Sliderpoint's TAF
+// for VPX (Addams Family, line 178: `Incline = Table1.InclinationFS` in
+// the FSS branch). VPinball has never exposed a separate FSS inclination
+// property — this alias forwards to the single Inclination value so the
+// table runs cleanly instead of raising VBSE_OLE_NO_PROP_OR_METHOD.
+STDMETHODIMP PinTable::get_InclinationFS(float *pVal)
+{
+   return get_Inclination(pVal);
+}
+
+STDMETHODIMP PinTable::put_InclinationFS(float newVal)
+{
+   return put_Inclination(newVal);
+}
+
 STDMETHODIMP PinTable::get_Layback(float *pVal)
 {
    *pVal = mViewSetups[m_currentBackglassMode].mLayback;

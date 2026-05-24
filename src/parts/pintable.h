@@ -106,6 +106,9 @@ public:
    STDMETHOD(put_FieldOfView)(/*[in]*/ float newVal);
    STDMETHOD(get_Inclination)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_Inclination)(/*[in]*/ float newVal);
+   // Alias of Inclination — see vpinball.idl for the rationale.
+   STDMETHOD(get_InclinationFS)(/*[out, retval]*/ float *pVal);
+   STDMETHOD(put_InclinationFS)(/*[in]*/ float newVal);
    STDMETHOD(get_Layback)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_Layback)(/*[in]*/ float newVal);
    STDMETHOD(get_Rotation)(/*[out, retval]*/ float *pVal);

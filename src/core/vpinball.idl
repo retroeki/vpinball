@@ -505,6 +505,13 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
 
                 [propget, id(DISPID_Table_Inclination), helpstring("property Inclination")] HRESULT Inclination([out, retval] float *pVal);
                 [propput, id(DISPID_Table_Inclination), helpstring("property Inclination")] HRESULT Inclination([in] float newVal);
+                // InclinationFS — non-standard property aliased to Inclination.
+                // The Sliderpoint TAF for VPX mod (Addams Family) references
+                // `Table1.InclinationFS` in its FSS branch but the property
+                // was never exposed by any VPinball build. Provide as alias
+                // so the table runs in cabinet/FSS mode instead of erroring.
+                [propget, id(DISPID_Table_InclinationFS), helpstring("property InclinationFS (alias of Inclination)")] HRESULT InclinationFS([out, retval] float *pVal);
+                [propput, id(DISPID_Table_InclinationFS), helpstring("property InclinationFS (alias of Inclination)")] HRESULT InclinationFS([in] float newVal);
                 [propget, id(DISPID_Table_FieldOfView), helpstring("property FieldOfView")] HRESULT FieldOfView([out, retval] float *pVal);
                 [propput, id(DISPID_Table_FieldOfView), helpstring("property FieldOfView")] HRESULT FieldOfView([in] float newVal);
                 [propget, id(DISPID_Table_Layback), helpstring("property Layback")] HRESULT Layback([out, retval] float *pVal);
