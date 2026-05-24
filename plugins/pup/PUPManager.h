@@ -76,6 +76,14 @@ public:
    const MsgPluginAPI* GetMsgAPI() const { return m_msgApi; }
    const string& GetRootPath() const { return m_szRootPath; }
 
+   // Lazy-resolve the pupvideos root path next to the current .vpx if it
+   // hasn't been resolved yet. Safe to call any time after the PUPManager
+   // has been created. Used by PUPPinDisplay::GetGetRoot when scripts call
+   // `PuPlayer.GetRoot` before `PuPlayer.B2SInit` (e.g. Terrifier v1.02
+   // which reads GetRoot to build a screens.pup path BEFORE invoking
+   // B2SInit on the next line).
+   void EnsureRootPath();
+
    void SetGameDir(const string& szRomName);
    void LoadConfig(const string& szRomName);
    void Unload();

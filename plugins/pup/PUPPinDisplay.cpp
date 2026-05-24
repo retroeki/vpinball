@@ -529,8 +529,13 @@ void PUPPinDisplay::SetGetGame(const string& value)
    NOT_IMPLEMENTED("Not implemented: value=%s", value.c_str());
 }
 
-const string& PUPPinDisplay::GetGetRoot() const
+const string& PUPPinDisplay::GetGetRoot()
 {
+   // Lazy-resolve so scripts that call `PuPlayer.GetRoot` before the
+   // first `B2SInit` (Terrifier v1.02 line 13596 reads GetRoot to build a
+   // screens.pup path, then calls B2SInit on line 13610) see a usable
+   // root path instead of "".
+   m_pupManager.EnsureRootPath();
    return m_pupManager.GetRootPath();
 }
 

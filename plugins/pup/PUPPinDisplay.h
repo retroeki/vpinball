@@ -55,7 +55,10 @@ public:
    void LabelInit(int screenNum);
    const string& GetGetGame() const;
    void SetGetGame(const string& value);
-   const string& GetGetRoot() const;
+   // Non-const because we lazily resolve the pupvideos root path on first
+   // read — needed for tables (e.g. Terrifier v1.02) that read GetRoot
+   // before calling B2SInit (the call that normally triggers resolution).
+   const string& GetGetRoot();
    void SetGetRoot(const string& value);
    void SoundAdd(const string& sname, const string& fname, int svol, double sX, double sy, const string& SP);
    void SoundPlay(const string& sname);
