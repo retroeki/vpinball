@@ -497,7 +497,8 @@ Player::Player(PinTable *const table, const int playMode)
       size_t estimatedInProgressMem = 0; // Track estimated memory of all in-progress loads
       vector<Texture *> failedPreloads;
       const unsigned int maxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_MaxTexDimension());
-      auto loadImage = [maxTexDim, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
+      const unsigned int playfieldMaxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_PlayfieldMaxTexDimension());
+      auto loadImage = [maxTexDim, playfieldMaxTexDim, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
       {
          bool readyToLoad = false;
          const size_t neededMem = image->GetEstimatedGPUSize() * 3; // 3x: image loader + BaseTexture + rendering API copy
@@ -548,7 +549,15 @@ Player::Player(PinTable *const table, const int playMode)
                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             else
             {
-               const auto buffer = image->GetRawBitmap(resizeOnLowMem, maxTexDim);
+               unsigned int imgMaxTexDim = maxTexDim;
+               if (playfieldMaxTexDim > maxTexDim)
+               {
+                  string lname = image->m_name;
+                  std::transform(lname.begin(), lname.end(), lname.begin(), [](unsigned char c){ return (char)::tolower(c); });
+                  if (lname.find("playfield") != string::npos)
+                     imgMaxTexDim = playfieldMaxTexDim;
+               }
+               const auto buffer = image->GetRawBitmap(resizeOnLowMem, imgMaxTexDim);
                const std::lock_guard<std::mutex> lock(mutex);
                if (buffer)
                {
@@ -578,7 +587,7 @@ Player::Player(PinTable *const table, const int playMode)
                   }
                   if ((image->m_width > buffer->width()) || (image->m_height > buffer->height()))
                   {
-                     const bool isError = (buffer->width() < maxTexDim) || (buffer->height() < maxTexDim);
+                     const bool isError = (buffer->width() < imgMaxTexDim) || (buffer->height() < imgMaxTexDim);
                      PLOG(isError ? plog::Severity::error : plog::Severity::warning) << "Image '" << image->m_name << "' was downsized from "
                            << image->m_width << 'x' << image->m_height << " to " << buffer->width() << 'x' << buffer->height() << (isError ? " due to low memory " : " due to user settings");
                      if (isError)
