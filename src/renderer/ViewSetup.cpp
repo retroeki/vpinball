@@ -320,10 +320,24 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
 
    vector<Vertex3Ds> bounds, legacy_bounds;
    bounds.reserve(table->m_vedit.size() * 8); // upper bound estimate
-   if (isLegacy)
-      legacy_bounds.reserve(table->m_vedit.size() * 8); // upper bound estimate
    for (IEditable* editable : table->m_vedit)
-      editable->GetBoundingVertices(bounds, isLegacy ? &legacy_bounds : nullptr); // Collect part bounds to fit the legacy mode camera?
+      editable->GetBoundingVertices(bounds, nullptr); // Collect (visible) part bounds for the near/far plane computation
+
+   if (isLegacy)
+   {
+      // Fit the legacy auto-fit camera to the playfield bounding box rather than to the union of every
+      // part's bounding vertices. The latter is polluted by oversized invisible collision/physics geometry
+      // (e.g. a tall invisible enclosure wall) which forces FitCameraToVertices to pull the camera far away.
+      // Fitting to the playfield box gives stable framing across all tables. Inclination/FOV/layback are
+      // unaffected - they feed FitCameraToVertices separately and only the camera distance/centering is derived here.
+      const float zTop = max(table->m_glassTopHeight, table->m_glassBottomHeight);
+      legacy_bounds.reserve(8);
+      for (int i = 0; i < 8; i++)
+         legacy_bounds.emplace_back(
+            (i & 1) ? table->m_right : table->m_left,
+            (i & 2) ? table->m_bottom : table->m_top,
+            (i & 4) ? zTop : 0.0f);
+   }
 
    // Compute translation
    // Also setup a dedicated matView (complete matrix stack excepted projection) to be able to compute near and far plane
