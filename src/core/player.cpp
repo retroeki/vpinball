@@ -499,7 +499,8 @@ Player::Player(PinTable *const table, const int playMode)
       const unsigned int maxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_MaxTexDimension());
       const unsigned int playfieldMaxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_PlayfieldMaxTexDimension());
       // The table's designated playfield image (m_image) is named differently across tables ("pf", "Playfield", etc.),
-      // so match it explicitly in addition to any image whose name contains "playfield" (covers layered-playfield mods).
+      // so match it explicitly in addition to any image whose name contains "playfield" (layered-playfield mods) or
+      // "plastic" (full-playfield plastics overlays that sit on top of the playfield and carry on-table art).
       string playfieldImageName = m_ptable->m_image;
       std::transform(playfieldImageName.begin(), playfieldImageName.end(), playfieldImageName.begin(), [](unsigned char c){ return (char)::tolower(c); });
       auto loadImage = [maxTexDim, playfieldMaxTexDim, playfieldImageName, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
@@ -558,7 +559,7 @@ Player::Player(PinTable *const table, const int playMode)
                {
                   string lname = image->m_name;
                   std::transform(lname.begin(), lname.end(), lname.begin(), [](unsigned char c){ return (char)::tolower(c); });
-                  if (lname.find("playfield") != string::npos || (!playfieldImageName.empty() && lname == playfieldImageName))
+                  if (lname.find("playfield") != string::npos || lname.find("plastic") != string::npos || (!playfieldImageName.empty() && lname == playfieldImageName))
                      imgMaxTexDim = playfieldMaxTexDim;
                }
                const auto buffer = image->GetRawBitmap(resizeOnLowMem, imgMaxTexDim);
