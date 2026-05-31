@@ -498,7 +498,11 @@ Player::Player(PinTable *const table, const int playMode)
       vector<Texture *> failedPreloads;
       const unsigned int maxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_MaxTexDimension());
       const unsigned int playfieldMaxTexDim = static_cast<unsigned int>(m_ptable->m_settings.GetPlayer_PlayfieldMaxTexDimension());
-      auto loadImage = [maxTexDim, playfieldMaxTexDim, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
+      // The table's designated playfield image (m_image) is named differently across tables ("pf", "Playfield", etc.),
+      // so match it explicitly in addition to any image whose name contains "playfield" (covers layered-playfield mods).
+      string playfieldImageName = m_ptable->m_image;
+      std::transform(playfieldImageName.begin(), playfieldImageName.end(), playfieldImageName.begin(), [](unsigned char c){ return (char)::tolower(c); });
+      auto loadImage = [maxTexDim, playfieldMaxTexDim, playfieldImageName, &mutex, &nLoadInProgress, &estimatedInProgressMem, preloadCache, this, &failedPreloads](Texture *image, bool resizeOnLowMem)
       {
          bool readyToLoad = false;
          const size_t neededMem = image->GetEstimatedGPUSize() * 3; // 3x: image loader + BaseTexture + rendering API copy
@@ -554,7 +558,7 @@ Player::Player(PinTable *const table, const int playMode)
                {
                   string lname = image->m_name;
                   std::transform(lname.begin(), lname.end(), lname.begin(), [](unsigned char c){ return (char)::tolower(c); });
-                  if (lname.find("playfield") != string::npos)
+                  if (lname.find("playfield") != string::npos || (!playfieldImageName.empty() && lname == playfieldImageName))
                      imgMaxTexDim = playfieldMaxTexDim;
                }
                const auto buffer = image->GetRawBitmap(resizeOnLowMem, imgMaxTexDim);
