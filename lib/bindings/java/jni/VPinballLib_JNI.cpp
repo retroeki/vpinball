@@ -279,6 +279,16 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballStop(JNIEnv
    return VPinballStop();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGenerateNVRAM(JNIEnv* env, jobject obj, jstring romName, jstring pinmamePath, jint maxSeconds)
+{
+   const char* pRom = env->GetStringUTFChars(romName, nullptr);
+   const char* pPath = env->GetStringUTFChars(pinmamePath, nullptr);
+   const int result = VPinballGenerateNVRAM(pRom, pPath, (int)maxSeconds);
+   env->ReleaseStringUTFChars(romName, pRom);
+   env->ReleaseStringUTFChars(pinmamePath, pPath);
+   return result;
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballPause(JNIEnv* env, jobject obj)
 {
    return VPinballPause();

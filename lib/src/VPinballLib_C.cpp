@@ -10,6 +10,8 @@
 #include "VPinballLib.h"
 #include "plugins/MsgPluginManager.h"
 
+#include <dlfcn.h>  // VPinballGenerateNVRAM: dlopen libpinmame.so for headless NVRAM gen
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
    return VPinballLib::VPinballLib::Instance().AppInit(argc, argv) ? SDL_APP_CONTINUE : SDL_APP_FAILURE;
@@ -434,6 +436,164 @@ VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTabl
    msgApi.ReleaseMsgID(msgId);
    if (isNvramTable) *isNvramTable = q.isNvramTable;
    return q.bytesWritten;
+}
+
+// ---------------------------------------------------------------------------
+// Headless first-run NVRAM generation
+//
+// PinMAME (libpinmame.so) owns NVRAM: it loads <rom>.nv at the start of a run
+// and writes it back when the emulation thread stops. We can therefore create a
+// missing <rom>.nv WITHOUT the VPX player, renderer, SDL surface or B2S — by
+// running the ROM headlessly here. libpinmame ships as its own .so reached only
+// through the PinMAME plugin during play; we dlopen it so libvpinball's link
+// graph is unchanged. The structs/enums below MIRROR libpinmame.h exactly and
+// must stay in sync (ABI): see src/libpinmame/libpinmame.h.
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr int PM_MAX_PATH = 512;          // PINMAME_MAX_PATH
+constexpr int PM_CORE_MAXNVRAM = 131118;  // CORE_MAXNVRAM (wpc/core.h)
+
+// Mirrors PinmameConfig. NOTE: vpmPath is an INLINE char[PINMAME_MAX_PATH], not a
+// pointer, and all callbacks are pointer-sized — keep this layout exact.
+struct PmConfig {
+   int   audioFormat;        // PINMAME_AUDIO_FORMAT_INT16 = 0
+   int   sampleRate;
+   char  vpmPath[PM_MAX_PATH];
+   void* cb_OnStateUpdated;
+   void* cb_OnDisplayAvailable;
+   void* cb_OnDisplayUpdated;
+   void* cb_OnAudioAvailable;
+   void* cb_OnAudioUpdated;
+   void* cb_OnMechAvailable;
+   void* cb_OnMechUpdated;
+   void* cb_OnSolenoidUpdated;
+   void* cb_OnConsoleDataUpdated;
+   void* cb_IsKeyPressed;
+   void* cb_OnLogMessage;
+   void* cb_OnSoundCommand;
+};
+
+// Mirrors PinmameNVRAMState: { int nvramNo; uint8_t oldStat; uint8_t currStat; }
+struct PmNvramState {
+   int     nvramNo;
+   uint8_t oldStat;
+   uint8_t currStat;
+};
+
+typedef void (*pm_setconfig_t)(const PmConfig*);
+typedef int  (*pm_run_t)(const char*);   // returns PINMAME_STATUS; OK == 0
+typedef void (*pm_stop_t)();
+typedef int  (*pm_isrunning_t)();
+typedef int  (*pm_changednvram_t)(PmNvramState*);
+
+// Forward libpinmame's internal logs to logcat during headless generation
+// (otherwise a ROM-load failure / stall is invisible). Matches
+// PinmameOnLogMessageCallback: (PINMAME_LOG_LEVEL, const char*, va_list, void*).
+static void PmGenLog(int logLevel, const char* format, va_list args, void* /*userData*/)
+{
+   char buf[1024];
+   vsnprintf(buf, sizeof(buf), format, args);
+   if (logLevel >= 2) PLOGE.printf("[pinmame-gen] %s", buf);
+   else               PLOGI.printf("[pinmame-gen] %s", buf);
+}
+
+} // namespace
+
+VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePath, int maxSeconds)
+{
+   if (!romName || !pinmamePath)
+      return 0;
+   if (maxSeconds <= 0)
+      maxSeconds = 30;
+
+   void* lib = dlopen("libpinmame.so", RTLD_NOW | RTLD_GLOBAL);
+   if (!lib) {
+      PLOGE.printf("VPinballGenerateNVRAM: dlopen(libpinmame.so) failed: %s", dlerror());
+      return 0;
+   }
+
+   auto SetConfig    = (pm_setconfig_t)   dlsym(lib, "PinmameSetConfig");
+   auto Run          = (pm_run_t)         dlsym(lib, "PinmameRun");
+   auto Stop         = (pm_stop_t)        dlsym(lib, "PinmameStop");
+   auto IsRunning    = (pm_isrunning_t)   dlsym(lib, "PinmameIsRunning");
+   auto ChangedNVRAM = (pm_changednvram_t)dlsym(lib, "PinmameGetChangedNVRAM");
+   if (!SetConfig || !Run || !Stop) {
+      PLOGE.printf("VPinballGenerateNVRAM: missing libpinmame symbols");
+      dlclose(lib);
+      return 0;
+   }
+
+   if (IsRunning && IsRunning()) {
+      PLOGE.printf("VPinballGenerateNVRAM: PinMAME already running; aborting (rom=%s)", romName);
+      dlclose(lib);
+      return 0;
+   }
+
+   PmConfig cfg;
+   memset(&cfg, 0, sizeof(cfg));          // callbacks NULL — headless, state pulled not pushed
+   cfg.audioFormat = 0;                   // INT16
+   cfg.sampleRate  = 48000;
+   cfg.cb_OnLogMessage = (void*)&PmGenLog;  // surface ROM-load / boot logs to logcat
+   strncpy(cfg.vpmPath, pinmamePath, PM_MAX_PATH - 1);
+   // libpinmame composes <vpmPath>/roms, <vpmPath>/nvram — match the plugin's
+   // trailing-separator path so ROM/NVRAM dirs resolve identically.
+   {
+      size_t len = strlen(cfg.vpmPath);
+      if (len > 0 && len < (size_t)(PM_MAX_PATH - 1) && cfg.vpmPath[len - 1] != '/') {
+         cfg.vpmPath[len] = '/';
+         cfg.vpmPath[len + 1] = '\0';
+      }
+   }
+   SetConfig(&cfg);
+
+   PLOGI.printf("VPinballGenerateNVRAM: headless boot rom=%s path=%s maxSeconds=%d", romName, pinmamePath, maxSeconds);
+   const int status = Run(romName);
+   if (status != 0) {                     // != PINMAME_STATUS_OK
+      PLOGE.printf("VPinballGenerateNVRAM: PinmameRun failed status=%d rom=%s", status, romName);
+      Stop();                             // no-op if no game thread
+      dlclose(lib);
+      return 0;
+   }
+
+   // Completion heuristic (adaptive, not a fixed timer): a booting ROM rewrites
+   // large chunks of NVRAM during its RAM clear + factory-default init (a "burst");
+   // once it settles into attract mode only a few bytes tick per second
+   // (clock/audits). So wait for an init burst, then stop once activity falls to
+   // near-idle for a sustained window. A generous maxSeconds cap backstops slow
+   // boots — e.g. Jurassic Park's long T-Rex diagnostic — that legitimately need
+   // more time before NVRAM settles. (A plain "quiet for N seconds" check never
+   // fires, because the running game's clock keeps ticking NVRAM forever.)
+   PmNvramState* buf = ChangedNVRAM
+      ? (PmNvramState*)malloc(sizeof(PmNvramState) * (size_t)PM_CORE_MAXNVRAM)
+      : nullptr;
+   const int pollMs = 250;
+   const int minRunMs = 10000;     // never stop before this (slow boots / diagnostics)
+   const int idleWindowMs = 8000;  // near-idle this long after a burst => settled
+   const int idleThreshold = 8;    // <= this many changed NVRAM bytes/poll counts as idle
+   int elapsedMs = 0;
+   int idleMs = 0;
+   bool sawBurst = false;
+   while (elapsedMs < maxSeconds * 1000) {
+      SDL_Delay(pollMs);
+      elapsedMs += pollMs;
+      if (buf && ChangedNVRAM) {
+         const int changed = ChangedNVRAM(buf);
+         if (changed > idleThreshold) { sawBurst = true; idleMs = 0; }
+         else                         { idleMs += pollMs; }
+      }
+      // Only stop early once we've seen the init burst AND it has gone near-idle;
+      // otherwise run to the cap (no NVRAM polling, or a boot that never settles).
+      if (elapsedMs >= minRunMs && sawBurst && idleMs >= idleWindowMs)
+         break;
+   }
+   if (buf)
+      free(buf);
+
+   PLOGI.printf("VPinballGenerateNVRAM: stopping after %dms (sawBurst=%d) rom=%s", elapsedMs, (int)sawBurst, romName);
+   Stop();                                // joins emulation thread -> flushes <rom>.nv
+   dlclose(lib);
+   return 1;
 }
 
 VPINBALLAPI VPINBALL_STATUS VPinballResetTable()

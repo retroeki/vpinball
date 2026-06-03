@@ -148,6 +148,16 @@ VPINBALLAPI const char* VPinballGetTableVersion();
 // Returns 0 when isNvramTable=0 or when no bytes are available yet.
 VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTable);
 
+// First-run NVRAM generation (PinMAME ROM tables). Boots the ROM HEADLESSLY via
+// libpinmame (no player / renderer / SDL surface / B2S) to create <rom>.nv when
+// it is missing, so the first real launch is immediately playable instead of
+// coming up in a factory-reset / no-credits state. romName is the PinMAME game
+// name; pinmamePath is the directory containing roms/ and nvram/. Blocks until
+// the ROM's NVRAM has initialized (or maxSeconds elapses), then stops the
+// emulator (which flushes <rom>.nv). Call OFF the UI thread. Returns 1 if the
+// emulator ran, 0 on failure (libpinmame or ROM not found, or already running).
+VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePath, int maxSeconds);
+
 // View Mode
 
 VPINBALLAPI VPINBALL_VIEW_MODE VPinballGetViewMode();
