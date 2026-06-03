@@ -1185,9 +1185,17 @@ STDMETHODIMP CodeViewer::OnScriptError(IActiveScriptError *pscripterror)
 
 	PLOGE_(PLOG_NO_DBG_OUT_INSTANCE_ID) << "Script Error at line " << nLine << " : " << szT;
 
+	// Compile vs runtime: the script engine is CONNECTED once it is running and sinking
+	// events, so a notification while connected means the script compiled and is executing
+	// (a runtime error). Determined once here and reused below.
+	SCRIPTSTATE scriptState;
+	m_pScript->GetScriptState(&scriptState);
+	const bool isRuntimeError = (scriptState == SCRIPTSTATE_CONNECTED);
+
 #ifdef __STANDALONE__
-	// Log surrounding script lines for debugging Wine VBScript issues
-	if (!m_script_text.empty() && nLine > 0)
+	// Log surrounding script lines for debugging Wine VBScript issues (compile errors only;
+	// a runtime error can fire every frame and would flood the log with full-script dumps).
+	if (!isRuntimeError && !m_script_text.empty() && nLine > 0)
 	{
 		std::istringstream iss(m_script_text);
 		std::string line;
@@ -1253,6 +1261,25 @@ STDMETHODIMP CodeViewer::OnScriptError(IActiveScriptError *pscripterror)
 	}
 #endif
 
+#ifdef __STANDALONE__
+	// Runtime script errors are non-fatal on standalone. Desktop VPX (no JIT debugger
+	// attached) never surfaces runtime errors to the player, so tables run straight through
+	// benign/dead runtime errors in timer/event callbacks (undefined parts, missing objects
+	// that the table tolerates). Wine's vbscript notifies us of every one; latching
+	// m_scriptError would make Player::FinishFrame close the table (CS_CLOSE_APP) and also
+	// fire the host VPINBALL_EVENT_SCRIPT_ERROR (tearing down + prompting a crash report
+	// every frame). Already logged above — just continue. COMPILE errors fall through below
+	// and stay fatal (close + host report event), since the table genuinely cannot run.
+	if (isRuntimeError)
+	{
+		SysFreeString(bstr);
+		if (exception.bstrSource) SysFreeString(exception.bstrSource);
+		if (exception.bstrDescription) SysFreeString(exception.bstrDescription);
+		if (exception.bstrHelpFile) SysFreeString(exception.bstrHelpFile);
+		return S_OK;
+	}
+#endif
+
 	m_scriptError = true;
 
 	if (g_pplayer)
@@ -1268,10 +1295,7 @@ STDMETHODIMP CodeViewer::OnScriptError(IActiveScriptError *pscripterror)
 	}
 #endif
 
-	// Check if this is a compile error or a runtime error
-	SCRIPTSTATE state;
-	m_pScript->GetScriptState(&state);
-	const bool isRuntimeError = (state == SCRIPTSTATE_CONNECTED);
+	// (compile vs runtime already determined above as isRuntimeError)
 
 #ifdef __LIBVPINBALL__
 	VPinballLib::ScriptErrorData scriptErrorStruct = { isRuntimeError ? VPINBALL_SCRIPT_ERROR_TYPE_RUNTIME : VPINBALL_SCRIPT_ERROR_TYPE_COMPILE, (int)nLine, (int)nChar, szT.c_str() };
