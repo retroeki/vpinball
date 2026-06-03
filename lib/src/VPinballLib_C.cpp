@@ -553,44 +553,83 @@ VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePa
       PLOGE.printf("VPinballGenerateNVRAM: PinmameRun failed status=%d rom=%s", status, romName);
       Stop();                             // no-op if no game thread
       dlclose(lib);
-      return 0;
+      // GAME_NOT_FOUND (2): the rom name isn't a real PinMAME driver (e.g. a vpx
+      // cGameName that doesn't map to a romset) — permanent, so signal the caller
+      // to mark it no-NVRAM and never retry. Other failures (config/already-running)
+      // are transient: return 0 so the caller retries next launch.
+      return (status == 2) ? 2 : 0;
    }
 
-   // Completion heuristic (adaptive, not a fixed timer): a booting ROM rewrites
-   // large chunks of NVRAM during its RAM clear + factory-default init (a "burst");
-   // once it settles into attract mode only a few bytes tick per second
-   // (clock/audits). So wait for an init burst, then stop once activity falls to
-   // near-idle for a sustained window. A generous maxSeconds cap backstops slow
-   // boots — e.g. Jurassic Park's long T-Rex diagnostic — that legitimately need
-   // more time before NVRAM settles. (A plain "quiet for N seconds" check never
-   // fires, because the running game's clock keeps ticking NVRAM forever.)
+   // Completion heuristic (adaptive, not a fixed timer). PinmameGetChangedNVRAM
+   // returns the number of NVRAM bytes that changed since the last poll, or -1 when
+   // the game has no nvram_handler / NVRAM isn't available yet.
+   //
+   // The valid <rom>.nv is written during the ROM's boot RAM-clear + factory-default
+   // init, which shows up as ONE big burst (observed: ~1560 bytes for Jurassic Park,
+   // ~521 for Space Station). After that the game runs (attract / a long mech
+   // diagnostic) and keeps writing working-RAM that PinMAME dumps as NVRAM — JP sits
+   // at ~40-65 bytes/poll for as long as it runs. Those steady writes are NOT init,
+   // so we must NOT wait for them to stop (JP never goes quiet). Instead we anchor on
+   // the burst: stop a grace period after the LAST big-burst write (> burstThreshold,
+   // set well above any runtime spike). A quiet-settle path still covers small/quiet
+   // ROMs that have no big burst, a no-NVRAM probe bails ROMs with no handler, and
+   // maxSeconds is a final runaway backstop. Per-second counts are logged for tuning.
    PmNvramState* buf = ChangedNVRAM
       ? (PmNvramState*)malloc(sizeof(PmNvramState) * (size_t)PM_CORE_MAXNVRAM)
       : nullptr;
    const int pollMs = 250;
-   const int minRunMs = 10000;     // never stop before this (slow boots / diagnostics)
-   const int idleWindowMs = 8000;  // near-idle this long after a burst => settled
-   const int idleThreshold = 8;    // <= this many changed NVRAM bytes/poll counts as idle
+   const int minRunMs = 8000;          // never stop before this
+   const int burstThreshold = 256;     // > this many changed bytes/poll = init burst (runtime stays well below)
+   const int postBurstGraceMs = 8000;  // stop this long after the last init-burst write
+   const int settleWindowMs = 5000;    // (fallback) writes <= settledThreshold this long => settled
+   const int settledThreshold = 32;    // (fallback) quiet level for ROMs with no big burst
+   const int noNvramProbeMs = 18000;   // NVRAM never seen by here => ROM has no handler
    int elapsedMs = 0;
-   int idleMs = 0;
-   bool sawBurst = false;
+   int settledMs = 0;
+   int logAccumMs = 0;
+   int peak = 0;
+   int lastChanged = -1;
+   int lastBurstMs = -1;               // elapsed at the last poll exceeding burstThreshold
+   bool sawNvram = false;
+   bool noNvram = false;
    while (elapsedMs < maxSeconds * 1000) {
       SDL_Delay(pollMs);
       elapsedMs += pollMs;
-      if (buf && ChangedNVRAM) {
-         const int changed = ChangedNVRAM(buf);
-         if (changed > idleThreshold) { sawBurst = true; idleMs = 0; }
-         else                         { idleMs += pollMs; }
+      int changed = -1;
+      if (buf && ChangedNVRAM)
+         changed = ChangedNVRAM(buf);
+      lastChanged = changed;
+      if (changed >= 0) {
+         sawNvram = true;
+         if (changed > peak) peak = changed;
+         if (changed > burstThreshold) lastBurstMs = elapsedMs;
+         if (changed <= settledThreshold) settledMs += pollMs; else settledMs = 0;
       }
-      // Only stop early once we've seen the init burst AND it has gone near-idle;
-      // otherwise run to the cap (no NVRAM polling, or a boot that never settles).
-      if (elapsedMs >= minRunMs && sawBurst && idleMs >= idleWindowMs)
+      logAccumMs += pollMs;
+      if (logAccumMs >= 1000) {
+         logAccumMs = 0;
+         PLOGI.printf("VPinballGenerateNVRAM: t=%ds changed=%d peak=%d lastBurstMs=%d settledMs=%d",
+                      elapsedMs / 1000, lastChanged, peak, lastBurstMs, settledMs);
+      }
+      // No NVRAM ever appeared -> ROM has no nvram_handler; don't wait out the cap.
+      if (!sawNvram && elapsedMs >= noNvramProbeMs) {
+         noNvram = true;
          break;
+      }
+      if (elapsedMs >= minRunMs) {
+         // Primary: saw the big init burst and a grace has passed since the last one.
+         if (lastBurstMs >= 0 && (elapsedMs - lastBurstMs) >= postBurstGraceMs)
+            break;
+         // Fallback (no big burst, e.g. small NVRAM): writes went quiet for the window.
+         if (sawNvram && lastBurstMs < 0 && settledMs >= settleWindowMs)
+            break;
+      }
    }
    if (buf)
       free(buf);
 
-   PLOGI.printf("VPinballGenerateNVRAM: stopping after %dms (sawBurst=%d) rom=%s", elapsedMs, (int)sawBurst, romName);
+   PLOGI.printf("VPinballGenerateNVRAM: stopping after %dms (sawNvram=%d noNvram=%d peak=%d lastBurstMs=%d) rom=%s",
+                elapsedMs, (int)sawNvram, (int)noNvram, peak, lastBurstMs, romName);
    Stop();                                // joins emulation thread -> flushes <rom>.nv
    dlclose(lib);
    return 1;
