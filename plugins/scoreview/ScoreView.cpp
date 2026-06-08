@@ -9,8 +9,15 @@
 #include <sstream>
 #include <algorithm>
 
+#include <vector>
+#include <cstdint>
+
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
 extern "C" void SetScoreViewSourceSize(int width, int height);
+// Reel-image channel: ReelDmd (logic thread) composites the active EM table's
+// score reels into a tightly-packed w*h*3 sRGB image; this returns a copy of the
+// current image (true) or false when no reel image is active.
+extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::vector<uint8_t>* out);
 
 namespace ScoreView {
 
@@ -220,8 +227,9 @@ void ScoreView::Parse(const std::filesystem::path& path, std::istream& content)
          expectedIndent = indent + 1;
          layout.visuals.push_back({VisualType::Image});
          visual = &layout.visuals.back();
-         // Not yet supported
-         CHECK_FIELD(false);
+         // Defaults to the live reel-image source; an explicit Src can override.
+         visual->srcUri = "ctrl://reel";
+         visual->tint = vec3(1.f, 1.f, 1.f);
       }
       else if (key == "Rect")
       {
@@ -514,6 +522,16 @@ void ScoreView::Select(const float scoreW, const float scoreH)
                layout.matchedVisuals++;
             break;
          case VisualType::Image:
+            // The only Image source today is the live EM score-reel channel.
+            // It is "available" iff ReelDmd is currently pushing a composited
+            // reel image (reel tables). On non-reel tables GetReelImage returns
+            // false, so the reel layout becomes unmatched -> disabled, and the
+            // bundled DMD/seg layouts win exactly as before. Weight a match like
+            // a DMD so a reel layout is preferred for reel tables.
+            if (GetReelImage(nullptr, nullptr, nullptr, nullptr))
+               layout.matchedVisuals += 10;
+            else
+               layout.unmatchedVisuals++;
             break;
          }
       }
@@ -685,7 +703,25 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
          break;
       }
 
-      case VisualType::Image: break;
+      case VisualType::Image:
+      {
+         // The live EM score-reel image (composited by ReelDmd) drawn as a
+         // smooth, alpha-blended textured quad via the basic shader (NOT dots).
+         int w = 0, h = 0;
+         uint64_t version = 0;
+         std::vector<uint8_t> rgb;
+         if (!GetReelImage(&w, &h, &version, &rgb) || w <= 0 || h <= 0 || rgb.size() < (size_t)w * h * 3)
+            continue; // no reel image active -> draw nothing
+         // 24-bit sRGB, tightly packed. Re-upload each frame (cheap for a small
+         // reel strip; correctness over the optional version cache for now).
+         m_vpxApi->UpdateTexture(&visual.dmdTex, w, h, VPXTextureFormat::VPXTEXFMT_sRGB8, rgb.data());
+         ctx->DrawImage(ctx, visual.dmdTex,
+            visual.tint.x, visual.tint.y, visual.tint.z, 1.f, // tint + alpha
+            0.f, 0.f, (float)w, (float)h,                     // full texture
+            0.f, 0.f, 0.f,                                    // pivot + rotation
+            px + visual.x, py + visual.y, visual.w, visual.h);// layout quad (mirrors DMD branch)
+         break;
+      }
       }
    }
    return true;

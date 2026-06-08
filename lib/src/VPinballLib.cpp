@@ -17,6 +17,8 @@
 #include <map>
 #include <queue>
 #include <mutex>
+#include <vector>
+#include <cstdint>
 #include <nlohmann/json.hpp>
 
 #ifdef ENABLE_BGFX
@@ -81,6 +83,52 @@ extern "C" void SetScoreViewSourceSize(int width, int height)
 {
    g_scoreViewSourceWidth = width;
    g_scoreViewSourceHeight = height;
+}
+
+// Reel-image channel: lets ReelDmd (logic thread) hand a composited, tightly
+// packed w*h*3 sRGB image of the active table's score reels to the ScoreView
+// plugin (render thread). Mirrors the SetScoreViewSourceSize pattern above but
+// carries pixel data, so a mutex (not a plain atomic) guards the buffer. The
+// version counter lets the reader skip re-uploading an unchanged image.
+static std::mutex g_reelImageMutex;
+static std::vector<uint8_t> g_reelImageRGB; // tightly packed w*h*3 sRGB
+static int g_reelImageW = 0, g_reelImageH = 0;
+static uint64_t g_reelImageVersion = 0; // bumped on each update (set or clear)
+
+extern "C" void SetReelImage(int width, int height, const uint8_t* rgb)
+{
+   std::lock_guard<std::mutex> lk(g_reelImageMutex);
+   if (width <= 0 || height <= 0 || rgb == nullptr)
+   {
+      g_reelImageW = g_reelImageH = 0;
+      g_reelImageRGB.clear();
+      g_reelImageVersion++;
+      return;
+   }
+   g_reelImageRGB.assign(rgb, rgb + (size_t)width * height * 3);
+   g_reelImageW = width;
+   g_reelImageH = height;
+   g_reelImageVersion++;
+}
+
+// Returns true and fills the out-params if a reel image is currently active.
+// Copies into the caller-provided vector under the lock so the render thread
+// never touches the writer's buffer directly. All one statically-linked C++
+// module, so passing std::vector* across the extern "C" boundary is safe.
+extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::vector<uint8_t>* out)
+{
+   std::lock_guard<std::mutex> lk(g_reelImageMutex);
+   if (g_reelImageW <= 0 || g_reelImageH <= 0)
+      return false;
+   if (width)
+      *width = g_reelImageW;
+   if (height)
+      *height = g_reelImageH;
+   if (version)
+      *version = g_reelImageVersion;
+   if (out)
+      *out = g_reelImageRGB;
+   return true;
 }
 
 // Global storage for app's internal files path (set from Android/Java side)

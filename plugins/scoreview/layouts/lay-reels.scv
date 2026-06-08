@@ -1,0 +1,12 @@
+# EM score-reel layout (real reel artwork via the live Image visual)
+# Sized to a single 5-digit reel aspect; the box resizes to this via
+# SetScoreViewSourceSize(layout.width/height). Refined in a later increment.
+
+Width: 160
+Height: 64
+Fit: Contain
+
+Visuals:
+	- Image:
+		Rect: [0,0,160,64]
+		Src: ctrl://reel
