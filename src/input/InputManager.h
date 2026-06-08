@@ -147,7 +147,7 @@ public:
    void HandleSDLEvent(const SDL_Event& e);
    void PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_t timestampNs, bool isPressed);
    void PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t timestampNs, float position);
-   void PushTouchEvent(float relativeX, float relativeY, uint64_t timestampNs, bool isPressed);
+   void PushTouchEvent(SDL_FingerID fingerId, float relativeX, float relativeY, uint64_t timestampNs, bool isPressed);
    void OnInputActionStateChanged(InputAction* action);
 
    void RegisterOnUpdate(InputAction* action);
@@ -282,6 +282,13 @@ private:
 
    bool m_supportsTouch;
    vector<TouchRegionDef> m_touchRegionMap;
+   // Touch regions are pressed/released by finger identity, not by lift location, so a finger
+   // that slides out of a zone before lifting still releases what it pressed (avoids stuck flippers).
+   // m_touchRegionHold is a per-region press count: a region's direct state is "down" iff its count > 0,
+   // which keeps the zone held while any other finger is still on it. m_activeTouchFingers maps each
+   // live SDL finger id to the region indices it activated on finger-down.
+   vector<int> m_touchRegionHold;
+   ankerl::unordered_dense::map<SDL_FingerID, vector<size_t>> m_activeTouchFingers;
 
    vector<std::unique_ptr<InputHandler>> m_inputHandlers;
    class SDLInputHandler* m_sdlHandler = nullptr;

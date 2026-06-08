@@ -84,10 +84,16 @@ public:
 
       case SDL_EVENT_FINGER_DOWN:
       case SDL_EVENT_FINGER_UP:
+      case SDL_EVENT_FINGER_CANCELED:
       {
-         PLOGD << "SDL_FINGER: windowID=" << e.tfinger.windowID << " expected=" << SDL_GetWindowID(g_pplayer->m_playfieldWnd->GetCore()) << " x=" << e.tfinger.x << " y=" << e.tfinger.y << " down=" << (e.type == SDL_EVENT_FINGER_DOWN);
+         // FINGER_CANCELED (OS stole the touch, e.g. notification shade / palm rejection) is handled
+         // as a release so it can't leave a zone stuck down. FINGER_MOTION is intentionally not
+         // handled: a finger releases exactly what it pressed via its id, so sliding off a zone no
+         // longer needs per-move tracking.
+         const bool isPressed = (e.type == SDL_EVENT_FINGER_DOWN);
+         PLOGD << "SDL_FINGER: windowID=" << e.tfinger.windowID << " expected=" << SDL_GetWindowID(g_pplayer->m_playfieldWnd->GetCore()) << " finger=" << e.tfinger.fingerID << " x=" << e.tfinger.x << " y=" << e.tfinger.y << " down=" << isPressed;
          if (e.tfinger.windowID == SDL_GetWindowID(g_pplayer->m_playfieldWnd->GetCore()))
-            m_pininput.PushTouchEvent(e.tfinger.x, e.tfinger.y, e.tfinger.timestamp, e.type == SDL_EVENT_FINGER_DOWN);
+            m_pininput.PushTouchEvent(e.tfinger.fingerID, e.tfinger.x, e.tfinger.y, e.tfinger.timestamp, isPressed);
          break;
       }
 

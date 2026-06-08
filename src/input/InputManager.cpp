@@ -59,7 +59,7 @@ InputManager::InputManager()
       // When forced, clear any existing touch zones to ensure hardcoded layout
       if (touchZonesForced)
          m_touchRegionMap.clear();
-      PLOGI << "Registering " << 11 << " touch zones (forced=" << touchZonesForced << ")";
+      PLOGI << "Registering " << 12 << " touch zones (forced=" << touchZonesForced << ")";
       addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
       // Top-right zone opens the Android app settings dialog (fires VPINBALL_EVENT_MENU_PRESSED via InGameUI action).
       // Coin-door toggle is now available as an action inside the settings dialog itself.
@@ -70,12 +70,15 @@ InputManager::InputManager()
       addTouchRegion(RECT { 50, 30, 100, 60 }, GetRightNudgeActionId());
       addTouchRegion(RECT { 0, 60, 30, 90 }, GetLeftFlipperActionId());
       addTouchRegion(RECT { 0, 60, 30, 90 }, GetStagedLeftFlipperActionId());
-      addTouchRegion(RECT { 30, 60, 70, 100 }, GetCenterNudgeActionId());
+      addTouchRegion(RECT { 30, 60, 70, 90 }, GetCenterNudgeActionId());
       addTouchRegion(RECT { 70, 60, 100, 90 }, GetRightFlipperActionId());
       addTouchRegion(RECT { 70, 60, 100, 90 }, GetStagedRightFlipperActionId());
       addTouchRegion(RECT { 0, 90, 30, 100 }, GetStartActionId());
+      // Centre-bottom action/lockbar button (engine action "Lockbar", script LockbarKey), sits between Start and Launch.
+      addTouchRegion(RECT { 30, 90, 70, 100 }, GetLockbarActionId());
       addTouchRegion(RECT { 70, 90, 100, 100 }, GetLaunchBallActionId());
    }
+   m_touchRegionHold.assign(m_touchRegionMap.size(), 0);
 
    // Analog sensors for plunger and nudge
    for (int i = 0; i < 2; i++)
@@ -622,20 +625,55 @@ void InputManager::PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t ti
    }
 }
 
-void InputManager::PushTouchEvent(float relativeX, float relativeY, uint64_t timestampNs, bool isPressed)
+void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float relativeY, uint64_t timestampNs, bool isPressed)
 {
    POINT point;
    point.x = (int)((float)g_pplayer->m_playfieldWnd->GetWidth() * relativeX);
    point.y = (int)((float)g_pplayer->m_playfieldWnd->GetHeight() * relativeY);
-   PLOGD << "PushTouchEvent: rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
-   for (auto& region : m_touchRegionMap)
+   PLOGD << "PushTouchEvent: finger=" << fingerId << " rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
+
+   // Decrement a region's hold count and release the zone once no finger is holding it.
+   auto releaseRegion = [this](size_t i) {
+      if (i >= m_touchRegionMap.size() || m_touchRegionHold[i] <= 0)
+         return;
+      if (--m_touchRegionHold[i] == 0)
+      {
+         const auto& region = m_touchRegionMap[i];
+         m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, false);
+      }
+   };
+
+   if (isPressed)
    {
-      if (const bool wasPressed = m_inputActions[region.actionId]->GetDirectState(region.directStateSlot); wasPressed == isPressed)
-         continue;
-      if (!Intersect(region.region, g_pplayer->m_playfieldWnd->GetWidth(), g_pplayer->m_playfieldWnd->GetHeight(), point,
-             fmodf(g_pplayer->m_ptable->GetViewSetup().mViewportRotation, 360.0f) != 0.f))
-         continue;
-      m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, isPressed);
+      vector<size_t>& held = m_activeTouchFingers[fingerId];
+      // Defensive: if a previous down for this finger id never saw its up (lost/cancelled event),
+      // release what it was holding first so the hold counts stay balanced.
+      for (size_t i : held)
+         releaseRegion(i);
+      held.clear();
+
+      // Activate every region the touch point falls within, and remember them under this finger id
+      // so finger-up releases exactly these regions regardless of where the finger is lifted.
+      for (size_t i = 0; i < m_touchRegionMap.size(); ++i)
+      {
+         const auto& region = m_touchRegionMap[i];
+         if (!Intersect(region.region, g_pplayer->m_playfieldWnd->GetWidth(), g_pplayer->m_playfieldWnd->GetHeight(), point,
+                fmodf(g_pplayer->m_ptable->GetViewSetup().mViewportRotation, 360.0f) != 0.f))
+            continue;
+         held.push_back(i);
+         if (++m_touchRegionHold[i] == 1)
+            m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, true);
+      }
+   }
+   else
+   {
+      // Finger up or cancelled: release exactly the regions this finger activated on down.
+      const auto it = m_activeTouchFingers.find(fingerId);
+      if (it == m_activeTouchFingers.end())
+         return;
+      for (size_t i : it->second)
+         releaseRegion(i);
+      m_activeTouchFingers.erase(it);
    }
 }
 
