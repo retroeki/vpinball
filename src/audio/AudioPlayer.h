@@ -69,6 +69,7 @@ public:
    ~AudioPlayer();
 
    void SetMainVolume(float backglassVolume, float playfieldVolume); // Overall gain, directly applied to all sounds, including the ones being played
+   void SetPluginStreamGain(float gain); // Extra gain applied ONLY to plugin/ROM (PinMAME) streams, on top of the backglass bus
    void SetMirrored(bool mirrored) { m_mirrored = mirrored; } // Whether the table is mirrored, affects sound panning
 
    // Pause / resume the underlying miniaudio devices (maps to SDL_PauseAudioStreamDevice).
@@ -114,6 +115,7 @@ public:
 private:
    float m_playfieldVolume = 1.f;
    float m_backglassVolume = 1.f;
+   float m_pluginStreamGain = 1.f; // PinMAME Volume as a linear gain (1.0 = native / 0 dB); derived from a dB setting
    float m_musicVolume = 1.f;
    bool m_mirrored = false;
 

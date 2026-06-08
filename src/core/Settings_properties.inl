@@ -8,6 +8,7 @@ PropBool(Editor, DisableHash, "Disable File Validation"s, "Disable file integrit
 // Audio settings
 PropInt(Player, MusicVolume, "Backglass Volume"s, "Main volume for music and sound played from the backglass speakers"s, 0, 100, 100);
 PropInt(Player, SoundVolume, "Playfield Volume"s, "Main volume for mechanical sounds coming from the playfield"s, 0, 100, 100);
+PropInt(Player, PinmameVolume, "PinMAME ROM Volume"s, "Gain in dB for emulated ROM (PinMAME) audio; 0 = native level (matches VPinMAME tilde-OSD), positive boosts quiet tables"s, -32, 32, 0);
 PropBool(Player, PlayMusic, "Enable Backglass"s, "Enable/Disable backglass game sound & music"s, true);
 PropBoolBase(Player, PlaySound, "Enable Playfield"s, "Enable/Disable playfield mechanical sounds"s, false, true); // We use the complete macro as Win32 global PlaySound would conflict otherwise
 PropStringDyn(Player, SoundDeviceBG, "Backglass Sound Device"s, "Select backglass sound device"s, ""s);

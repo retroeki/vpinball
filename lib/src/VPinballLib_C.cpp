@@ -401,6 +401,28 @@ VPINBALLAPI int VPinballGetSoundVolume()
    return g_pplayer->m_SoundVolume;
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetPinmameVolume(int volume)
+{
+   if (!g_pplayer)
+      return VPINBALL_STATUS_FAILURE;
+
+   int clampedVolume = clamp(volume, -32, 32);
+   return SDL_RunOnMainThread([](void* userdata) {
+      int vol = *static_cast<int*>(userdata);
+      if (g_pplayer) {
+         g_pplayer->m_PinmameVolume = vol;
+         g_pplayer->UpdateVolume();
+      }
+   }, &clampedVolume, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+VPINBALLAPI int VPinballGetPinmameVolume()
+{
+   if (!g_pplayer)
+      return 0;
+   return g_pplayer->m_PinmameVolume;
+}
+
 VPINBALLAPI const char* VPinballGetTableName()
 {
    thread_local string tableName;

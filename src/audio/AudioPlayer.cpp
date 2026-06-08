@@ -708,7 +708,15 @@ void AudioPlayer::SetMainVolume(float backglassVolume, float playfieldVolume)
       for (auto& player : players)
          player->SetMainVolume(backglassVolume, playfieldVolume);
    for (const auto& player : m_audioStreams)
-      player->SetMainVolume(backglassVolume);
+      player->SetMainVolume(backglassVolume * m_pluginStreamGain);
+}
+
+void AudioPlayer::SetPluginStreamGain(const float gain)
+{
+   m_pluginStreamGain = gain;
+   // Re-apply to any already-open plugin/ROM streams so the change is live.
+   for (const auto& player : m_audioStreams)
+      player->SetMainVolume(m_backglassVolume * m_pluginStreamGain);
 }
 
 AudioPlayer::AudioStreamID AudioPlayer::OpenAudioStream(const string& name, int frequency, int channels, bool isFloat)
@@ -732,7 +740,7 @@ AudioPlayer::AudioStreamID AudioPlayer::OpenAudioStream(const string& name, int 
    if (audioStream == nullptr)
       return nullptr;
    AudioStreamID stream = std::move(audioStream);
-   stream->SetMainVolume(m_backglassVolume);
+   stream->SetMainVolume(m_backglassVolume * m_pluginStreamGain);
    stream->SetName(name);
    m_audioStreams.push_back(stream);
    return stream;

@@ -289,6 +289,7 @@ Player::Player(PinTable *const table, const int playMode)
    m_PlaySound = m_ptable->m_settings.GetPlayer_PlaySound();
    m_MusicVolume = m_ptable->m_settings.GetPlayer_MusicVolume();
    m_SoundVolume = m_ptable->m_settings.GetPlayer_SoundVolume();
+   m_PinmameVolume = m_ptable->m_settings.GetPlayer_PinmameVolume();
    UpdateVolume();
 
    //
@@ -2147,6 +2148,9 @@ void Player::OnAuxRendererChanged(const unsigned int msgId, void* userData, void
 void Player::UpdateVolume()
 {
    m_audioPlayer->SetMainVolume(m_PlayMusic ? dequantizeSignedPercent(m_MusicVolume) : 0.f, m_PlaySound ? dequantizeSignedPercent(m_SoundVolume) : 0.f);
+   // PinMAME Volume is a dB value (0 = native, like the VPinMAME tilde-OSD bar).
+   // Convert to a linear gain: 10^(dB/20). +6 dB = x2.0, -6 dB = x0.5.
+   m_audioPlayer->SetPluginStreamGain(powf(10.0f, m_PinmameVolume / 20.0f));
 }
 
 void Player::OnAudioUpdated(const unsigned int msgId, void* userData, void* msgData)

@@ -494,6 +494,16 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetSoundVol
    return VPinballGetSoundVolume();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetPinmameVolume(JNIEnv* env, jobject obj, jint volume)
+{
+   return VPinballSetPinmameVolume(volume);
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetPinmameVolume(JNIEnv* env, jobject obj)
+{
+   return VPinballGetPinmameVolume();
+}
+
 // Declare the external function from VPinballLib.cpp
 extern "C" void VPinballSetInternalPath(const char* path);
 extern "C" void VPinballSetWebLibraryPath(const char* path);

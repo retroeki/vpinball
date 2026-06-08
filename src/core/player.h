@@ -254,6 +254,7 @@ public:
    bool m_PlaySound;
    int m_MusicVolume; // -100..100
    int m_SoundVolume; // -100..100
+   int m_PinmameVolume; // -32..32 dB (0 = native ROM level; matches VPinMAME tilde-OSD), >0 boosts PinMAME/plugin audio
    bool m_musicPlaying = false;
 
    std::unique_ptr<VPX::AudioPlayer> m_audioPlayer;

@@ -176,6 +176,8 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetMusicVolume(int volume);
 VPINBALLAPI VPINBALL_STATUS VPinballSetSoundVolume(int volume);
 VPINBALLAPI int VPinballGetMusicVolume();
 VPINBALLAPI int VPinballGetSoundVolume();
+VPINBALLAPI VPINBALL_STATUS VPinballSetPinmameVolume(int volume);
+VPINBALLAPI int VPinballGetPinmameVolume();
 
 // Table control
 VPINBALLAPI VPINBALL_STATUS VPinballResetTable();
