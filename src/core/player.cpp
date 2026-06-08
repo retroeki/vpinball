@@ -68,6 +68,7 @@ static size_t getAvailableMemoryMB() {
 #include "plugins/MsgPlugin.h"
 #include "plugins/VPXPlugin.h"
 #include "core/VPXPluginAPIImpl.h"
+#include "core/ReelDmd.h"
 
 #include "input/ScanCodes.h"
 
@@ -683,6 +684,9 @@ Player::Player(PinTable *const table, const int playMode)
       if (hitable->GetItemType() == ItemTypeEnum::eItemBall)
          m_vball.push_back(&static_cast<Ball *>(hitable)->m_hitBall);
    }
+
+   // EM score-reel to DMD compositor (parts are now live; activates only for reel tables without a script DMD)
+   m_reelDmd = std::make_unique<ReelDmd>(this);
 
    #if defined(EXT_CAPTURE)
    if (m_renderer->m_stereo3D == STEREO_VR)
@@ -1606,6 +1610,10 @@ void Player::UpdateGameLogic()
       m_physics->UpdatePhysics(); // Update physics (also triggering events, syncing with controller)
       // TODO These updates should also be done directly in the physics engine after collision events
       FireSyncController(); // Trigger script sync event (to sync solenoids back)
+
+      // Composite EM score reels into the default DMD frame so the ScoreView shows them.
+      if (m_reelDmd && m_reelDmd->ShouldActivate())
+         m_reelDmd->Update();
    }
 
    MsgPI::MsgPluginManager::GetInstance().ProcessAsyncCallbacks();

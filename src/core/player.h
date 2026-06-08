@@ -15,6 +15,7 @@
 #include "audio/AudioPlayer.h"
 
 class VRDevice;
+class ReelDmd;
 
 enum InfoMode
 {
@@ -313,6 +314,9 @@ public:
    int2 m_dmdSize = int2(0, 0); // DMD defined through VPX API DMDWidth/DMDHeight/DMDPixels/DMDColoredPixels
    std::shared_ptr<BaseTexture> m_dmdFrame = nullptr;
    unsigned int m_dmdFrameId = 0;
+
+   // Composites EM score reels into m_dmdFrame so the ScoreView can display them.
+   std::unique_ptr<ReelDmd> m_reelDmd;
 
    ResURIResolver m_resURIResolver;
 

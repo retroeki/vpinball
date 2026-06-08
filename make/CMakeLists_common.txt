@@ -47,6 +47,8 @@ set(VPX_SOURCES
    src/core/vpinball_h.h
    src/core/player.cpp
    src/core/player.h
+   src/core/ReelDmd.cpp
+   src/core/ReelDmd.h
    src/core/PropertyDef.h
    src/core/PropertyRegistry.h
    src/core/PropertyStore.h
