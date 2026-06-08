@@ -679,7 +679,12 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
                   || frame.source->hardware == CTLPI_SEG_HARDWARE_GTS80A_7DIGIT //
                   || frame.source->hardware == CTLPI_SEG_HARDWARE_GTS80B_20DIGIT //
                )
+               {
                   hint = VPXSegDisplayHint::Gottlieb;
+                  // Gottlieb System 1/80 alphanumeric displays are GREEN VFD/plasma,
+                  // not blue (libpinmame tags them under the generic VFD_BLUE family).
+                  style = VPXSegDisplayRenderStyle::VPXSegStyle_GreenVFD;
+               }
             }
          }
          else
