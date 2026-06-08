@@ -125,13 +125,43 @@ void ReelDmd::Update()
    if (reels.empty())
       return;
 
-   // Pick the DispReel with the most reels (the primary score set).
-   DispReel* primary = reels[0];
+   // The score displays are the reel sets with the most reels (so we skip the
+   // single-digit credit / ball-in-play / 100K-overflow reels). EM tables have
+   // one such set per player (ScoreReel1..4); in a 1-player game only the active
+   // player's set is driven and the rest stay 0. Pick the highest-value set among
+   // the largest ones — i.e. the active scorer. (Proper active-player tracking is
+   // refined in a later task.)
+   int maxReels = 0;
    for (DispReel* r : reels)
-      if (r->GetReels() > primary->GetReels())
+      if (r->GetReels() > maxReels)
+         maxReels = r->GetReels();
+
+   DispReel* primary = reels[0];
+   long bestValue = -1;
+   for (DispReel* r : reels)
+   {
+      if (r->GetReels() != maxReels)
+         continue;
+      const long v = r->GetCurrentValue();
+      if (v > bestValue)
+      {
+         bestValue = v;
          primary = r;
+      }
+   }
 
    const long value = primary->GetCurrentValue();
+
+   // Diagnostic (temporary): periodically log every reel set's reel-count + value
+   // so we can confirm on-device which set holds the live score.
+   static int s_diagFrame = 0;
+   if ((s_diagFrame++ % 120) == 0)
+   {
+      for (size_t i = 0; i < reels.size(); ++i)
+         PLOGI << "[ReelDmd] reel[" << i << "] reels=" << reels[i]->GetReels()
+               << " value=" << reels[i]->GetCurrentValue();
+      PLOGI << "[ReelDmd] chosen value=" << value << " (maxReels=" << maxReels << ", sets=" << reels.size() << ')';
+   }
 
    const bool hadFrame = (m_player->m_dmdFrame != nullptr);
    if (hadFrame && value == m_lastValue)
