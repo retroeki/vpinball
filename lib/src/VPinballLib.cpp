@@ -71,6 +71,18 @@ static void GetPUPVideoSourceSize(int& width, int& height)
    height = g_pupVideoSourceHeight;
 }
 
+// ScoreView's currently-resolved source pixel size, pushed by the ScoreView
+// plugin each render (mirrors the PUP video-size pattern above). 0 = nothing
+// resolved (render disabled / no matching source).
+static std::atomic<int> g_scoreViewSourceWidth{0};
+static std::atomic<int> g_scoreViewSourceHeight{0};
+
+extern "C" void SetScoreViewSourceSize(int width, int height)
+{
+   g_scoreViewSourceWidth = width;
+   g_scoreViewSourceHeight = height;
+}
+
 // Global storage for app's internal files path (set from Android/Java side)
 static std::string g_internalFilesPath;
 static std::mutex g_internalFilesPathMutex;
@@ -1403,7 +1415,16 @@ VPINBALL_STATUS VPinballLib::ToggleScoreView(bool enable, int x, int y, int widt
 
 VPINBALL_STATUS VPinballLib::GetScoreViewSourceSize(int& width, int& height)
 {
-   // Get PUP video source dimensions (set by PUP plugin during render)
+   // Prefer the ScoreView's actually-resolved source size (any table type).
+   const int sw = g_scoreViewSourceWidth.load();
+   const int sh = g_scoreViewSourceHeight.load();
+   if (sw > 0 && sh > 0)
+   {
+      width = sw;
+      height = sh;
+      return VPINBALL_STATUS_SUCCESS;
+   }
+   // Fall back to PUP video dimensions (set by the PUP plugin during render).
    GetPUPVideoSourceSize(width, height);
    return VPINBALL_STATUS_SUCCESS;
 }
