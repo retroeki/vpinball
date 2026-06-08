@@ -177,6 +177,13 @@ void WebServer::Start()
 
    // mg_log_set(MG_LL_DEBUG);
 
+   // Clear any half-finished uploads from a previous session. Staged uploads
+   // live under <webRoot>/.uploading and are only promoted to their real
+   // location once complete, so anything left here is from an interrupted
+   // transfer and must not linger as a hidden orphan.
+   std::error_code sweepEc;
+   std::filesystem::remove_all(BuildPrefPath(".uploading"), sweepEc);
+
    const auto addrPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>("Standalone"s, "WebServerAddr"s, ""s, ""s, false, "0.0.0.0"s));
    const auto portPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>("Standalone"s, "WebServerPort"s, ""s, ""s, false, INT_MIN, INT_MAX, 2112));
    const string addr = g_pvp->m_settings.GetString(addrPropId);
@@ -423,9 +430,38 @@ void WebServer::Upload(struct mg_connection *c, struct mg_http_message* hm)
    mg_http_get_var(&hm->query, "length", lengthStr, sizeof(lengthStr));
    long length = lengthStr[0] ? strtol(lengthStr, nullptr, 10) : 0;
 
-   string path = BuildPrefPath(q);
+   // Upload into a hidden staging dir and promote to the real location only
+   // once the whole file has arrived. Writing straight to the final name left
+   // a truncated, unloadable table in the library whenever a transfer dropped
+   // mid-way. The staging tree mirrors the target path (both under the same
+   // web root) so the promote is a same-filesystem atomic rename; stragglers
+   // are swept on server start (see Start()).
+   const std::filesystem::path targetDir = BuildPrefPath(q);
+   const std::filesystem::path stagingDir = BuildPrefPath("") / ".uploading" / q;
+   std::error_code ec;
+   std::filesystem::create_directories(stagingDir, ec);   // mg_http_upload won't create dirs
 
-   const long bytesWritten = mg_http_upload(c, hm, &mg_fs_posix, path.c_str(), 1024 * 1024 * 500);
+   const long bytesWritten = mg_http_upload(c, hm, &mg_fs_posix, stagingDir.string().c_str(), 1024 * 1024 * 500);
+
+   // File complete: promote it before signalling progress, so the host sees
+   // the finished table at its real path the instant it reaches 100%.
+   if (bytesWritten == length && length > 0) {
+      const std::filesystem::path stagedFile = stagingDir / file;
+      const std::filesystem::path finalFile = targetDir / file;
+      std::filesystem::create_directories(targetDir, ec);
+      std::filesystem::rename(stagedFile, finalFile, ec);
+      if (ec)
+         PLOGE.printf("Upload finalize failed: %s -> %s (%s)", stagedFile.string().c_str(),
+                      finalFile.string().c_str(), ec.message().c_str());
+      else {
+         if (*q == '\0' && file == "VPinballX.ini") {
+            g_pvp->m_settings.SetIniPath(finalFile.string());
+            g_pvp->m_settings.Load(true);
+            g_pvp->m_settings.Save();
+         }
+         SetLastUpdate();
+      }
+   }
 
    // Per-chunk progress event so the host can render an upload indicator on
    // the matching library row. mg_http_upload returns the cumulative size of
@@ -440,15 +476,6 @@ void WebServer::Upload(struct mg_connection *c, struct mg_http_message* hm)
       uploadData.bytesWritten = static_cast<uint64_t>(bytesWritten);
       uploadData.totalBytes = static_cast<uint64_t>(length);
       VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_WEB_UPLOAD, &uploadData);
-   }
-
-   if (bytesWritten == length) {
-      if (*q == '\0' && file == "VPinballX.ini") {
-         g_pvp->m_settings.SetIniPath(path);
-         g_pvp->m_settings.Load(true);
-         g_pvp->m_settings.Save();
-      }
-      SetLastUpdate();
    }
 }
 
