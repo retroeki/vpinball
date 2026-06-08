@@ -9,6 +9,9 @@
 #include <sstream>
 #include <algorithm>
 
+// Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
+extern "C" void SetScoreViewSourceSize(int width, int height);
+
 namespace ScoreView {
 
 static inline float InvsRGB(const float x) { return (x <= 0.04045f) ? (x * (float)(1.0 / 12.92)) : (powf(x * (float)(1.0 / 1.055) + (float)(0.055 / 1.055), 2.4f)); }
@@ -558,7 +561,12 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
    }
 
    if (m_bestLayout == nullptr)
+   {
+      SetScoreViewSourceSize(0, 0);
       return false;
+   }
+
+   SetScoreViewSourceSize((int)m_bestLayout->width, (int)m_bestLayout->height);
 
    // Fit the layout inside the output
    const float outAR = ctx->outWidth / ctx->outHeight;
