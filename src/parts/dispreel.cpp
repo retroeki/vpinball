@@ -849,6 +849,29 @@ STDMETHODIMP DispReel::SetValue(LONG Value)
    return S_OK;
 }
 
+int DispReel::GetReelDigit(int reel) const
+{
+   if (reel < 0 || reel >= m_d.m_reelcount)
+      return 0;
+   return m_reelInfo[reel].currentValue;
+}
+
+LONG DispReel::GetCurrentValue() const
+{
+   // SetValue decomposes starting at reel (m_reelcount-1) for the least-significant digit,
+   // working down toward reel 0 for the most-significant digit.
+   // Reconstruct the inverse: reel (m_reelcount-1) is the ones place.
+   const int base = m_d.m_digitrange + 1; // digitrange is the max digit (usually 9 -> base 10)
+   LONG value = 0;
+   LONG place = 1;
+   for (int i = m_d.m_reelcount - 1; i >= 0; --i)
+   {
+      value += (LONG)m_reelInfo[i].currentValue * place;
+      place *= base;
+   }
+   return value;
+}
+
 STDMETHODIMP DispReel::ResetToZero()
 {
    int carry = 0;

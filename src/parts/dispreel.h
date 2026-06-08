@@ -97,6 +97,11 @@ public:
        m_d.m_v2.y = m_d.m_v1.y + getBoxHeight();
    }
    int     GetRange() const { return m_d.m_digitrange; }
+
+   // Assembled integer currently shown across this reel set (inverse of SetValue).
+   LONG GetCurrentValue() const;
+   int  GetReelDigit(int reel) const; // current digit on a single reel, 0 if out of range
+
    void    SetRange(const int newRange)
    {
        m_d.m_digitrange = clamp(newRange,0, 512 - 1); // must have at least 1 digit (0 is a digit) and a max of 512 (0->511) //!! 512 requested by highrise
