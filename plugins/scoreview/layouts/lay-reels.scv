@@ -1,12 +1,19 @@
 # EM score-reel layout (real reel artwork via the live Image visual)
-# Sized to a single 5-digit reel aspect; the box resizes to this via
-# SetScoreViewSourceSize(layout.width/height). Refined in a later increment.
+# Sized to the full 2x2 backglass composite aspect (4 player scores in a 2x2
+# grid + a centered ball-in-play / credit row underneath). The box resizes to
+# this Width/Height via SetScoreViewSourceSize(layout.width/height); the actual
+# pixel image is pushed at runtime by ReelDmd, and Fit: Contain frames it.
+#
+# Reference composite (Royal Flush, gottlieb_reel 85x170 cells): the grid is
+# ~1041x501 px (aspect ~2.08:1). These Width/Height keep that aspect at a sane
+# scale (<= 512). Tables with different reel art shift the pixel size but the
+# Contain fit keeps it centered.
 
-Width: 160
-Height: 64
+Width: 512
+Height: 246
 Fit: Contain
 
 Visuals:
 	- Image:
-		Rect: [0,0,160,64]
+		Rect: [0,0,512,246]
 		Src: ctrl://reel
