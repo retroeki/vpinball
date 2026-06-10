@@ -296,10 +296,15 @@ uint32_t PUPScreen::PageTimerElapsed(void* param, SDL_TimerID timerID, uint32_t 
    return interval;
 }
 
-void PUPScreen::SetSize(int w, int h)
+void PUPScreen::SetSize(int w, int h, bool ignoreOwnCustomPos)
 {
    assert(std::this_thread::get_id() == m_apiThread);
-   m_rect = m_pCustomPos ? m_pCustomPos->ScaledRect(w, h) : SDL_Rect { 0, 0, w, h };
+   // ignoreOwnCustomPos is used by the Android ScoreView: the chosen screen must
+   // fill the whole DMD box, not sit in its desktop cabinet-layout sub-rect (e.g. a
+   // 16:9 FullDMD screen whose CustomPos otherwise shrinks the video and anchors it
+   // top-left, leaving a black surround). We drop only THIS screen's CustomPos;
+   // children still position relative to (w,h) so overlay layouts are preserved.
+   m_rect = (m_pCustomPos && !ignoreOwnCustomPos) ? m_pCustomPos->ScaledRect(w, h) : SDL_Rect { 0, 0, w, h };
    m_pMediaPlayerManager->SetBounds(m_rect);
 
    for (auto pChildren : { &m_defaultChildren, &m_backChildren, &m_topChildren }) {

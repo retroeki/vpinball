@@ -3207,6 +3207,27 @@ RenderTarget* Renderer::SetupAncillaryRenderTarget(VPXWindowId window, VPX::Rend
       outputH = static_cast<int>((float)wndH * displayScaleY);
       outputX = static_cast<int>((float)wndX * displayScaleX);
       outputY = static_cast<int>((float)wndY * displayScaleY);
+
+      // Center/position the ScoreView box against the ACTUAL render-target width,
+      // not the (pixelWidth*resScale) width the app assumes. The render resolution
+      // can differ per table (some render full-res, some scaled), so the app's
+      // pre-computed x lands off-centre whenever its assumed width != the real RT
+      // width. Re-derive x here from the saved position using outputRT->GetWidth();
+      // the box size (outputW) is left unchanged.
+      if (window == VPXWindowId::VPXWINDOW_ScoreView && g_pplayer && g_pplayer->m_ptable)
+      {
+         int svPos = 1; // 0=left, 1=center, 2=right (default center)
+         if (const auto pid = Settings::GetRegistry().GetPropertyId("Android", "ScoreViewPosition"); pid.has_value())
+            svPos = g_pplayer->m_ptable->m_settings.GetInt(pid.value());
+         const int pad = 20;
+         const int rtWidth = outputRT->GetWidth();
+         if (svPos == 0)
+            outputX = pad;                              // Left
+         else if (svPos == 2)
+            outputX = rtWidth - outputW - pad;          // Right
+         else
+            outputX = (rtWidth - outputW) / 2;          // Center
+      }
    }
 #ifdef ENABLE_BGFX
    else if (output.GetMode() == VPX::RenderOutput::OM_WINDOW)

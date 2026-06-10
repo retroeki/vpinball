@@ -759,7 +759,7 @@ int PUPManager::Render(VPXRenderContext2D* const renderCtx, void* context)
             SetPUPVideoSourceSize(w, h);
       }
 
-      screen->SetSize(static_cast<int>(outWidth), static_cast<int>(outHeight));
+      screen->SetSize(static_cast<int>(outWidth), static_cast<int>(outHeight), isScoreView);
       // Skip background/overlay frame images when rendering as scoreview (they're decorative frames for desktop windows)
       screen->Render(renderCtx, isScoreView && screen->GetScreenNum() != PUP_SCREEN_DMD);
    }
