@@ -816,7 +816,7 @@ PropInt(Alpha, Profile2Unlit, "Unlit Color"s, "Color of unlit segments"s, 0x0000
 PropFloat(Alpha, Profile2Brightness, "Brightness"s, "Brightness level"s, 0.001f, 100.f, 5.f);
 PropFloat(Alpha, Profile2DiffuseGlow, "Diffuse Glow"s, "Glow of segments on the back of the display (between segments, against glass)"s, 0.f, 10.f, 1.f);
 // VFD Greenish
-PropInt(Alpha, Profile3Color, "Color"s, "Color of lit segments"s, 0x000000, 0xFFFFFF, 0x00ECFF48);
+PropInt(Alpha, Profile3Color, "Color"s, "Color of lit segments"s, 0x000000, 0xFFFFFF, 0x0020FF40); // Gottlieb System 80 green VFD (was 0x00ECFF48 teal, which read as blue)
 PropInt(Alpha, Profile3Unlit, "Unlit Color"s, "Color of unlit segments"s, 0x000000, 0xFFFFFF, 0x404040);
 PropFloat(Alpha, Profile3Brightness, "Brightness"s, "Brightness level"s, 0.001f, 100.f, 5.f);
 PropFloat(Alpha, Profile3DiffuseGlow, "Diffuse Glow"s, "Glow of segments on the back of the display (between segments, against glass)"s, 0.f, 10.f, 1.f);
