@@ -420,6 +420,15 @@ void Textbox::Render(const unsigned int renderMask)
       || (!is_dmd && m_texture == nullptr))
       return;
 
+   // Portrait (Android): our ScoreView overlay is the score readout, so hide the table's
+   // baked-in DMD Textbox (the desktop "for Windows" DMD/score text, e.g. ACDC's
+   // "ScoreText") which would otherwise show behind/around our overlay. Only DMD-type
+   // textboxes (is_dmd) are hidden -- plain text labels are left alone. Detect portrait
+   // from the screen window (taller than wide); landscape keeps it as the table authored it.
+   if (is_dmd && !m_rd->m_outputWnd.empty()
+       && m_rd->m_outputWnd[0]->GetPixelHeight() > m_rd->m_outputWnd[0]->GetPixelWidth())
+      return;
+
    constexpr float mult  = (float)(1.0 / EDITOR_BG_WIDTH);
    constexpr float ymult = (float)(1.0 / EDITOR_BG_HEIGHT);
 
