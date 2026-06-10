@@ -526,10 +526,16 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             // It is "available" iff ReelDmd is currently pushing a composited
             // reel image (reel tables). On non-reel tables GetReelImage returns
             // false, so the reel layout becomes unmatched -> disabled, and the
-            // bundled DMD/seg layouts win exactly as before. Weight a match like
-            // a DMD so a reel layout is preferred for reel tables.
+            // bundled DMD/seg layouts win exactly as before.
+            //
+            // Weight a reel match at the LOWEST priority (+1, vs DMD +10): a real
+            // PinMAME DMD or segment display is always the authoritative score, so
+            // the reel layout must only win on true EM tables where nothing else
+            // matches. Otherwise a DMD/SS table that also carries a decorative
+            // credit/status DispReel would tie the DMD layout and the reel "asset"
+            // could replace its DMD.
             if (GetReelImage(nullptr, nullptr, nullptr, nullptr))
-               layout.matchedVisuals += 10;
+               layout.matchedVisuals += 1;
             else
                layout.unmatchedVisuals++;
             break;

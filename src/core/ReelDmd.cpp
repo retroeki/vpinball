@@ -81,7 +81,16 @@ bool ReelDmd::ShouldActivate() const
       return false;
    std::vector<DispReel*> reels;
    CollectReels(m_player, reels);
-   return !reels.empty();
+   if (reels.empty())
+      return false;
+   // Only activate for genuine EM score-reel tables: ones exposing named score
+   // reels (ScoreReel1..4). Solid-state tables (e.g. Bally Mata Hari) model
+   // decorative single-digit status flags (Match/Tilt/Credits/GameOver/...) as
+   // DispReels while their real score lives on PinMAME segment/DMD displays.
+   // Activating on those would push a reel image that hijacks the ScoreView's
+   // layout selection and replaces the real DMD/segment view with a reel "asset".
+   NamedReels named;
+   return IdentifyReels(reels, named);
 }
 
 void ReelDmd::Update()
@@ -98,7 +107,15 @@ void ReelDmd::Update()
    }
 
    NamedReels named;
-   const bool haveNamed = IdentifyReels(reels, named);
+   if (!IdentifyReels(reels, named))
+   {
+      // No named score reels: not an EM score-reel table (e.g. a solid-state
+      // table whose DispReels are decorative status flags, with the real score on
+      // PinMAME displays). Drop the channel so the ScoreView renders the table's
+      // real DMD/segment display instead of a reel "asset".
+      ClearActive();
+      return;
+   }
 
    // Build a combined change-signature over everything currently displayed, so we
    // only rebuild the composite when a shown value actually changes.
@@ -108,59 +125,18 @@ void ReelDmd::Update()
       for (int b = 0; b < 8; ++b) { sig ^= (x & 0xFF); sig *= 1099511628211ull; x >>= 8; }
    };
 
-   DispReel* primary = nullptr; // fallback path's chosen single reel
-
-   if (haveNamed)
+   for (int p = 0; p < 4; ++p)
    {
-      for (int p = 0; p < 4; ++p)
-      {
-         mix(named.score[p] ? named.score[p]->GetCurrentValue() : -1);
-         mix(named.k100[p] ? named.k100[p]->GetCurrentValue() : -1);
-      }
-      mix(named.bip ? named.bip->GetCurrentValue() : -1);
-      mix(named.credit ? named.credit->GetCurrentValue() : -1);
+      mix(named.score[p] ? named.score[p]->GetCurrentValue() : -1);
+      mix(named.k100[p] ? named.k100[p]->GetCurrentValue() : -1);
    }
-   else
-   {
-      // Fallback: the score displays are the reel sets with the most reels (so we
-      // skip single-digit credit / ball-in-play / overflow reels). Pick the
-      // highest-value set among the largest ones (the active scorer).
-      int maxReels = 0;
-      for (DispReel* r : reels)
-         if (r->GetReels() > maxReels)
-            maxReels = r->GetReels();
-      primary = reels[0];
-      long bestValue = -1;
-      for (DispReel* r : reels)
-      {
-         if (r->GetReels() != maxReels)
-            continue;
-         const long v = r->GetCurrentValue();
-         if (v > bestValue)
-         {
-            bestValue = v;
-            primary = r;
-         }
-      }
-      mix(primary->GetCurrentValue());
-   }
-
-   // Diagnostic (temporary): periodically log every reel's name + reel-count +
-   // value so we can confirm on-device which reels hold the live values.
-   static int s_diagFrame = 0;
-   if ((s_diagFrame++ % 120) == 0)
-   {
-      for (size_t i = 0; i < reels.size(); ++i)
-         PLOGI << "[ReelDmd] reel[" << i << "] name='" << reels[i]->GetName() << "' reels=" << reels[i]->GetReels()
-               << " value=" << reels[i]->GetCurrentValue();
-      PLOGI << "[ReelDmd] mode=" << (haveNamed ? "backglass(named)" : "fallback(single)")
-            << " sets=" << reels.size();
-   }
+   mix(named.bip ? named.bip->GetCurrentValue() : -1);
+   mix(named.credit ? named.credit->GetCurrentValue() : -1);
 
    if (m_haveImage && m_haveSig && sig == m_lastSig)
       return; // nothing displayed changed, skip rebuild
 
-   const bool built = haveNamed ? CompositeBackglass(named) : Composite(primary);
+   const bool built = CompositeBackglass(named);
    if (!built)
    {
       // No usable strip art -> drop the channel rather than show stale/blank.
