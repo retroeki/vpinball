@@ -617,8 +617,17 @@ VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePa
    while (elapsedMs < maxSeconds * 1000) {
       SDL_Delay(pollMs);
       elapsedMs += pollMs;
+      // PinmameRun flips the running flag to 2 ("Starting") synchronously, BEFORE the
+      // game thread has loaded the ROM and built the machine's memory map. PinMAME's
+      // own guard is only `if (!_isRunning)`, which passes while state==2, so polling
+      // NVRAM in that window calls the ROM's nvram_handler against not-yet-initialized
+      // emulated memory and segfaults — reliably on large/slow romsets (e.g. Stern SAM
+      // like acd_170h, whose ~99MB load keeps state==2 well past the first 250ms poll).
+      // Only poll once FULLY started (IsRunning(): 0=stopped, 1=started, 2=starting).
+      // If the symbol is missing, fall back to the old unconditional poll.
       int changed = -1;
-      if (buf && ChangedNVRAM)
+      const bool started = !IsRunning || IsRunning() == 1;
+      if (started && buf && ChangedNVRAM)
          changed = ChangedNVRAM(buf);
       lastChanged = changed;
       if (changed >= 0) {
