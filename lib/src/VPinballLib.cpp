@@ -736,18 +736,23 @@ void VPinballLib::SaveValueInt(const string& sectionName, const string& key, int
 
 float VPinballLib::LoadValueFloat(const string& sectionName, const string& key, float defaultValue)
 {
+   // Use table settings when a table is loaded, otherwise use global settings.
+   // Save writes per-table overrides while a player is active, so Load must read
+   // through the table settings too or per-table values never round-trip.
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
       const auto* existingProp = Settings::GetRegistry().GetProperty(existingId.value());
       if (existingProp->m_type == VPX::Properties::PropertyDef::Type::Float)
-         return g_pvp->m_settings.GetFloat(existingId.value());
+         return settings.GetFloat(existingId.value());
 
       PLOGW << "LoadValueFloat: property " << sectionName << '.' << key << " exists but is not float type";
       return defaultValue;
    }
 
    const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, FLT_MIN, FLT_MAX, 0.f, defaultValue));
-   return g_pvp->m_settings.GetFloat(propId);
+   return settings.GetFloat(propId);
 }
 
 void VPinballLib::SaveValueFloat(const string& sectionName, const string& key, float value)
@@ -765,18 +770,21 @@ void VPinballLib::SaveValueFloat(const string& sectionName, const string& key, f
 
 string VPinballLib::LoadValueString(const string& sectionName, const string& key, const string& defaultValue)
 {
+   // Use table settings when a table is loaded, otherwise use global settings (see LoadValueFloat)
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
       const auto* existingProp = Settings::GetRegistry().GetProperty(existingId.value());
       if (existingProp->m_type == VPX::Properties::PropertyDef::Type::String)
-         return g_pvp->m_settings.GetString(existingId.value());
+         return settings.GetString(existingId.value());
 
       PLOGW << "LoadValueString: property " << sectionName << '.' << key << " exists but is not string type";
       return defaultValue;
    }
 
    const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>(sectionName, key, ""s, ""s, true, defaultValue));
-   return g_pvp->m_settings.GetString(propId);
+   return settings.GetString(propId);
 }
 
 void VPinballLib::SaveValueString(const string& sectionName, const string& key, const string& value)
@@ -794,18 +802,21 @@ void VPinballLib::SaveValueString(const string& sectionName, const string& key, 
 
 bool VPinballLib::LoadValueBool(const string& sectionName, const string& key, bool defaultValue)
 {
+   // Use table settings when a table is loaded, otherwise use global settings (see LoadValueFloat)
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
       const auto* existingProp = Settings::GetRegistry().GetProperty(existingId.value());
       if (existingProp->m_type == VPX::Properties::PropertyDef::Type::Bool)
-         return g_pvp->m_settings.GetBool(existingId.value());
+         return settings.GetBool(existingId.value());
 
       PLOGW << "LoadValueBool: property " << sectionName << '.' << key << " exists but is not bool type";
       return defaultValue;
    }
 
    const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>(sectionName, key, ""s, ""s, true, defaultValue));
-   return g_pvp->m_settings.GetBool(propId);
+   return settings.GetBool(propId);
 }
 
 void VPinballLib::SaveValueBool(const string& sectionName, const string& key, bool value)
@@ -1107,6 +1118,24 @@ float VPinballLib::GetBloomStrength()
       return 1.0f;
 
    return g_pplayer->m_ptable->m_bloom_strength;
+}
+
+VPINBALL_STATUS VPinballLib::SetReflectionMode(int mode)
+{
+   if (!g_pplayer || !g_pplayer->m_renderer)
+      return VPINBALL_STATUS_FAILURE;
+
+   mode = clamp(mode, (int)RenderProbe::REFL_NONE, (int)RenderProbe::REFL_DYNAMIC);
+   g_pplayer->m_renderer->SetMaxReflectionMode((RenderProbe::ReflectionMode)mode);
+   return VPINBALL_STATUS_SUCCESS;
+}
+
+int VPinballLib::GetReflectionMode()
+{
+   if (!g_pplayer || !g_pplayer->m_renderer)
+      return (int)RenderProbe::REFL_STATIC;
+
+   return (int)g_pplayer->m_renderer->GetUserReflectionMode();
 }
 
 VPINBALL_STATUS VPinballLib::SetUserCGBrightness(float v)
@@ -1673,21 +1702,34 @@ VPINBALL_STATUS VPinballLib::ResetTable()
    if (!g_pplayer)
       return VPINBALL_STATUS_FAILURE;
 
-   // Trigger the Reset action by simulating a key press
-   // This is the same action that would be triggered by pressing F3 or the mapped reset key
-   auto& inputActions = g_pplayer->m_pininput.GetInputActions();
-   unsigned int resetActionId = g_pplayer->m_pininput.GetResetActionId();
+   // Must run on the SDL main thread: SetDirectState fires Table_KeyDown synchronously
+   // on the calling thread, and the script's reset handling restarts PinMAME. Running it
+   // here on the JNI thread races script timers on the game loop (crash in core_setSw).
+   bool actionFired = false;
+   bool dispatched = SDL_RunOnMainThread([](void* userdata) {
+      bool* ok = static_cast<bool*>(userdata);
+      *ok = false;
+      if (!g_pplayer)
+         return;
 
-   if (resetActionId >= inputActions.size())
-      return VPINBALL_STATUS_FAILURE;
+      // Trigger the Reset action by simulating a key press
+      // This is the same action that would be triggered by pressing F3 or the mapped reset key
+      auto& inputActions = g_pplayer->m_pininput.GetInputActions();
+      unsigned int resetActionId = g_pplayer->m_pininput.GetResetActionId();
 
-   // Create a direct state slot and trigger press/release
-   int slot = inputActions[resetActionId]->NewDirectStateSlot();
-   inputActions[resetActionId]->SetDirectState(slot, true);
-   inputActions[resetActionId]->SetDirectState(slot, false);
+      if (resetActionId >= inputActions.size())
+         return;
 
-   PLOGI.printf("ResetTable: Reset action triggered");
-   return VPINBALL_STATUS_SUCCESS;
+      // Create a direct state slot and trigger press/release
+      int slot = inputActions[resetActionId]->NewDirectStateSlot();
+      inputActions[resetActionId]->SetDirectState(slot, true);
+      inputActions[resetActionId]->SetDirectState(slot, false);
+
+      PLOGI.printf("ResetTable: Reset action triggered");
+      *ok = true;
+   }, &actionFired, true);
+
+   return (dispatched && actionFired) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
 }
 
 }

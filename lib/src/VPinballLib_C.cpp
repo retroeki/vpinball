@@ -235,6 +235,16 @@ VPINBALLAPI float VPinballGetBloomStrength()
    return VPinballLib::VPinballLib::Instance().GetBloomStrength();
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballSetReflectionMode(int mode)
+{
+   return VPinballLib::VPinballLib::Instance().SetReflectionMode(mode);
+}
+
+VPINBALLAPI int VPinballGetReflectionMode()
+{
+   return VPinballLib::VPinballLib::Instance().GetReflectionMode();
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGBrightness(float v)  { return VPinballLib::VPinballLib::Instance().SetUserCGBrightness(v); }
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGContrast(float v)    { return VPinballLib::VPinballLib::Instance().SetUserCGContrast(v); }
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGSaturation(float v)  { return VPinballLib::VPinballLib::Instance().SetUserCGSaturation(v); }
@@ -512,10 +522,47 @@ typedef int  (*pm_changednvram_t)(PmNvramState*);
 // Forward libpinmame's internal logs to logcat during headless generation
 // (otherwise a ROM-load failure / stall is invisible). Matches
 // PinmameOnLogMessageCallback: (PINMAME_LOG_LEVEL, const char*, va_list, void*).
+// Captures PinMAME's ROM-load result during a VPinballGenerateNVRAM boot so the
+// caller can tell "ROM files missing/corrupt" apart from "ROM ran but has no
+// NVRAM handler" — both otherwise look identical (emulator ran, no .nv produced).
+// Reset at the top of VPinballGenerateNVRAM; written from the log callback below.
+// The warm-up is sequential (one boot at a time, guarded by PinmameIsRunning and
+// the launcher table lock), so plain statics are safe.
+static bool g_romLoadFatal = false;
+static std::string g_romLoadMissing;
+
 static void PmGenLog(int logLevel, const char* format, va_list args, void* /*userData*/)
 {
    char buf[1024];
    vsnprintf(buf, sizeof(buf), format, args);
+   // PinMAME's ROM-load summary prints "<file>  NOT FOUND" per missing file and
+   // "required files are missing, the game cannot be run." when the romset is
+   // unusable. Capture both: the fatal flag drives the caller's "corrupt ROM"
+   // warning, the filename list is for diagnostics (logcat / JNI getter).
+   if (strstr(buf, "required files are missing") || strstr(buf, "the game cannot be run"))
+      g_romLoadFatal = true;
+   if (strstr(buf, "NOT FOUND")) {
+      const std::string s(buf);
+      size_t start = 0;
+      while (start < s.size()) {
+         const size_t nl = s.find('\n', start);
+         const std::string line = s.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+         if (line.find("NOT FOUND") != std::string::npos) {
+            // The first whitespace-delimited token of the line is the ROM filename.
+            const size_t a = line.find_first_not_of(" \t\r");
+            if (a != std::string::npos) {
+               const size_t b = line.find_first_of(" \t\r", a);
+               const std::string name = line.substr(a, b == std::string::npos ? std::string::npos : b - a);
+               if (!name.empty() && name != "NOT") {
+                  if (!g_romLoadMissing.empty()) g_romLoadMissing += ", ";
+                  g_romLoadMissing += name;
+               }
+            }
+         }
+         if (nl == std::string::npos) break;
+         start = nl + 1;
+      }
+   }
    if (logLevel >= 2) PLOGE.printf("[pinmame-gen] %s", buf);
    else               PLOGI.printf("[pinmame-gen] %s", buf);
 }
@@ -528,6 +575,9 @@ VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePa
       return 0;
    if (maxSeconds <= 0)
       maxSeconds = 30;
+
+   g_romLoadFatal = false;
+   g_romLoadMissing.clear();
 
    void* lib = dlopen("libpinmame.so", RTLD_NOW | RTLD_GLOBAL);
    if (!lib) {
@@ -617,6 +667,11 @@ VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePa
    while (elapsedMs < maxSeconds * 1000) {
       SDL_Delay(pollMs);
       elapsedMs += pollMs;
+      // ROM files missing/corrupt: PinMAME logged that it cannot run the game.
+      // No NVRAM will ever appear, so bail immediately instead of waiting out the
+      // no-NVRAM probe window. The caller surfaces this as a "corrupt ROM" warning.
+      if (g_romLoadFatal)
+         break;
       // PinmameRun flips the running flag to 2 ("Starting") synchronously, BEFORE the
       // game thread has loaded the ROM and built the machine's memory map. PinMAME's
       // own guard is only `if (!_isRunning)`, which passes while state==2, so polling
@@ -659,11 +714,21 @@ VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePa
    if (buf)
       free(buf);
 
-   PLOGI.printf("VPinballGenerateNVRAM: stopping after %dms (sawNvram=%d noNvram=%d peak=%d lastBurstMs=%d) rom=%s",
-                elapsedMs, (int)sawNvram, (int)noNvram, peak, lastBurstMs, romName);
+   PLOGI.printf("VPinballGenerateNVRAM: stopping after %dms (sawNvram=%d noNvram=%d romFatal=%d peak=%d lastBurstMs=%d) rom=%s",
+                elapsedMs, (int)sawNvram, (int)noNvram, (int)g_romLoadFatal, peak, lastBurstMs, romName);
    Stop();                                // joins emulation thread -> flushes <rom>.nv
    dlclose(lib);
-   return 1;
+   // 3 = ROM_INCOMPLETE: required ROM files are missing/corrupt (PinMAME could
+   // not run the game). Distinct from 1 (ran; .nv may or may not exist) so the
+   // caller can warn the user instead of marking the ROM no-NVRAM.
+   return g_romLoadFatal ? 3 : 1;
+}
+
+VPINBALLAPI const char* VPinballGetLastRomLoadError()
+{
+   // Comma-joined list of ROM files PinMAME reported NOT FOUND during the last
+   // VPinballGenerateNVRAM boot, or "" if none. Diagnostics only.
+   return g_romLoadMissing.c_str();
 }
 
 VPINBALLAPI VPINBALL_STATUS VPinballResetTable()

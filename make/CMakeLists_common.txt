@@ -49,6 +49,8 @@ set(VPX_SOURCES
    src/core/player.h
    src/core/ReelDmd.cpp
    src/core/ReelDmd.h
+   src/core/ReelClassifier.cpp
+   src/core/ReelClassifier.h
    src/core/PropertyDef.h
    src/core/PropertyRegistry.h
    src/core/PropertyStore.h

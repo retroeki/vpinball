@@ -112,6 +112,11 @@ public:
    VPINBALL_STATUS SetBatteryTempC(float tempC);
    VPINBALL_STATUS SetBloomStrength(float strength);
    float GetBloomStrength();
+   // Playfield reflection quality cap (RenderProbe::ReflectionMode, 0=Off .. 5=Dynamic).
+   // Applies live; the in-session value is not re-read from settings, so callers
+   // persist it themselves (the Android app stores it per-table as Android.ReflectionMode).
+   VPINBALL_STATUS SetReflectionMode(int mode);
+   int GetReflectionMode();
    // User color grade — 4 analytic dials baked into a runtime LUT inside Renderer.
    // Defaults: brightness=1.0, contrast=1.0, saturation=1.0, temperature=0.0.
    VPINBALL_STATUS SetUserCGBrightness(float v);

@@ -7,13 +7,15 @@
 #include "core/player.h"
 #include "parts/dispreel.h"
 #include "renderer/Texture.h"
+#include "core/ReelClassifier.h"
+#include "utils/Logger.h"
 
 #include <vector>
 #include <cstdint>
 #include <cstring>
-#include <cctype>
 #include <string>
 #include <algorithm>
+#include <utility>
 
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
 // Hands a tightly-packed w*h*3 sRGB image of the active score reels to the
@@ -26,14 +28,6 @@ namespace
 // blows up the upload. Cells are scaled by an integer factor when the natural
 // composite would exceed this.
 constexpr int kMaxImageWidth = 1024;
-
-// Lowercase a name for case-insensitive comparison.
-std::string ToLower(const std::string& s)
-{
-   std::string r(s);
-   std::transform(r.begin(), r.end(), r.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-   return r;
-}
 } // namespace
 
 ReelDmd::ReelDmd(Player* player)
@@ -53,26 +47,22 @@ static void CollectReels(Player* player, std::vector<DispReel*>& out)
          out.push_back(static_cast<DispReel*>(hitable));
 }
 
-// Match the collected reels to the Gottlieb 4-player backglass naming convention
-// (case-insensitive): ScoreReel1..4, Reel100K1..4, BIPReel, Credittxt. Any may be
-// absent. Returns true if at least one ScoreReelN was found.
-bool ReelDmd::IdentifyReels(const std::vector<DispReel*>& reels, ReelDmd::NamedReels& out)
+// Translate the live DispReel parts into the engine-independent descriptors the
+// classifier works on (name + wheel count + digit range + current value).
+static void BuildInputs(const std::vector<DispReel*>& reels, std::vector<reel::ReelInput>& out)
 {
+   out.clear();
+   out.reserve(reels.size());
    for (DispReel* r : reels)
    {
-      const std::string n = ToLower(r->GetName());
-      if (n == "scorereel1")      out.score[0] = r;
-      else if (n == "scorereel2") out.score[1] = r;
-      else if (n == "scorereel3") out.score[2] = r;
-      else if (n == "scorereel4") out.score[3] = r;
-      else if (n == "reel100k1")  out.k100[0] = r;
-      else if (n == "reel100k2")  out.k100[1] = r;
-      else if (n == "reel100k3")  out.k100[2] = r;
-      else if (n == "reel100k4")  out.k100[3] = r;
-      else if (n == "bipreel")    out.bip = r;
-      else if (n == "credittxt")  out.credit = r;
+      reel::ReelInput in;
+      in.name = r->GetName();
+      in.reelCount = r->GetReels();
+      in.digitRange = r->GetRange();
+      in.currentValue = (long)r->GetCurrentValue();
+      in.hasImage = !r->m_d.m_szImage.empty();
+      out.push_back(std::move(in));
    }
-   return out.HasAnyScore();
 }
 
 bool ReelDmd::ShouldActivate() const
@@ -83,14 +73,30 @@ bool ReelDmd::ShouldActivate() const
    CollectReels(m_player, reels);
    if (reels.empty())
       return false;
-   // Only activate for genuine EM score-reel tables: ones exposing named score
-   // reels (ScoreReel1..4). Solid-state tables (e.g. Bally Mata Hari) model
-   // decorative single-digit status flags (Match/Tilt/Credits/GameOver/...) as
-   // DispReels while their real score lives on PinMAME segment/DMD displays.
-   // Activating on those would push a reel image that hijacks the ScoreView's
-   // layout selection and replaces the real DMD/segment view with a reel "asset".
-   NamedReels named;
-   return IdentifyReels(reels, named);
+   // Activate for any table that exposes a genuine numeric score reel (>=2
+   // decimal wheels), regardless of how the author named it. Solid-state tables
+   // (e.g. Bally Mata Hari) model only decorative single-digit status flags
+   // (Match/Tilt/Credits/GameOver/...) as DispReels while their real score lives
+   // on PinMAME segment/DMD displays; those have one wheel each, so the
+   // classifier does not activate on them and the ScoreView keeps showing the
+   // real display. See ReelClassifier.h.
+   std::vector<reel::ReelInput> inputs;
+   BuildInputs(reels, inputs);
+   const bool act = reel::ClassifyReels(inputs).activate;
+   if ((int)act != m_loggedActivate)
+   {
+      m_loggedActivate = (int)act;
+      PLOGI << "[ReelDmd] ShouldActivate=" << (act ? "true" : "false") << " dispReels=" << reels.size();
+      // One-shot ground-truth dump: every reel's name/geometry/image, so we can
+      // see exactly what ReelDmd reads (e.g. whether m_szImage is populated).
+      const int nImages = (m_player->m_ptable != nullptr) ? (int)m_player->m_ptable->GetImageList().size() : -1;
+      PLOGI << "[ReelDmd] DUMP tableImages=" << nImages;
+      for (DispReel* r : reels)
+         PLOGI << "[ReelDmd]   reel '" << r->GetName() << "' rc=" << r->GetReels()
+               << " dr=" << r->GetRange() << " grid=" << (r->m_d.m_useImageGrid ? 1 : 0)
+               << " vis=" << (r->m_d.m_visible ? 1 : 0) << " img='" << r->m_d.m_szImage << "'";
+   }
+   return act;
 }
 
 void ReelDmd::Update()
@@ -106,18 +112,43 @@ void ReelDmd::Update()
       return;
    }
 
-   NamedReels named;
-   if (!IdentifyReels(reels, named))
+   std::vector<reel::ReelInput> inputs;
+   BuildInputs(reels, inputs);
+   const reel::ReelPlan plan = reel::ClassifyReels(inputs);
+   if (!plan.activate)
    {
-      // No named score reels: not an EM score-reel table (e.g. a solid-state
-      // table whose DispReels are decorative status flags, with the real score on
-      // PinMAME displays). Drop the channel so the ScoreView renders the table's
-      // real DMD/segment display instead of a reel "asset".
+      // Not an EM score-reel table (e.g. a solid-state table whose DispReels are
+      // single-digit status flags, with the real score on PinMAME displays). Drop
+      // the channel so the ScoreView renders the real DMD/segment instead.
       ClearActive();
       return;
    }
 
-   // Build a combined change-signature over everything currently displayed, so we
+   // Map the plan's chosen reels back to the live DispReel parts.
+   NamedReels named;
+   std::vector<DispReel*> genericScore;
+   DispReel* primary = nullptr;
+   if (plan.mode == reel::ReelMode::Gottlieb4Player)
+   {
+      for (int p = 0; p < 4; ++p)
+      {
+         if (plan.score[p] >= 0) named.score[p] = reels[plan.score[p]];
+         if (plan.k100[p] >= 0)  named.k100[p] = reels[plan.k100[p]];
+      }
+      if (plan.bip >= 0)    named.bip = reels[plan.bip];
+      if (plan.credit >= 0) named.credit = reels[plan.credit];
+   }
+   else // GenericActiveScore: place every score reel at its real backglass position
+   {
+      genericScore.reserve(plan.scoreReels.size());
+      for (int idx : plan.scoreReels)
+         if (idx >= 0 && idx < (int)reels.size())
+            genericScore.push_back(reels[idx]);
+      if (plan.primaryScore >= 0)
+         primary = reels[plan.primaryScore]; // single-reel fallback (active scorer)
+   }
+
+   // Build a combined change-signature over everything we will display, so we
    // only rebuild the composite when a shown value actually changes.
    uint64_t sig = 1469598103934665603ull; // FNV-1a basis
    const auto mix = [&sig](long v) {
@@ -125,21 +156,37 @@ void ReelDmd::Update()
       for (int b = 0; b < 8; ++b) { sig ^= (x & 0xFF); sig *= 1099511628211ull; x >>= 8; }
    };
 
-   for (int p = 0; p < 4; ++p)
+   if (plan.mode == reel::ReelMode::Gottlieb4Player)
    {
-      mix(named.score[p] ? named.score[p]->GetCurrentValue() : -1);
-      mix(named.k100[p] ? named.k100[p]->GetCurrentValue() : -1);
+      for (int p = 0; p < 4; ++p)
+      {
+         mix(named.score[p] ? named.score[p]->GetCurrentValue() : -1);
+         mix(named.k100[p] ? named.k100[p]->GetCurrentValue() : -1);
+      }
+      mix(named.bip ? named.bip->GetCurrentValue() : -1);
+      mix(named.credit ? named.credit->GetCurrentValue() : -1);
    }
-   mix(named.bip ? named.bip->GetCurrentValue() : -1);
-   mix(named.credit ? named.credit->GetCurrentValue() : -1);
+   else
+   {
+      for (DispReel* r : genericScore)
+      {
+         mix(r->GetCurrentValue());
+         mix(r->m_d.m_visible ? 1 : 0); // lit/dim visibility swap changes what is shown
+      }
+   }
 
    if (m_haveImage && m_haveSig && sig == m_lastSig)
       return; // nothing displayed changed, skip rebuild
 
-   const bool built = CompositeBackglass(named);
+   const bool built = (plan.mode == reel::ReelMode::Gottlieb4Player)
+      ? CompositeBackglass(named)
+      : (CompositeByPosition(genericScore) || (primary != nullptr && Composite(primary)));
    if (!built)
    {
       // No usable strip art -> drop the channel rather than show stale/blank.
+      static int s_failLog = 12; // throttle: LoadStrip logs carry the real reason
+      if (s_failLog > 0) { --s_failLog; PLOGW << "[ReelDmd] build produced no image (mode=" << (int)plan.mode
+            << " scoreReels=" << plan.scoreReels.size() << " generic=" << genericScore.size() << ")"; }
       ClearActive();
       return;
    }
@@ -163,34 +210,51 @@ void ReelDmd::ClearActive()
 bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
 {
    out = ReelStrip();
+   static int s_log = 40; // bounded diagnostics budget
    if (reel == nullptr || m_player == nullptr || m_player->m_ptable == nullptr)
       return false;
 
-   const Texture* pin = m_player->m_ptable->GetImage(reel->m_d.m_szImage);
+   const std::string imgName = reel->m_d.m_szImage;
+   const Texture* pin = m_player->m_ptable->GetImage(imgName);
    if (pin == nullptr)
+   {
+      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL GetImage('" << imgName << "') -> null"; }
       return false;
+   }
 
    std::shared_ptr<const BaseTexture> raw = pin->GetRawBitmap(false, 0);
    if (raw == nullptr)
+   {
+      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL GetRawBitmap('" << imgName << "') null, fileSize=" << pin->GetFileSize(); }
       return false;
+   }
 
    std::shared_ptr<const BaseTexture> bmp = raw;
    if (bmp->m_format != BaseTexture::SRGB)
    {
       std::shared_ptr<BaseTexture> conv = raw->Convert(BaseTexture::SRGB);
       if (conv == nullptr)
+      {
+         if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL Convert(SRGB) null '" << imgName << "' fmt=" << (int)bmp->m_format; }
          return false;
+      }
       bmp = conv;
    }
 
    const int imgW = (int)bmp->width();
    const int imgH = (int)bmp->height();
    if (imgW <= 0 || imgH <= 0)
+   {
+      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL bad size " << imgW << "x" << imgH << " '" << imgName << "'"; }
       return false;
+   }
 
    const uint8_t* const src = static_cast<const uint8_t*>(bmp->datac());
    if (src == nullptr)
+   {
+      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL datac() null '" << imgName << "'"; }
       return false;
+   }
 
    int gridCols, gridRows;
    if (reel->m_d.m_useImageGrid)
@@ -216,7 +280,10 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
    const int cellW = imgW / gridCols;
    const int cellH = imgH / gridRows;
    if (cellW <= 0 || cellH <= 0)
+   {
+      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL cell " << cellW << "x" << cellH << " (img " << imgW << "x" << imgH << " grid " << gridCols << "x" << gridRows << ") '" << imgName << "'"; }
       return false;
+   }
 
    out.bmp = bmp;
    out.src = src;
@@ -228,6 +295,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
    out.cellW = cellW;
    out.cellH = cellH;
    out.ok = true;
+   if (s_log > 0) { --s_log; PLOGI << "[ReelDmd] LoadStrip OK '" << imgName << "' img=" << imgW << "x" << imgH << " cells=" << gridCols << "x" << gridRows << " fmt=" << (int)bmp->m_format; }
    return true;
 }
 
@@ -432,6 +500,155 @@ bool ReelDmd::CompositeBackglass(const NamedReels& named)
          BlitReelCells(creditStrip, named.credit, 0, creditReels, dx, rowY, smallCellW, smallCellH);
    }
 
+   SetReelImage(outW, outH, m_scratch.data());
+   m_haveImage = true;
+   return true;
+}
+
+// Faithful multi-reel composite: place each visible, on-backglass score reel at
+// its real backglass position so the box mirrors the table's EM head (a 4-player
+// 2x2, a single score, whatever the table actually shows). Naming-independent;
+// honoring each reel's live visibility resolves the dim/lit overlapping reel pairs
+// that 4-player EM recreations use (only the shown reel is drawn).
+//
+// Reel positions/sizes are in the editor canvas space (EDITOR_BG_WIDTH x
+// EDITOR_BG_HEIGHT), the same coordinates DispReel::Render uses.
+bool ReelDmd::CompositeByPosition(const std::vector<DispReel*>& scoreReels)
+{
+   if (scoreReels.empty())
+      return false;
+
+   // Keep reels whose center lies within this margin of the backglass canvas. It
+   // drops off-canvas HUD duplicates (parked at x>1000) while keeping edge reels
+   // that slightly overhang the canvas (e.g. Royal Flush's ScoreReel1 at x=-3).
+   constexpr float kMargin = 150.0f;
+
+   // Build each visible reel's canvas-space rect, mirroring DispReel::Render's
+   // advance: first digit at m_v1 + spacing, each digit cw wide, stepping cw + sp.
+   std::vector<reel::ReelRect> rects;
+   rects.reserve(scoreReels.size());
+   for (int i = 0; i < (int)scoreReels.size(); ++i)
+   {
+      DispReel* r = scoreReels[i];
+      if (r == nullptr)
+         continue;
+      const int rc = r->GetReels();
+      if (rc <= 0)
+         continue;
+      const float cw = r->m_d.m_width;
+      const float ch = r->m_d.m_height;
+      const float sp = (r->m_d.m_reelspacing > 0.0f) ? r->m_d.m_reelspacing : 0.0f;
+      reel::ReelRect rect;
+      rect.index = i;
+      rect.x = r->m_d.m_v1.x + sp;
+      rect.y = r->m_d.m_v1.y + sp;
+      rect.w = (float)rc * (cw + sp);
+      rect.h = ch;
+      rect.visible = r->m_d.m_visible; // only mirror what the backglass actually shows
+      rects.push_back(rect);
+   }
+
+   // Prefer the currently-visible reels (in a game, the lit reel of each dim/lit
+   // pair). If nothing is visible yet (e.g. attract, before the script lights a
+   // player up), fall back to all on-canvas reels so the box still shows the
+   // scores instead of staying blank.
+   reel::ReelLayout layout = reel::PlaceReels(rects, (float)EDITOR_BG_WIDTH, (float)EDITOR_BG_HEIGHT, kMargin, /*requireVisible*/ true);
+   if (layout.placed.empty())
+      layout = reel::PlaceReels(rects, (float)EDITOR_BG_WIDTH, (float)EDITOR_BG_HEIGHT, kMargin, /*requireVisible*/ false);
+   if (layout.placed.empty() || layout.w <= 0.0f || layout.h <= 0.0f)
+      return false;
+
+   // Load each placed reel's strip once and gather geometry for the grid.
+   const int nPlaced = (int)layout.placed.size();
+   std::vector<ReelStrip> strips(nPlaced);
+   std::vector<int> reelCounts(nPlaced, 0);
+   std::vector<bool> okReel(nPlaced, false);
+   float sumH = 0.0f, sumBlockW = 0.0f;
+   int okCount = 0, anchor = -1;
+   for (int i = 0; i < nPlaced; ++i)
+   {
+      DispReel* r = scoreReels[layout.placed[i].index];
+      if (!LoadStrip(r, strips[i]))
+         continue;
+      reelCounts[i] = std::max(1, r->GetReels());
+      okReel[i] = true;
+      if (anchor < 0) anchor = i;
+      sumH += layout.placed[i].h;
+      sumBlockW += layout.placed[i].w;
+      ++okCount;
+   }
+   if (anchor < 0)
+      return false;
+
+   const float avgH = sumH / (float)okCount;
+   const float avgBlockW = sumBlockW / (float)okCount;
+
+   // Cluster the reels into a compact row/col grid (4 players -> 2x2, a single
+   // score -> 1x1) instead of spreading them across the backglass with black gaps.
+   const reel::GridLayout grid = reel::AssignGrid(layout.placed, avgH * 0.6f, avgBlockW * 0.6f);
+   const int gridCols = std::max(1, grid.cols);
+   const int gridRows = std::max(1, grid.rows);
+
+   // Uniform digit cell sized from the SOURCE strip aspect, so digits keep their
+   // true proportions (the on-playfield width/height squashes them - that was the
+   // stretch). Lay out for a target height, shrinking it if we'd exceed kMaxImageWidth.
+   const float srcAR = (strips[anchor].cellH > 0)
+      ? (float)strips[anchor].cellW / (float)strips[anchor].cellH : 0.5f;
+
+   int cellH = 120, cellW = 1, gapX = 2, gapY = 2, border = 2, outW = 1, outH = 1;
+   std::vector<int> colW;
+   for (int attempt = 0; attempt < 10; ++attempt)
+   {
+      cellW = std::max(1, (int)(cellH * srcAR + 0.5f));
+      gapX = std::max(2, cellW / 3);
+      gapY = std::max(2, cellH / 4);
+      border = std::max(3, cellH / 6);
+      colW.assign(gridCols, 0);
+      for (int i = 0; i < nPlaced; ++i)
+         if (okReel[i])
+         {
+            const int bw = reelCounts[i] * cellW;
+            if (bw > colW[grid.pos[i].col]) colW[grid.pos[i].col] = bw;
+         }
+      int gridW = (gridCols - 1) * gapX;
+      for (int w : colW) gridW += w;
+      const int gridH = gridRows * cellH + (gridRows - 1) * gapY;
+      outW = gridW + 2 * border;
+      outH = gridH + 2 * border;
+      if (outW <= kMaxImageWidth)
+         break;
+      cellH = std::max(8, (cellH * kMaxImageWidth) / outW); // shrink and retry
+   }
+
+   m_outW = outW;
+   m_outH = outH;
+   // Fill with a muted surround colour (not pure black) so the reels read as a
+   // framed readout; the digit strips (black drum + light digit) draw over it, so
+   // the gaps and border become the surround.
+   m_scratch.assign((size_t)outW * outH * 3, 0);
+   for (size_t p = 0; p + 2 < m_scratch.size(); p += 3)
+   {
+      m_scratch[p] = 28; m_scratch[p + 1] = 28; m_scratch[p + 2] = 34;
+   }
+
+   // Column x-origins (columns laid left to right with gapX between).
+   std::vector<int> colX(gridCols, border);
+   for (int c = 1; c < gridCols; ++c)
+      colX[c] = colX[c - 1] + colW[c - 1] + gapX;
+
+   for (int i = 0; i < nPlaced; ++i)
+   {
+      if (!okReel[i])
+         continue;
+      const int col = grid.pos[i].col, row = grid.pos[i].row;
+      const int blockW = reelCounts[i] * cellW;
+      const int dx = colX[col] + (colW[col] - blockW); // right-align so the ones place lines up
+      const int dy = border + row * (cellH + gapY);
+      BlitReelCells(strips[i], scoreReels[layout.placed[i].index], 0, reelCounts[i], dx, dy, cellW, cellH);
+   }
+
+   PLOGI << "[ReelDmd] CompositeByPosition placed=" << nPlaced << " grid=" << gridRows << "x" << gridCols
+         << " cell=" << cellW << "x" << cellH << " image=" << outW << "x" << outH;
    SetReelImage(outW, outH, m_scratch.data());
    m_haveImage = true;
    return true;

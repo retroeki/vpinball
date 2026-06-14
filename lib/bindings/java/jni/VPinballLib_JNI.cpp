@@ -334,6 +334,16 @@ JNIEXPORT jfloat JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetBloomS
    return VPinballGetBloomStrength();
 }
 
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetReflectionMode(JNIEnv* env, jobject obj, jint mode)
+{
+   return VPinballSetReflectionMode(mode);
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetReflectionMode(JNIEnv* env, jobject obj)
+{
+   return VPinballGetReflectionMode();
+}
+
 JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGBrightness(JNIEnv*, jobject, jfloat v)  { return VPinballSetUserCGBrightness(v); }
 JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGContrast(JNIEnv*, jobject, jfloat v)    { return VPinballSetUserCGContrast(v); }
 JNIEXPORT jint   JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetUserCGSaturation(JNIEnv*, jobject, jfloat v)  { return VPinballSetUserCGSaturation(v); }

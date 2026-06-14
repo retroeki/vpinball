@@ -89,6 +89,17 @@ public:
       // For dynamic mode, static reflections are not available so adapt the mode
       return !IsUsingStaticPrepass() && m_maxReflectionMode >= RenderProbe::REFL_STATIC ? RenderProbe::REFL_DYNAMIC : m_maxReflectionMode;
    }
+   // User-selected cap, without the dynamic-prepass adaptation applied by GetMaxReflectionMode
+   RenderProbe::ReflectionMode GetUserReflectionMode() const { return m_maxReflectionMode; }
+   void SetMaxReflectionMode(RenderProbe::ReflectionMode mode)
+   {
+      if (m_maxReflectionMode == mode)
+         return;
+      m_maxReflectionMode = mode;
+      // Static reflection probes are baked into the static prepass; re-render it
+      // so mode changes that cross the static boundary show up without a restart.
+      m_isStaticPrepassDirty = true;
+   }
    int GetAOMode() const // 0=Off, 1=Static, 2=Dynamic
    {
       // We must evaluate this dynamically since AO scale and enabled/disable can be changed from script

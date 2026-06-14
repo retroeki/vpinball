@@ -177,6 +177,11 @@ typedef struct GetDevSrcMsg
 #define CTLPI_DISPLAY_HARDWARE_STERN_520_5052_05  0x00020001
 #define CTLPI_DISPLAY_HARDWARE_STERN_520_5052_15  0x00020002
 #define CTLPI_DISPLAY_HARDWARE_RGB_LED            0x00030000
+// Fork-local: synthetic DMD rendering of alphanumeric segment displays
+// (published by AlphaDMD for external DMD mirroring). The in-app ScoreView
+// skips sources of this family when matching DMD visuals so real segment
+// rendering keeps priority; DMDUtil streams them like any other source.
+#define CTLPI_DISPLAY_HARDWARE_SEG_RENDER         0x00040000
 
 
 typedef struct DisplayFrame

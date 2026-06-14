@@ -69,6 +69,8 @@ static size_t getAvailableMemoryMB() {
 #include "plugins/VPXPlugin.h"
 #include "core/VPXPluginAPIImpl.h"
 #include "core/ReelDmd.h"
+#include "parts/dispreel.h"
+#include <set>
 
 #include "input/ScanCodes.h"
 
@@ -760,9 +762,28 @@ Player::Player(PinTable *const table, const int playMode)
 #if defined(__ANDROID__)
    // Free compressed source data (PNG/JPEG/WebP) from all images - no longer needed after textures are on GPU
    {
+      // EXCEPT images used by DispReel score reels: ReelDmd re-decodes them on the
+      // CPU (via Texture::GetRawBitmap) every time the displayed score changes, to
+      // composite the in-app score-reel view. EM score reels live on the backbox so
+      // they are never drawn in the portrait playfield view, meaning their texture
+      // may never be GPU-uploaded and their decoded buffer is not retained; if we
+      // also drop the compressed source, GetRawBitmap can no longer produce pixels
+      // and the reel view stays blank. Keep their source bytes (a handful of small
+      // digit strips, negligible memory).
+      std::set<const Texture*> keepReelImages;
+      for (IEditable* hitable : m_vhitables)
+         if (hitable->GetItemType() == ItemTypeEnum::eItemDispReel)
+         {
+            const Texture* tex = m_ptable->GetImage(static_cast<DispReel*>(hitable)->m_d.m_szImage);
+            if (tex != nullptr)
+               keepReelImages.insert(tex);
+         }
+
       size_t totalFreed = 0;
       for (auto image : m_ptable->m_vimage)
       {
+         if (keepReelImages.find(image) != keepReelImages.end())
+            continue;
          totalFreed += image->ReleaseSourceData();
       }
       // MEM_LOG("=== RELEASED COMPRESSED IMAGE DATA === Freed %zuMB | AvailMem: %zuMB",

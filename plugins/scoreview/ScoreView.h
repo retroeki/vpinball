@@ -122,6 +122,10 @@ private:
 
    vector<Layout> m_layouts;
    bool m_invalidBestLayout = true;
+   // Tracks the ctrl://reel host side-channel (ReelDmd). It is not a CTLPI display
+   // source, so OnResChanged never fires for it; Render polls it and forces a
+   // re-select when it appears/disappears so the reel layout is (de)selected.
+   bool m_lastReelAvailable = false;
    Layout* m_bestLayout = nullptr;
 
    ResURIResolver m_resURIResolver;

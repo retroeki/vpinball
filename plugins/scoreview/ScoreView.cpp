@@ -492,7 +492,13 @@ void ScoreView::Select(const float scoreW, const float scoreH)
          {
          case VisualType::DMD:
             display = m_resURIResolver.GetDisplayState(visual.srcUri);
-            if (display.source == nullptr)
+            if (display.source == nullptr
+               // Synthetic seg-to-DMD sources (AlphaDMD, published for external
+               // DMD mirroring) must never satisfy an in-app DMD visual: the
+               // segment layouts render the real thing. Without this check the
+               // 128x32 synthetic source AR-matches the bundled DMD layouts and
+               // their +10 weight would beat the segment layouts.
+               || (display.source->hardware & CTLPI_DISPLAY_HARDWARE_FAMILY_MASK) == CTLPI_DISPLAY_HARDWARE_SEG_RENDER)
             {
                layout.unmatchedVisuals++;
                // LOGI("ScoreView::Select: layout %.0fx%.0f visual DMD '%s' dmdSize=%dx%d -> source=NULL (unmatched)",
@@ -577,6 +583,18 @@ void ScoreView::Select(const float scoreW, const float scoreH)
 
 bool ScoreView::Render(VPXRenderContext2D* ctx)
 {
+   // The live EM score-reel image (ctrl://reel) is a host side-channel, not a
+   // CTLPI display source, so OnResChanged never fires for it. ReelDmd only starts
+   // pushing once the table is live (after the initial Select), so detect its
+   // appearance/disappearance here and force a re-select; otherwise the reel
+   // layout, disabled at startup when no image existed, would never be chosen.
+   const bool reelAvailable = GetReelImage(nullptr, nullptr, nullptr, nullptr);
+   if (reelAvailable != m_lastReelAvailable)
+   {
+      m_lastReelAvailable = reelAvailable;
+      m_invalidBestLayout = true;
+   }
+
    if (m_invalidBestLayout)
    {
       m_invalidBestLayout = false;

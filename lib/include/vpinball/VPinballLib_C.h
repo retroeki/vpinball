@@ -107,6 +107,10 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetThermalStatus(int status);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBatteryTempC(float tempC);
 VPINBALLAPI VPINBALL_STATUS VPinballSetBloomStrength(float strength);
 VPINBALLAPI float VPinballGetBloomStrength();
+// Playfield reflection quality (0=Off, 1=Balls Only, 2=Static, 3=Static & Balls,
+// 4=Static & Unsynced Dynamic, 5=Dynamic). Applies live to the running player.
+VPINBALLAPI VPINBALL_STATUS VPinballSetReflectionMode(int mode);
+VPINBALLAPI int VPinballGetReflectionMode();
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGBrightness(float v);
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGContrast(float v);
 VPINBALLAPI VPINBALL_STATUS VPinballSetUserCGSaturation(float v);
@@ -155,8 +159,16 @@ VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTabl
 // name; pinmamePath is the directory containing roms/ and nvram/. Blocks until
 // the ROM's NVRAM has initialized (or maxSeconds elapses), then stops the
 // emulator (which flushes <rom>.nv). Call OFF the UI thread. Returns 1 if the
-// emulator ran, 0 on failure (libpinmame or ROM not found, or already running).
+// emulator ran, 0 on failure (libpinmame or ROM not found, or already running),
+// 2 if the ROM name is not a real PinMAME driver (GAME_NOT_FOUND), or 3 if the
+// romset is incomplete/corrupt (required ROM files missing — see
+// VPinballGetLastRomLoadError).
 VPINBALLAPI int VPinballGenerateNVRAM(const char* romName, const char* pinmamePath, int maxSeconds);
+
+// Comma-joined list of ROM files PinMAME reported missing during the most recent
+// VPinballGenerateNVRAM boot (empty string if none). Valid until the next
+// VPinballGenerateNVRAM call. Diagnostics for a return value of 3.
+VPINBALLAPI const char* VPinballGetLastRomLoadError();
 
 // View Mode
 

@@ -1132,6 +1132,24 @@ void Flasher::Render(const unsigned int renderMask)
    if (!m_d.m_isVisible || m_meshBuffer == nullptr || isReflectionPass)
       return;
 
+   // Portrait (Android): our ScoreView overlay is the score readout, so hide the
+   // table's baked-in DMD flasher (renderMode==DMD, e.g. VPW Star Wars' "DMD"
+   // flasher) which would otherwise show behind/around our overlay. Mirrors the
+   // DMD-textbox guard in Textbox::Render. FLASHER mode (gameplay effects) and
+   // DISPLAY/ALPHASEG modes are left untouched. Portrait-only; landscape keeps
+   // it as the table authored it.
+   if (m_d.m_renderMode == FlasherData::DMD
+      && !m_rd->m_outputWnd.empty()
+      && m_rd->m_outputWnd[0]->GetPixelHeight() > m_rd->m_outputWnd[0]->GetPixelWidth())
+   {
+      static bool loggedFlasherDmdOnce = false;
+      if (!loggedFlasherDmdOnce) {
+         PLOGI << "Flasher DMD suppressed (portrait): name=" << MakeString(m_wzName);
+         loggedFlasherDmdOnce = true;
+      }
+      return;
+   }
+
    // Don't render if LightSequence in play and state is off
    if (m_lockedByLS && !m_inPlayState)
       return;

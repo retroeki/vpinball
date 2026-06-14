@@ -558,13 +558,13 @@ static void OnSegSrcChanged(const unsigned int, void* userData, void* msgData)
          }
       }
    }
-   if (dmdLayout == DmdLayouts::Undefined)
    {
       std::stringstream ss;
-      ss << "Unsupported segment layout (" << selectedSources.size() << " displays: ";
+      ss << "AlphaDMD: seg sources changed, " << selectedSources.size() << " display(s) [";
       for (size_t i = 0; i < selectedSources.size(); i++)
          ss << (i == 0 ? "" : ", ") << selectedSources[i].nElements;
-      ss << ')';
+      ss << "] -> layout=" << static_cast<int>(dmdLayout)
+         << (dmdLayout == DmdLayouts::Undefined ? " (UNSUPPORTED, nothing published)" : "");
       LPI_LOGI("%s", ss.str().c_str());
    }
    lock.unlock();
@@ -593,13 +593,18 @@ MSGPI_EXPORT void MSGPIAPI AlphaDMDPluginLoad(const uint32_t sessionId, const Ms
 {
    msgApi = api;
    endpointId = sessionId;
+   LPISetup(endpointId, msgApi); // upstream never wired the shared logging API, so the plugin was fully silent
+   LPI_LOGI("AlphaDMD: plugin loaded");
    dmd128Id = {
       .id = { { endpointId, 0 } },
       .groupId = { { endpointId, 0 } },
       .overrideId = { { 0, 0 } },
       .width = 128,
       .height = 32,
-      .hardware = CTLPI_DISPLAY_HARDWARE_UNKNOWN,
+      // SEG_RENDER marks this as a synthetic seg-to-DMD source: the in-app
+      // ScoreView ignores it (real segment rendering wins), external DMD
+      // mirroring (DMDUtil) streams it.
+      .hardware = CTLPI_DISPLAY_HARDWARE_SEG_RENDER,
       .frameFormat = CTLPI_DISPLAY_FORMAT_LUM32F,
       .GetRenderFrame = &GetRenderFrame,
       .identifyFormat = CTLPI_DISPLAY_ID_FORMAT_BITPLANE2,
