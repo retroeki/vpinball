@@ -905,7 +905,7 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
    // *other* code (e.g. Sonic's LoadUltraDMD does WshShell.RegWrite then
    // Set UltraDMD = CreateObject(...) — without the stub the Sub would die
    // on the first RegWrite and UltraDMD would never be created).
-   if (wcscmp(progid, L"WScript.Shell") == 0) {
+   if (wcsicmp(progid, L"WScript.Shell") == 0) {
       IDispatch* shell = CreateScriptWScriptShell();
       if (!shell) return E_OUTOFMEMORY;
       if (ppObj) *ppObj = (IUnknown*)shell;
