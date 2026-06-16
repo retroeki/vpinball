@@ -37,11 +37,16 @@ private:
       int imgW = 0, imgH = 0, srcPitch = 0;
       int gridCols = 0, gridRows = 0;
       int cellW = 0, cellH = 0;
+      int channels = 3;      // bytes per source pixel: 3 = SRGB (opaque reels), 4 = SRGBA (alpha kept)
+      bool emissive = false; // alpha wanted but source had none: key opacity off luminance
       bool ok = false;
    };
 
-   // Load + normalize a reel's strip image and compute its cell geometry.
-   bool LoadStrip(DispReel* reel, ReelStrip& out) const;
+   // Load + normalize a reel's strip image and compute its cell geometry. With
+   // wantAlpha the strip keeps its alpha channel (SRGBA) when it has one, or is
+   // flagged emissive so DrawDigitCell keys opacity off luminance (LED/segment
+   // fonts that paint glyphs over a transparent/black backdrop).
+   bool LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha = false) const;
 
    // Draw one digit cell (cellIndex into the strip) into m_scratch, stretched to
    // fill dstCellW x dstCellH at (boxX, boxY). With border=true a recessed-window

@@ -256,7 +256,7 @@ void ReelDmd::ClearActive()
 
 // Load + normalize a reel's strip image to tightly-packed 3-byte sRGB and compute
 // its source cell geometry, matching DispReel::RenderSetup (dispreel.cpp:186-252).
-bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
+bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
 {
    out = ReelStrip();
    static int s_log = 40; // bounded diagnostics budget
@@ -278,17 +278,23 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
       return false;
    }
 
+   // Keep the alpha channel only when the caller wants it AND the source actually
+   // has one; otherwise flatten to SRGB and (if alpha was wanted) key emissively.
+   const bool useAlpha = wantAlpha && raw->HasAlpha();
+   const BaseTexture::Format target = useAlpha ? BaseTexture::SRGBA : BaseTexture::SRGB;
    std::shared_ptr<const BaseTexture> bmp = raw;
-   if (bmp->m_format != BaseTexture::SRGB)
+   if (bmp->m_format != target)
    {
-      std::shared_ptr<BaseTexture> conv = raw->Convert(BaseTexture::SRGB);
+      std::shared_ptr<BaseTexture> conv = raw->Convert(target);
       if (conv == nullptr)
       {
-         if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL Convert(SRGB) null '" << imgName << "' fmt=" << (int)bmp->m_format; }
+         if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL Convert(" << BaseTexture::GetFormatString(target) << ") null '" << imgName << "' fmt=" << (int)bmp->m_format; }
          return false;
       }
       bmp = conv;
    }
+   out.channels = useAlpha ? 4 : 3;
+   out.emissive = wantAlpha && !useAlpha;
 
    const int imgW = (int)bmp->width();
    const int imgH = (int)bmp->height();
@@ -344,7 +350,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
    out.cellW = cellW;
    out.cellH = cellH;
    out.ok = true;
-   if (s_log > 0) { --s_log; PLOGI << "[ReelDmd] LoadStrip OK '" << imgName << "' img=" << imgW << "x" << imgH << " cells=" << gridCols << "x" << gridRows << " fmt=" << (int)bmp->m_format; }
+   if (s_log > 0) { --s_log; PLOGI << "[ReelDmd] LoadStrip OK '" << imgName << "' img=" << imgW << "x" << imgH << " cells=" << gridCols << "x" << gridRows << " fmt=" << (int)bmp->m_format << " ch=" << out.channels << " emissive=" << (out.emissive ? 1 : 0) << " rawAlpha=" << (raw->HasAlpha() ? 1 : 0); }
    return true;
 }
 
@@ -375,10 +381,26 @@ void ReelDmd::DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int
          if (dx < 0 || dx >= m_outW) continue;
          const int sx = srcCellX + (cellW > 1 ? (x * (srcCW - 1)) / (cellW - 1) : 0);
          if (sx < 0 || sx >= strip.imgW) continue;
-         const uint8_t* const sp = srow + (size_t)sx * 3;
+         const uint8_t* const sp = srow + (size_t)sx * strip.channels;
          uint8_t* const dp = m_scratch.data() + ((size_t)dy * m_outW + dx) * 4;
-         dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
-         dp[3] = 255; // digits are fully opaque (the surround carries the alpha)
+         if (strip.channels == 4 || strip.emissive)
+         {
+            // Emissive glyph (LED/segment font): brightness IS opacity. Alpha-composite
+            // the lit pixels over the panel so dark gaps stay see-through instead of
+            // stamping an opaque cell (which renders as a solid rectangle).
+            const int a = (strip.channels == 4) ? sp[3] : (int)std::max({ sp[0], sp[1], sp[2] });
+            if (a <= 0) continue; // fully transparent: leave the panel pixel untouched
+            const int ia = 255 - a;
+            dp[0] = (uint8_t)((sp[0] * a + dp[0] * ia) / 255);
+            dp[1] = (uint8_t)((sp[1] * a + dp[1] * ia) / 255);
+            dp[2] = (uint8_t)((sp[2] * a + dp[2] * ia) / 255);
+            if (a > dp[3]) dp[3] = (uint8_t)a;
+         }
+         else
+         {
+            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+            dp[3] = 255; // mechanical reel digits are fully opaque (the surround carries the alpha)
+         }
       }
    }
 
@@ -653,7 +675,7 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
    {
       DispReel* const r = reels[cells[pr.index]];
       ReelStrip strip;
-      if (!LoadStrip(r, strip))
+      if (!LoadStrip(r, strip, /*wantAlpha*/ true))
          continue;
       const int dstX = (int)((pr.x - layout.x) * sx + 0.5f);
       const int dstY = (int)((pr.y - layout.y) * sy + 0.5f);
