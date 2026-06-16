@@ -118,6 +118,7 @@ private:
       unsigned int unmatchedVisuals;
       unsigned int matchedVisuals;
       float unfittedPixels;
+      bool reelOnly = false; // every visual is the live EM reel image (no DMD/segment source)
    };
 
    vector<Layout> m_layouts;

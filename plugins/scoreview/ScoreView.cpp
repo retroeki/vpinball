@@ -486,11 +486,13 @@ void ScoreView::Select(const float scoreW, const float scoreH)
       layout.unfittedPixels = (rtAR > layoutAR) ? (layoutAR / rtAR) : (rtAR / layoutAR);
       layout.matchedVisuals = 0;
       layout.unmatchedVisuals = 0;
+      layout.reelOnly = !layout.visuals.empty();
       for (const auto& visual : layout.visuals)
       {
          switch (visual.type)
          {
          case VisualType::DMD:
+            layout.reelOnly = false;
             display = m_resURIResolver.GetDisplayState(visual.srcUri);
             if (display.source == nullptr
                // Synthetic seg-to-DMD sources (AlphaDMD, published for external
@@ -521,6 +523,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             }
             break;
          case VisualType::SegDisplay:
+            layout.reelOnly = false;
             segDisplay = m_resURIResolver.GetSegDisplayState(visual.srcUri);
             if ((segDisplay.source == nullptr) || (segDisplay.source->nElements != visual.nElements))
                layout.unmatchedVisuals++;
@@ -567,6 +570,24 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             return a.unfittedPixels < b.unfittedPixels;
          return false;
       });
+
+   // The live EM reel image is a LAST-RESORT source. A real PinMAME DMD/segment
+   // display (a fully-matched non-reel layout) must always win over it, so a
+   // solid-state table whose score is on a segment display (e.g. Ali) is not
+   // hijacked by its decorative per-character DispReels, which ReelDmd now also
+   // composites into the reel channel. If the winner is reel-only but a fully
+   // matched real display exists, prefer that.
+   if (m_bestLayout->reelOnly)
+   {
+      Layout* real = nullptr;
+      for (auto& l : m_layouts)
+         if (!l.reelOnly && l.unmatchedVisuals == 0
+             && (real == nullptr || l.matchedVisuals > real->matchedVisuals
+                 || (l.matchedVisuals == real->matchedVisuals && l.unfittedPixels < real->unfittedPixels)))
+            real = &l;
+      if (real != nullptr)
+         m_bestLayout = real;
+   }
 
    if (m_bestLayout->unmatchedVisuals > 0)
    {
