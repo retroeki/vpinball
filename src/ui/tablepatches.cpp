@@ -8,8 +8,15 @@
 namespace tablepatches {
 
 const TablePatch kTablePatches[] = {
-   { "DragonFire.vpx", "Desktop=Table1.ShowDT", "Desktop=True", false,
-     "DragonFire: script Desktop=True so the LED score reels populate (engine ShowDT unchanged)" },
+   // Route the LED score/text to the Led DispReels (b2sParseString picks the REEL glyph
+   // table; b2sSendToBG writes leddisp.SetValue) WITHOUT flipping the global `Desktop`
+   // flag. Both routines gate on `If Desktop=True Then` (that exact text appears only in
+   // those two subs). Forcing the global Desktop=True instead would also skip the init
+   // `If Desktop=false` block that hides the reels, leaving 40 backglass reels visible
+   // (camera auto-fit glitch). Leaving Desktop=False keeps them hidden; ReelDmd reads
+   // reel values regardless of visibility, so the in-app DMD panel still renders the score.
+   { "DragonFire.vpx", "If Desktop=True Then", "If True Then", false,
+     "DragonFire: route LED display to the (hidden) Led reels without un-hiding them" },
 };
 const size_t kTablePatchCount = sizeof(kTablePatches) / sizeof(kTablePatches[0]);
 

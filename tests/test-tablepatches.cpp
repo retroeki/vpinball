@@ -8,15 +8,16 @@ static int g_fail = 0;
 #define CHECK(cond, msg) do { if (cond) printf("PASS  %s\n", msg); else { printf("FAIL  %s\n", msg); ++g_fail; } } while (0)
 
 int main() {
-   // #4 target correctness (literal, production registry): only the find->replace changes.
+   // #4 target correctness (literal, production registry): every occurrence of the
+   // gate is flipped (DragonFire's script has two), nothing else changes.
    {
-      const std::string s = "  Desktop=Table1.ShowDT\r\n  Foo=1\r\n";
-      CHECK(ApplyTableSpecificPatches(s, "tables/DragonFire.vpx") == "  Desktop=True\r\n  Foo=1\r\n",
-            "DragonFire.vpx: Desktop flip applied, nothing else changed");
+      const std::string s = "  If Desktop=True Then\r\n  Foo=1\r\n  If Desktop=True Then\r\n";
+      CHECK(ApplyTableSpecificPatches(s, "tables/DragonFire.vpx") == "  If True Then\r\n  Foo=1\r\n  If True Then\r\n",
+            "DragonFire.vpx: both branch gates patched, nothing else changed");
    }
    // #3a filename-gated: same script under a different filename -> unchanged.
    {
-      const std::string s = "  Desktop=Table1.ShowDT\r\n";
+      const std::string s = "  If Desktop=True Then\r\n";
       CHECK(ApplyTableSpecificPatches(s, "tables/SomethingElse.vpx") == s,
             "non-DragonFire filename: byte-identical no-op");
    }
@@ -28,7 +29,7 @@ int main() {
    }
    // case-insensitive + path-stripped basename match.
    {
-      CHECK(ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "C:\\X\\DRAGONFIRE.VPX") == "Desktop=True",
+      CHECK(ApplyTableSpecificPatches("If Desktop=True Then", "C:\\X\\DRAGONFIRE.VPX") == "If True Then",
             "case-insensitive, path-stripped match");
    }
    // #2 isolation across other scripts / empty filename -> byte-identical.
@@ -39,7 +40,7 @@ int main() {
    }
    // #6 idempotent: second apply is a no-op (find text gone).
    {
-      const std::string once = ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "DragonFire.vpx");
+      const std::string once = ApplyTableSpecificPatches("If Desktop=True Then", "DragonFire.vpx");
       CHECK(once == ApplyTableSpecificPatches(once, "DragonFire.vpx"), "idempotent");
    }
    // #5 regex mode (custom test registry): applies on keyed file, no-op elsewhere.
@@ -56,10 +57,10 @@ int main() {
    // applied out-parameter: one entry per applied edit; empty when no match (production registry).
    {
       std::vector<std::pair<std::string, int>> log;
-      ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "DragonFire.vpx", &log);
+      ApplyTableSpecificPatches("If Desktop=True Then", "DragonFire.vpx", &log);
       CHECK(log.size() == 1 && log[0].second == 1, "applied: one entry, count 1 for one literal edit");
       std::vector<std::pair<std::string, int>> nolog;
-      ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "SomethingElse.vpx", &nolog);
+      ApplyTableSpecificPatches("If Desktop=True Then", "SomethingElse.vpx", &nolog);
       CHECK(nolog.empty(), "applied: empty when no match");
    }
    // regex applied count reflects actual occurrences (custom registry).
