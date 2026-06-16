@@ -82,6 +82,7 @@ static void BuildInputs(const std::vector<DispReel*>& reels, std::vector<reel::R
       in.digitRange = r->GetRange();
       in.currentValue = (long)r->GetCurrentValue();
       in.hasImage = !r->m_d.m_szImage.empty();
+      in.useImageGrid = r->m_d.m_useImageGrid;
       out.push_back(std::move(in));
    }
 }

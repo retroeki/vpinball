@@ -46,7 +46,7 @@ static int g_fail = 0;
    } while (0)
 
 static ReelInput R(const char* name, int reelCount, int digitRange, long value = 0, bool hasImage = true,
-                   const char* image = "")
+                   const char* image = "", bool useImageGrid = false)
 {
    ReelInput r;
    r.name = name;
@@ -55,6 +55,7 @@ static ReelInput R(const char* name, int reelCount, int digitRange, long value =
    r.digitRange = digitRange;
    r.currentValue = value;
    r.hasImage = hasImage;
+   r.useImageGrid = useImageGrid;
    return r;
 }
 

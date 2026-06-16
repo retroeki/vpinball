@@ -25,6 +25,7 @@ struct ReelInput
    int digitRange = 0;     // DispReel::GetRange()  - max digit per wheel (10s of EM tables: 9)
    long currentValue = 0;  // DispReel::GetCurrentValue() - 0 when only classifying (no live values)
    bool hasImage = true;   // reel has a (resolvable) strip image - imageless reels can't be drawn
+   bool useImageGrid = false; // DispReel::m_d.m_useImageGrid - a sprite-sheet/font strip (vs legacy stacked images)
 };
 
 // Every table is handled by ONE system: each reel is classified into a role from
