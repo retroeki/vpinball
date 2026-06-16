@@ -104,7 +104,11 @@ bool ReelDmd::ShouldActivate() const
    // real display. See ReelClassifier.h.
    std::vector<reel::ReelInput> inputs;
    BuildInputs(reels, inputs);
-   const bool act = reel::ClassifyReels(inputs).activate;
+   const bool decimal = reel::ClassifyReels(inputs).activate;
+   // A custom character/segment display (no decimal score reels) also drives the
+   // panel; decimal scores take priority when both somehow exist.
+   const bool charDisp = !decimal && !reel::ClassifyCharDisplay(inputs).empty();
+   const bool act = decimal || charDisp;
    if ((int)act != m_loggedActivate)
    {
       m_loggedActivate = (int)act;
@@ -139,10 +143,39 @@ void ReelDmd::Update()
    const reel::ReelPlan plan = reel::ClassifyReels(inputs);
    if (!plan.activate)
    {
-      // Not an EM score-reel table (e.g. a solid-state table whose DispReels are
-      // single-digit status flags, with the real score on PinMAME displays). Drop
-      // the channel so the ScoreView renders the real DMD/segment instead.
-      ClearActive();
+      // No decimal score reels. Some original tables render their score as a custom
+      // character/segment display (a bank of single-wheel image-grid reels sharing a
+      // font strip). Composite that; otherwise drop the channel so the ScoreView
+      // shows the real PinMAME display (solid-state tables whose DispReels are just
+      // status flags). The reel image stays a LAST-RESORT source: ScoreView::Select
+      // demotes it below any fully-matched real display, so a table that DOES have a
+      // PinMAME segment/DMD display (e.g. Ali) is never hijacked by this composite.
+      const std::vector<int> cells = reel::ClassifyCharDisplay(inputs);
+      if (cells.empty())
+      {
+         ClearActive();
+         return;
+      }
+      // Rebuild only when a displayed glyph or visibility changes.
+      uint64_t csig = 1469598103934665603ull;
+      const auto cmix = [&csig](long v) {
+         uint64_t x = (uint64_t)(v + 1);
+         for (int b = 0; b < 8; ++b) { csig ^= (x & 0xFF); csig *= 1099511628211ull; x >>= 8; }
+      };
+      for (int idx : cells)
+      {
+         cmix(reels[idx]->GetCurrentValue());
+         cmix(reels[idx]->m_d.m_visible ? 1 : 0);
+      }
+      if (m_haveImage && m_haveSig && csig == m_lastSig)
+         return;
+      if (!CompositeCharDisplay(reels, cells))
+      {
+         ClearActive();
+         return;
+      }
+      m_lastSig = csig;
+      m_haveSig = true;
       return;
    }
 
@@ -562,6 +595,71 @@ int ReelDmd::DrawLabel(const char* s, int x, int y, int glyphH, uint8_t r, uint8
       }
    }
    return lb->w;
+}
+
+bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const std::vector<int>& cells)
+{
+   if (cells.empty())
+      return false;
+
+   // Authored-position rects (one wheel each). PlaceReels culls off-canvas HUD
+   // duplicates and returns the bounding box of the on-glass cells.
+   std::vector<reel::ReelRect> rects;
+   rects.reserve(cells.size());
+   for (int j = 0; j < (int)cells.size(); ++j)
+   {
+      DispReel* const r = reels[cells[j]];
+      reel::ReelRect rect;
+      rect.index = j;
+      rect.x = r->m_d.m_v1.x;
+      rect.y = r->m_d.m_v1.y;
+      rect.w = (r->m_d.m_width > 0.0f) ? r->m_d.m_width : 1.0f;
+      rect.h = (r->m_d.m_height > 0.0f) ? r->m_d.m_height : 1.0f;
+      rect.visible = r->m_d.m_visible;
+      rects.push_back(rect);
+   }
+
+   constexpr float kMargin = 150.0f;
+   reel::ReelLayout layout = reel::PlaceReels(rects, (float)EDITOR_BG_WIDTH, (float)EDITOR_BG_HEIGHT, kMargin, /*requireVisible*/ false);
+   if (layout.placed.empty() || layout.w <= 0.0f || layout.h <= 0.0f)
+      return false;
+
+   // Output sized to the authored display's aspect, width capped so the panel
+   // texture stays small. Height follows the authored bounding-box ratio.
+   constexpr int kOutW = 512;
+   const int outW = kOutW;
+   int outH = (int)((layout.h / layout.w) * (float)kOutW + 0.5f);
+   if (outH < 1) outH = 1;
+   m_outW = outW;
+   m_outH = outH;
+   m_scratch.assign((size_t)outW * outH * 4, 0);
+   FillSurroundPanel(outW, outH);
+
+   const float sx = (float)outW / layout.w;
+   const float sy = (float)outH / layout.h;
+   bool anyDrawn = false;
+   for (const reel::PlacedReel& pr : layout.placed)
+   {
+      DispReel* const r = reels[cells[pr.index]];
+      ReelStrip strip;
+      if (!LoadStrip(r, strip))
+         continue;
+      const int dstX = (int)((pr.x - layout.x) * sx + 0.5f);
+      const int dstY = (int)((pr.y - layout.y) * sy + 0.5f);
+      int dstW = (int)(pr.w * sx + 0.5f);
+      int dstH = (int)(pr.h * sy + 0.5f);
+      if (dstW < 1) dstW = 1;
+      if (dstH < 1) dstH = 1;
+      // One wheel, one glyph: BlitReelCells draws this reel's current cell index.
+      BlitReelCells(strip, r, /*startReel*/ 0, /*count*/ 1, dstX, dstY, dstW, dstH);
+      anyDrawn = true;
+   }
+   if (!anyDrawn)
+      return false;
+
+   SetReelImage(outW, outH, m_scratch.data());
+   m_haveImage = true;
+   return true;
 }
 
 // The unified composite. Every table renders here: player score reels in a

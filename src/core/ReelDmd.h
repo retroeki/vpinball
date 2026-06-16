@@ -91,6 +91,11 @@ private:
    // right. Returns false if its strip is unusable.
    bool Composite(DispReel* reel);
 
+   // Composite a custom character/segment display: place each cell at its authored
+   // backglass position (faithful layout) and blit its current glyph. `cells` are
+   // indices into `reels` (from reel::ClassifyCharDisplay). Pushes via SetReelImage.
+   bool CompositeCharDisplay(const std::vector<DispReel*>& reels, const std::vector<int>& cells);
+
    // Fill m_scratch (sized w*h*4 RGBA) with the surround panel: a subtle vertical
    // gradient at a semi-transparent alpha plus a 1px bevel frame. Digits are blitted
    // opaque on top; the table shows through the translucent surround on screen.
