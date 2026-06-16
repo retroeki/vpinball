@@ -18,6 +18,11 @@ static std::string ToLower(const std::string& s)
    return r;
 }
 
+static bool Has(const std::string& haystack, const char* needle)
+{
+   return haystack.find(needle) != std::string::npos;
+}
+
 bool IsScoreReel(const ReelInput& r)
 {
    // Two-or-more decimal (0-9) digit wheels, backed by a drawable strip image.
@@ -27,87 +32,94 @@ bool IsScoreReel(const ReelInput& r)
    return r.reelCount >= 2 && r.digitRange == 9 && r.hasImage;
 }
 
+ReelRole ClassifyRole(const ReelInput& r)
+{
+   if (!r.hasImage)
+      return ReelRole::Ignore; // nothing to draw
+
+   const std::string nm = ToLower(r.name);
+
+   // Multi-wheel numeric reels are player scores - unless named as a high-score
+   // readout (those are static records, not a live player's score).
+   if (IsScoreReel(r))
+      return (Has(nm, "high") || Has(nm, "hscore")) ? ReelRole::Ignore : ReelRole::Score;
+
+   // From here, single (or non-9) wheels: only the auxiliary readouts are kept.
+   if (r.reelCount != 1)
+      return ReelRole::Ignore;
+
+   const std::string img = ToLower(r.image);
+   const std::string s = nm + " " + img;
+
+   // Player-up lamp (which player is currently at bat): kept as STATE only - the
+   // renderer highlights that player's score row - so it is recognised before the
+   // exclusions and never drawn as a number. (numplayer / canplay stay excluded.)
+   if (Has(nm, "playerup") || Has(nm, "player up")
+      || Has(nm, "p1up") || Has(nm, "p2up") || Has(nm, "p3up") || Has(nm, "p4up"))
+      return ReelRole::CurrentPlayer;
+
+   // Exclude obvious non-readout single reels first (so e.g. a status lamp that
+   // happens to reuse a ball-in-play image is not misread as ball-in-play).
+   if (Has(nm, "tilt") || Has(nm, "gameover") || Has(nm, "game_over") || Has(nm, "game-over")
+      || Has(nm, "shootagain") || Has(nm, "shoot again")
+      || Has(nm, "canplay") || Has(nm, "numplayer") || Has(nm, "thermo") || Has(nm, "match")
+      || Has(nm, "card") || Has(nm, "lastball") || Has(nm, "door") || Has(nm, "horse") || Has(nm, "hat")
+      || Has(nm, "reel1000") || Has(nm, "scores") || Has(nm, "high") || Has(nm, "hscore"))
+      return ReelRole::Ignore;
+
+   // Overflow / 100K rollover carry digit.
+   if (Has(s, "100k") || Has(s, "100000") || Has(s, "1000k") || Has(s, "rollover")
+      || Has(s, "k100") || Has(s, "million") || Has(s, "10m"))
+      return ReelRole::Overflow;
+
+   // Credit readout (name or a credit-wheel image).
+   if (Has(nm, "credit") || Has(img, "credit"))
+      return ReelRole::Credit;
+
+   // Ball-in-play readout.
+   if (Has(nm, "ballinplay") || Has(nm, "ball in play") || Has(nm, "ball_in_play")
+      || Has(nm, "inplay") || nm.compare(0, 3, "bip") == 0 || Has(nm, "bipreel"))
+      return ReelRole::BallInPlay;
+
+   return ReelRole::Ignore;
+}
+
 ReelPlan ClassifyReels(const std::vector<ReelInput>& reels)
 {
    ReelPlan plan;
-
    const int n = (int)reels.size();
+   plan.roles.resize(n, ReelRole::Ignore);
 
-   // Map the exact (case-insensitive) Gottlieb 4-player names to roles.
-   int gScore[4] = { -1, -1, -1, -1 };
-   int gK100[4] = { -1, -1, -1, -1 };
-   int gBip = -1, gCredit = -1;
    for (int i = 0; i < n; ++i)
    {
-      const std::string nm = ToLower(reels[i].name);
-      if (nm == "scorereel1")      gScore[0] = i;
-      else if (nm == "scorereel2") gScore[1] = i;
-      else if (nm == "scorereel3") gScore[2] = i;
-      else if (nm == "scorereel4") gScore[3] = i;
-      else if (nm == "reel100k1")  gK100[0] = i;
-      else if (nm == "reel100k2")  gK100[1] = i;
-      else if (nm == "reel100k3")  gK100[2] = i;
-      else if (nm == "reel100k4")  gK100[3] = i;
-      else if (nm == "bipreel")    gBip = i;
-      else if (nm == "credittxt")  gCredit = i;
-   }
-
-   // Collect numeric score reels (the name-independent signal).
-   std::vector<int> scoreReels;
-   scoreReels.reserve(n);
-   for (int i = 0; i < n; ++i)
-      if (IsScoreReel(reels[i]))
-         scoreReels.push_back(i);
-
-   // Gottlieb path: the curated 2x2 backglass is for genuine multi-player layouts.
-   // Require at least two ScoreReelN present (a lone ScoreReel1 is a single score,
-   // better shown by the generic active-scorer path) and at least one of them an
-   // actual numeric score reel (guards a decorative part that carries the name).
-   int gottliebScoreCount = 0;
-   bool gottliebHasNumeric = false;
-   for (int p = 0; p < 4; ++p)
-      if (gScore[p] >= 0)
+      const ReelRole role = ClassifyRole(reels[i]);
+      plan.roles[i] = role;
+      switch (role)
       {
-         ++gottliebScoreCount;
-         if (IsScoreReel(reels[gScore[p]]))
-            gottliebHasNumeric = true;
+      case ReelRole::Score:         plan.scoreReels.push_back(i); break;
+      case ReelRole::Overflow:      plan.overflowReels.push_back(i); break;
+      case ReelRole::Credit:        plan.creditReels.push_back(i); break;
+      case ReelRole::BallInPlay:    plan.bipReels.push_back(i); break;
+      case ReelRole::CurrentPlayer: plan.playerUpReels.push_back(i); break;
+      default: break;
       }
-   const bool gottliebUsable = (gottliebScoreCount >= 2) && gottliebHasNumeric;
-
-   if (gottliebUsable)
-   {
-      plan.activate = true;
-      plan.mode = ReelMode::Gottlieb4Player;
-      for (int p = 0; p < 4; ++p) { plan.score[p] = gScore[p]; plan.k100[p] = gK100[p]; }
-      plan.bip = gBip;
-      plan.credit = gCredit;
-      return plan;
    }
 
-   if (!scoreReels.empty())
+   plan.activate = !plan.scoreReels.empty();
+   if (plan.activate)
    {
-      plan.activate = true;
-      plan.mode = ReelMode::GenericActiveScore;
-      plan.scoreReels = scoreReels; // every numeric score reel (renderer places the visible ones)
-      // Active scorer: the reel showing the highest current value (the player in
-      // the lead), tie-broken by the most digit wheels (the main score, not a
-      // narrower sub-display), then by lowest index for stability. At game start
-      // all values are 0 so the most-wheels reel is chosen until scoring begins.
-      int best = scoreReels[0];
-      for (int idx : scoreReels)
+      // Active scorer: highest current value (the player in the lead), tie-broken
+      // by the most digit wheels (the main score), then lowest index for stability.
+      int best = plan.scoreReels[0];
+      for (int idx : plan.scoreReels)
       {
          const ReelInput& a = reels[idx];
          const ReelInput& b = reels[best];
          if (a.currentValue != b.currentValue) { if (a.currentValue > b.currentValue) best = idx; }
          else if (a.reelCount != b.reelCount)   { if (a.reelCount > b.reelCount)       best = idx; }
-         // equal value and reel count -> keep the lower index (we iterate ascending)
       }
       plan.primaryScore = best;
-      return plan;
    }
-
-   plan.activate = false;
-   plan.mode = ReelMode::None;
    return plan;
 }
 

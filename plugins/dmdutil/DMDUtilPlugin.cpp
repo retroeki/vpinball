@@ -12,10 +12,12 @@
 #include "plugins/LoggingPlugin.h"
 
 // Host reel-image channel (lib/src/VPinballLib.cpp, same statically linked
-// module; ScoreView.cpp consumes it the same way). ReelDmd
-// composites EM score-reel artwork into a tightly packed w*h*3 sRGB image;
-// returns false when no reel image is active. EM tables publish no DMD
-// display source, so this is the only way their score reaches external DMDs.
+// module; ScoreView.cpp consumes it the same way). ReelDmd composites EM
+// score-reel artwork into a tightly packed w*h*4 sRGBA image (opaque digits,
+// semi-transparent surround for the on-screen view); returns false when no reel
+// image is active. EM tables publish no DMD display source, so this is the only
+// way their score reaches external DMDs. A physical DMD is opaque, so we flatten
+// the alpha over black before streaming it.
 extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::vector<uint8_t>* out);
 
 #pragma warning(push)
@@ -185,7 +187,7 @@ static void UpdateThread()
    int lastFrameID = 0;
    uint64_t lastReelVersion = 0;
    int idleTicks = 0;
-   std::vector<uint8_t> reelImage, reelScaled;
+   std::vector<uint8_t> reelImage, reelScaled, reelFlat;
    while (isRunning && pDmd)
    {
       // Fixed update at 60 FPS
@@ -209,11 +211,22 @@ static void UpdateThread()
          uint64_t reelVersion = 0;
          if (GetReelImage(&reelW, &reelH, &reelVersion, &reelImage)
             && reelVersion != lastReelVersion && reelW > 0 && reelH > 0
-            && reelImage.size() >= (size_t)reelW * reelH * 3)
+            && reelImage.size() >= (size_t)reelW * reelH * 4)
          {
             lastReelVersion = reelVersion;
+            // RGBA -> RGB24, alpha composited over black (a physical DMD is opaque):
+            // opaque digits stay bright, the translucent surround collapses to dark.
+            const size_t px = (size_t)reelW * reelH;
+            reelFlat.resize(px * 3);
+            for (size_t i = 0; i < px; ++i)
+            {
+               const unsigned a = reelImage[i * 4 + 3];
+               reelFlat[i * 3 + 0] = (uint8_t)((reelImage[i * 4 + 0] * a) / 255);
+               reelFlat[i * 3 + 1] = (uint8_t)((reelImage[i * 4 + 1] * a) / 255);
+               reelFlat[i * 3 + 2] = (uint8_t)((reelImage[i * 4 + 2] * a) / 255);
+            }
             int outW = 0, outH = 0;
-            FitRGB24(reelImage, reelW, reelH, reelScaled, outW, outH);
+            FitRGB24(reelFlat, reelW, reelH, reelScaled, outW, outH);
             pDmd->UpdateRGB24Data(reelScaled.data(), (uint16_t)outW, (uint16_t)outH);
          }
       }

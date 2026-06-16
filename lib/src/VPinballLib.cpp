@@ -86,26 +86,31 @@ extern "C" void SetScoreViewSourceSize(int width, int height)
 }
 
 // Reel-image channel: lets ReelDmd (logic thread) hand a composited, tightly
-// packed w*h*3 sRGB image of the active table's score reels to the ScoreView
+// packed w*h*4 sRGBA image of the active table's score reels to the ScoreView
 // plugin (render thread). Mirrors the SetScoreViewSourceSize pattern above but
 // carries pixel data, so a mutex (not a plain atomic) guards the buffer. The
 // version counter lets the reader skip re-uploading an unchanged image.
+//
+// RGBA (not RGB): the score digits are opaque (a=255) while the surround panel
+// is semi-transparent, so on screen the table shows through behind the reels.
+// The physical-DMD consumer (DMDUtilPlugin) flattens the alpha over black, so a
+// real DMD/LED device still gets a clean opaque digits-on-black frame.
 static std::mutex g_reelImageMutex;
-static std::vector<uint8_t> g_reelImageRGB; // tightly packed w*h*3 sRGB
+static std::vector<uint8_t> g_reelImageRGBA; // tightly packed w*h*4 sRGBA
 static int g_reelImageW = 0, g_reelImageH = 0;
 static uint64_t g_reelImageVersion = 0; // bumped on each update (set or clear)
 
-extern "C" void SetReelImage(int width, int height, const uint8_t* rgb)
+extern "C" void SetReelImage(int width, int height, const uint8_t* rgba)
 {
    std::lock_guard<std::mutex> lk(g_reelImageMutex);
-   if (width <= 0 || height <= 0 || rgb == nullptr)
+   if (width <= 0 || height <= 0 || rgba == nullptr)
    {
       g_reelImageW = g_reelImageH = 0;
-      g_reelImageRGB.clear();
+      g_reelImageRGBA.clear();
       g_reelImageVersion++;
       return;
    }
-   g_reelImageRGB.assign(rgb, rgb + (size_t)width * height * 3);
+   g_reelImageRGBA.assign(rgba, rgba + (size_t)width * height * 4);
    g_reelImageW = width;
    g_reelImageH = height;
    g_reelImageVersion++;
@@ -127,7 +132,7 @@ extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::ve
    if (version)
       *version = g_reelImageVersion;
    if (out)
-      *out = g_reelImageRGB;
+      *out = g_reelImageRGBA;
    return true;
 }
 

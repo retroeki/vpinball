@@ -24,9 +24,10 @@
 #include <vector>
 
 using reel::ReelInput;
-using reel::ReelMode;
+using reel::ReelRole;
 using reel::ReelPlan;
 using reel::ClassifyReels;
+using reel::ClassifyRole;
 using reel::IsScoreReel;
 using reel::ReelRect;
 using reel::ReelLayout;
@@ -44,10 +45,12 @@ static int g_fail = 0;
       else { ++g_fail; std::printf("FAIL [%s:%d] %s\n", __FILE__, __LINE__, msg); } \
    } while (0)
 
-static ReelInput R(const char* name, int reelCount, int digitRange, long value = 0, bool hasImage = true)
+static ReelInput R(const char* name, int reelCount, int digitRange, long value = 0, bool hasImage = true,
+                   const char* image = "")
 {
    ReelInput r;
    r.name = name;
+   r.image = image;
    r.reelCount = reelCount;
    r.digitRange = digitRange;
    r.currentValue = value;
@@ -115,7 +118,9 @@ static const std::vector<ReelInput> FastDraw = {
 
 // Volley (Gottlieb 1976) - "EMReelN" convention, two score reels.
 static const std::vector<ReelInput> Volley = {
-   R("EMReel1", 5, 9), R("EMReel2", 6, 9), R("EMReel6", 1, 15), R("BallInPlayReel", 1, 5),
+   R("EMReel1", 5, 9), R("EMReel2", 6, 9),
+   R("EMReel6", 1, 15, 0, true, "ballycreditwheel"), // credit by image
+   R("BallInPlayReel", 1, 5),
    R("MatchReel", 1, 10), R("TiltReel", 1, 1), R("GameOverReel", 1, 1),
 };
 
@@ -173,29 +178,18 @@ static void TestIsScoreReel()
    CHECK(!IsScoreReel(R("x", 6, 9, 0, /*hasImage*/ false)), "imageless reel is NOT a score reel");
 }
 
-static void TestGottlieb(const char* label, const std::vector<ReelInput>& reels)
+// Activating table: expected score-reel count, active scorer, and role group sizes.
+static void TestActivates(const char* label, const std::vector<ReelInput>& reels,
+                          const char* expectedPrimaryName, int expectedScore,
+                          int expectedOverflow, int expectedCredit, int expectedBip)
 {
    const ReelPlan p = ClassifyReels(reels);
    CHECK(p.activate, label);
-   CHECK(p.mode == ReelMode::Gottlieb4Player, label);
-   CHECK(IEq(NameAt(reels, p.score[0]), "ScoreReel1"), label);
-   CHECK(IEq(NameAt(reels, p.score[1]), "ScoreReel2"), label);
-   CHECK(IEq(NameAt(reels, p.score[2]), "ScoreReel3"), label);
-   CHECK(IEq(NameAt(reels, p.score[3]), "ScoreReel4"), label);
-   CHECK(p.bip >= 0 && IEq(NameAt(reels, p.bip), "BIPReel"), label);
-   CHECK(p.credit >= 0 && IEq(NameAt(reels, p.credit), "Credittxt"), label);
-   CHECK(p.k100[0] >= 0 && p.k100[3] >= 0, label); // 100K reels mapped
-}
-
-static void TestGenericActivates(const char* label, const std::vector<ReelInput>& reels,
-                                 const char* expectedPrimaryName, int expectedScoreReelCount)
-{
-   const ReelPlan p = ClassifyReels(reels);
-   CHECK(p.activate, label);
-   CHECK(p.mode == ReelMode::GenericActiveScore, label);
-   CHECK(p.primaryScore >= 0, label);
-   CHECK(IEq(NameAt(reels, p.primaryScore), expectedPrimaryName), label);
-   CHECK((int)p.scoreReels.size() == expectedScoreReelCount, label);
+   CHECK(p.primaryScore >= 0 && IEq(NameAt(reels, p.primaryScore), expectedPrimaryName), label);
+   CHECK((int)p.scoreReels.size() == expectedScore, label);
+   CHECK((int)p.overflowReels.size() == expectedOverflow, label);
+   CHECK((int)p.creditReels.size() == expectedCredit, label);
+   CHECK((int)p.bipReels.size() == expectedBip, label);
    // Every reported score reel must actually be a numeric score reel.
    bool allScore = true;
    for (int idx : p.scoreReels)
@@ -208,8 +202,30 @@ static void TestInactive(const char* label, const std::vector<ReelInput>& reels)
 {
    const ReelPlan p = ClassifyReels(reels);
    CHECK(!p.activate, label);
-   CHECK(p.mode == ReelMode::None, label);
+   CHECK(p.scoreReels.empty(), label);
    CHECK(p.primaryScore < 0, label);
+}
+
+static void TestClassifyRole()
+{
+   CHECK(ClassifyRole(R("ScoreReel1", 5, 9)) == ReelRole::Score, "role: multi-wheel 0-9 -> Score");
+   CHECK(ClassifyRole(R("EMReel1", 5, 9)) == ReelRole::Score, "role: EMReel -> Score");
+   CHECK(ClassifyRole(R("HighScoreReel", 6, 9)) == ReelRole::Ignore, "role: high-score reel -> Ignore");
+   CHECK(ClassifyRole(R("EMReel5", 6, 9, 0, /*hasImage*/ false)) == ReelRole::Ignore, "role: imageless -> Ignore");
+   CHECK(ClassifyRole(R("Reel100K1", 1, 3)) == ReelRole::Overflow, "role: Reel100K -> Overflow");
+   CHECK(ClassifyRole(R("RolloverReel2", 1, 1)) == ReelRole::Overflow, "role: Rollover -> Overflow");
+   CHECK(ClassifyRole(R("Player1100K", 1, 1)) == ReelRole::Overflow, "role: PlayerN100K -> Overflow");
+   CHECK(ClassifyRole(R("Credittxt", 1, 25)) == ReelRole::Credit, "role: credit by name -> Credit");
+   CHECK(ClassifyRole(R("EMReel10", 1, 15, 0, true, "ballycreditwheel")) == ReelRole::Credit, "role: credit by image -> Credit");
+   CHECK(ClassifyRole(R("BIPReel", 1, 5)) == ReelRole::BallInPlay, "role: BIPReel -> BallInPlay");
+   CHECK(ClassifyRole(R("BallInPlayReel", 1, 5)) == ReelRole::BallInPlay, "role: BallInPlay -> BallInPlay");
+   // Player-up is its own role (state only), recognised before the ball-in-play check
+   // even when it reuses a ball-in-play image - so it is NOT misread as ball-in-play.
+   CHECK(ClassifyRole(R("PlayerUp4", 1, 1, 0, true, "hud-ballinplay")) == ReelRole::CurrentPlayer, "role: PlayerUp -> CurrentPlayer");
+   CHECK(ClassifyRole(R("TiltReel", 1, 1)) == ReelRole::Ignore, "role: tilt -> Ignore");
+   CHECK(ClassifyRole(R("GameOverReel", 1, 1)) == ReelRole::Ignore, "role: game-over -> Ignore");
+   CHECK(ClassifyRole(R("MatchReel", 1, 10)) == ReelRole::Ignore, "role: match -> Ignore");
+   CHECK(ClassifyRole(R("a0", 1, 10)) == ReelRole::Ignore, "role: segment cell -> Ignore");
 }
 
 static void TestActiveScorerSelection()
@@ -219,7 +235,7 @@ static void TestActiveScorerSelection()
       R("P1", 5, 9, 1200), R("P2", 5, 9, 9800), R("P3", 5, 9, 50),
    };
    ReelPlan p = ClassifyReels(v);
-   CHECK(p.mode == ReelMode::GenericActiveScore && IEq(NameAt(v, p.primaryScore), "P2"),
+   CHECK(p.activate && IEq(NameAt(v, p.primaryScore), "P2"),
          "active scorer = highest current value");
 
    // Tie on value -> the reel with more wheels (the main score) wins.
@@ -348,19 +364,22 @@ static void TestAssignGrid()
 int main()
 {
    TestIsScoreReel();
+   TestClassifyRole();
 
-   // Curated Gottlieb 4-player backglass (must keep working).
-   TestGottlieb("RoyalFlush gottlieb4p", RoyalFlush);
-   TestGottlieb("CardWhiz gottlieb4p", CardWhiz);
+   // One unified role-based system for every table. Counts: score, overflow, credit, ball-in-play.
+   // Royal Flush / Card Whiz now go through the SAME path (no curated names):
+   //   4 ScoreReel + 4 Reel100K(overflow) + Credittxt(credit) + BIPReel(ball).
+   // primary = active scorer; all values 0 at start so it ties to the lowest-index
+   // score reel in the fixture (RoyalFlush's first score reel is ScoreReel3).
+   TestActivates("RoyalFlush", RoyalFlush, "ScoreReel3", 4, 4, 1, 1);
+   TestActivates("CardWhiz", CardWhiz, "ScoreReel2", 4, 4, 1, 1);
 
-   // The three originally-broken EM tables + the broad EM family -> generic, active.
-   // (values all 0 at start -> most-wheels reel is the default primary)
-   TestGenericActivates("Centigrade37", Centigrade37, "ScoreReel", 1);
-   // EMReel5 (imageless) is excluded; 8 imaged player reels remain. All start at 0,
-   // so the active scorer ties to the first (lowest-index) -> EMReel1.
-   TestGenericActivates("FastDraw", FastDraw, "EMReel1", 8);
-   TestGenericActivates("Volley", Volley, "EMReel2", 2);       // EMReel1 + (off-canvas) EMReel2
-   TestGenericActivates("Nags (EM, 1 score reel among flags)", Nags, "ScoreReel1", 1);
+   // The originally-broken EM tables + the broad EM family.
+   TestActivates("Centigrade37", Centigrade37, "ScoreReel", 1, 0, 1, 1);
+   // EMReel5 (imageless) excluded; 8 imaged player reels remain.
+   TestActivates("FastDraw", FastDraw, "EMReel1", 8, 0, 1, 1);
+   TestActivates("Volley", Volley, "EMReel2", 2, 0, 1, 1);       // EMReel6 = credit (BallyCreditWheel image)
+   TestActivates("Nags (EM, 1 score reel among flags)", Nags, "ScoreReel1", 1, 0, 1, 0);
 
    // Solid-state tables: must NOT activate (real score is on PinMAME displays).
    TestInactive("MataHari (regression)", MataHari_SS);

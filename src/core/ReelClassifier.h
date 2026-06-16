@@ -20,60 +20,54 @@ namespace reel
 struct ReelInput
 {
    std::string name;       // DispReel::GetName()
+   std::string image;      // DispReel::m_szImage (image name, used for role hints)
    int reelCount = 0;      // DispReel::GetReels()  - number of digit wheels in the set
    int digitRange = 0;     // DispReel::GetRange()  - max digit per wheel (10s of EM tables: 9)
    long currentValue = 0;  // DispReel::GetCurrentValue() - 0 when only classifying (no live values)
    bool hasImage = true;   // reel has a (resolvable) strip image - imageless reels can't be drawn
 };
 
-enum class ReelMode
+// Every table is handled by ONE system: each reel is classified into a role from
+// its geometry + name + image (no per-table special-casing), and the renderer
+// shows whatever roles the table actually has - scores always, plus credit /
+// ball-in-play / overflow when present. Everything else (match, tilt, game-over,
+// player-up, high-score, card displays, ...) is ignored.
+enum class ReelRole
 {
-   None,                // no score reels -> do not activate the reel view
-   Gottlieb4Player,     // curated ScoreReel1..4 / Reel100K1..4 / BIPReel / Credittxt 2x2 backglass
-   GenericActiveScore   // any other EM table: render its active scorer (one numeric reel set)
+   Ignore,
+   Score,        // a player's score (multi-wheel 0-9, drawable)
+   Overflow,     // 100K / rollover carry digit for a score (single wheel)
+   Credit,       // credit readout
+   BallInPlay,   // ball-in-play readout
+   CurrentPlayer // player-up lamp (which player is at bat); state only, not drawn as a number
 };
 
 struct ReelPlan
 {
-   bool activate = false;
-   ReelMode mode = ReelMode::None;
-
-   // Gottlieb 4-player backglass roles. Indices into the input vector, -1 = absent.
-   int score[4] = { -1, -1, -1, -1 }; // ScoreReel1..4
-   int k100[4] = { -1, -1, -1, -1 };  // Reel100K1..4
-   int bip = -1;                      // BIPReel
-   int credit = -1;                   // Credittxt
-
-   // GenericActiveScore: all numeric score reels in the table (indices into the
-   // input vector). The renderer composites the visible ones at their real
-   // backglass positions (so a multi-player table shows every player's score),
-   // and uses primaryScore as the single-reel fallback (the active scorer) when
-   // none are currently visible / on-canvas.
-   std::vector<int> scoreReels;
-   int primaryScore = -1;
+   bool activate = false;             // true iff >=1 Score reel
+   std::vector<ReelRole> roles;       // one per input reel (parallel to the input vector)
+   std::vector<int> scoreReels;       // indices, role == Score
+   std::vector<int> overflowReels;    // indices, role == Overflow
+   std::vector<int> creditReels;      // indices, role == Credit
+   std::vector<int> bipReels;         // indices, role == BallInPlay
+   std::vector<int> playerUpReels;    // indices, role == CurrentPlayer
+   int primaryScore = -1;             // active scorer among scoreReels (single-reel fallback)
 };
 
 // True when a reel is a numeric multi-digit score reel: at least two digit wheels
 // (an EM score is never a single digit) on a 0-9 decimal strip (digitRange == 9),
-// and backed by a strip image we can actually draw.
-//
-// The reelCount/digitRange test excludes the single-digit status/auxiliary reels
-// that EM and solid-state tables also model as DispReels - ball-in-play, match,
-// tilt, game-over, player-up, credit (range 25), thermometer, and the 100K
-// overflow wheel - all of which have reelCount == 1. It is what keeps solid-state
-// tables whose DispReels are purely decorative status flags (e.g. Bally Mata Hari,
-// real score on PinMAME segment displays) from activating the reel view.
-//
-// The hasImage test excludes imageless "data" reels - e.g. Fast Draw's off-screen
-// 6-digit EMReel5, which carries a value but no resolvable strip and so cannot be
-// rendered (and must not be chosen as the reel to display).
+// and backed by a strip image we can actually draw. (High-score reels also satisfy
+// this; ClassifyRole excludes them by name so they are not shown as a live score.)
 bool IsScoreReel(const ReelInput& r);
 
-// Decide what (if anything) the reel view should render for this set of reels.
-// Name-independent: the curated Gottlieb 2x2 backglass is chosen only when two or
-// more ScoreReelN names are present (a genuine multi-player layout); every other
-// EM table with at least one numeric score reel - including a lone ScoreReel1 -
-// renders its active scorer generically.
+// Classify a single reel into its display role (see ReelRole). Name-independent
+// for scores; auxiliary roles (overflow / credit / ball-in-play) are recognised
+// from name + image, with obvious non-readout single reels (player-up, tilt,
+// game-over, match, cards, ...) excluded first.
+ReelRole ClassifyRole(const ReelInput& r);
+
+// Classify every reel, group them by role, and pick the active scorer. activate is
+// true iff the table has at least one Score reel.
 ReelPlan ClassifyReels(const std::vector<ReelInput>& reels);
 
 // --- faithful position-based layout (used by the generic render path) ---

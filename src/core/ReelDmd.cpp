@@ -8,6 +8,7 @@
 #include "parts/dispreel.h"
 #include "renderer/Texture.h"
 #include "core/ReelClassifier.h"
+#include "core/extern.h" // g_pvp (resolves the bundled-assets path for the label font)
 #include "utils/Logger.h"
 
 #include <vector>
@@ -17,10 +18,16 @@
 #include <algorithm>
 #include <utility>
 
+#ifdef __STANDALONE__
+#include <SDL3_ttf/SDL_ttf.h>
+#endif
+
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
-// Hands a tightly-packed w*h*3 sRGB image of the active score reels to the
-// ScoreView plugin's Image visual. (0,0,nullptr) clears the channel.
-extern "C" void SetReelImage(int width, int height, const uint8_t* rgb);
+// Hands a tightly-packed w*h*4 sRGBA image of the active score reels to the
+// ScoreView plugin's Image visual. Digits are opaque; the surround panel is
+// semi-transparent so the table shows through behind the reels.
+// (0,0,nullptr) clears the channel.
+extern "C" void SetReelImage(int width, int height, const uint8_t* rgba);
 
 namespace
 {
@@ -28,6 +35,19 @@ namespace
 // blows up the upload. Cells are scaled by an integer factor when the natural
 // composite would exceed this.
 constexpr int kMaxImageWidth = 1024;
+
+// Surround panel (the area behind/around the score digits): a gunmetal vertical
+// gradient with a SEMI-TRANSPARENT field, so the cabinet behind the score box
+// shows through (the renderer skips the embedded score-view's opaque black fill
+// when a reel image is active - see Renderer::ClearEmbeddedAncillaryWindow). The
+// raised bevel frame, the per-digit window borders, and the digits themselves
+// are written fully opaque (those set a=255), so the panel reads as glass-with-
+// chrome: solid frame + solid digit bezels, see-through field between them.
+constexpr uint8_t kPanelTopR = 60, kPanelTopG = 63, kPanelTopB = 72, kPanelTopA = 184; // ~72% field
+constexpr uint8_t kPanelBotR = 26, kPanelBotG = 27, kPanelBotB = 34, kPanelBotA = 204; // ~80% at base
+
+// Active-player / lit-indicator accent (app primary indigo).
+constexpr uint8_t kAccentR = 99, kAccentG = 116, kAccentB = 230;
 } // namespace
 
 ReelDmd::ReelDmd(Player* player)
@@ -57,6 +77,7 @@ static void BuildInputs(const std::vector<DispReel*>& reels, std::vector<reel::R
    {
       reel::ReelInput in;
       in.name = r->GetName();
+      in.image = r->m_d.m_szImage;
       in.reelCount = r->GetReels();
       in.digitRange = r->GetRange();
       in.currentValue = (long)r->GetCurrentValue();
@@ -124,75 +145,69 @@ void ReelDmd::Update()
       return;
    }
 
-   // Map the plan's chosen reels back to the live DispReel parts.
-   NamedReels named;
-   std::vector<DispReel*> genericScore;
-   DispReel* primary = nullptr;
-   if (plan.mode == reel::ReelMode::Gottlieb4Player)
-   {
-      for (int p = 0; p < 4; ++p)
-      {
-         if (plan.score[p] >= 0) named.score[p] = reels[plan.score[p]];
-         if (plan.k100[p] >= 0)  named.k100[p] = reels[plan.k100[p]];
-      }
-      if (plan.bip >= 0)    named.bip = reels[plan.bip];
-      if (plan.credit >= 0) named.credit = reels[plan.credit];
-   }
-   else // GenericActiveScore: place every score reel at its real backglass position
-   {
-      genericScore.reserve(plan.scoreReels.size());
-      for (int idx : plan.scoreReels)
-         if (idx >= 0 && idx < (int)reels.size())
-            genericScore.push_back(reels[idx]);
-      if (plan.primaryScore >= 0)
-         primary = reels[plan.primaryScore]; // single-reel fallback (active scorer)
-   }
-
-   // Build a combined change-signature over everything we will display, so we
-   // only rebuild the composite when a shown value actually changes.
+   // Change-signature over everything we will display (every score/overflow/credit/
+   // ball reel's value + visibility), so we only rebuild when something shown changes.
    uint64_t sig = 1469598103934665603ull; // FNV-1a basis
    const auto mix = [&sig](long v) {
       uint64_t x = (uint64_t)(v + 1); // shift past -1 sentinels
       for (int b = 0; b < 8; ++b) { sig ^= (x & 0xFF); sig *= 1099511628211ull; x >>= 8; }
    };
-
-   if (plan.mode == reel::ReelMode::Gottlieb4Player)
-   {
-      for (int p = 0; p < 4; ++p)
-      {
-         mix(named.score[p] ? named.score[p]->GetCurrentValue() : -1);
-         mix(named.k100[p] ? named.k100[p]->GetCurrentValue() : -1);
-      }
-      mix(named.bip ? named.bip->GetCurrentValue() : -1);
-      mix(named.credit ? named.credit->GetCurrentValue() : -1);
-   }
-   else
-   {
-      for (DispReel* r : genericScore)
-      {
-         mix(r->GetCurrentValue());
-         mix(r->m_d.m_visible ? 1 : 0); // lit/dim visibility swap changes what is shown
-      }
-   }
+   const auto mixReel = [&](int idx) {
+      if (idx < 0 || idx >= (int)reels.size()) { mix(-1); return; }
+      mix(reels[idx]->GetCurrentValue());
+      mix(reels[idx]->m_d.m_visible ? 1 : 0); // lit/dim visibility swap changes what is shown
+   };
+   for (int idx : plan.scoreReels)    mixReel(idx);
+   for (int idx : plan.overflowReels) mixReel(idx);
+   for (int idx : plan.creditReels)   mixReel(idx);
+   for (int idx : plan.bipReels)      mixReel(idx);
+   for (int idx : plan.playerUpReels) mixReel(idx); // rebuild when the active player changes
 
    if (m_haveImage && m_haveSig && sig == m_lastSig)
       return; // nothing displayed changed, skip rebuild
 
-   const bool built = (plan.mode == reel::ReelMode::Gottlieb4Player)
-      ? CompositeBackglass(named)
-      : (CompositeByPosition(genericScore) || (primary != nullptr && Composite(primary)));
+   const bool built = CompositeUnified(reels, plan);
    if (!built)
    {
       // No usable strip art -> drop the channel rather than show stale/blank.
       static int s_failLog = 12; // throttle: LoadStrip logs carry the real reason
-      if (s_failLog > 0) { --s_failLog; PLOGW << "[ReelDmd] build produced no image (mode=" << (int)plan.mode
-            << " scoreReels=" << plan.scoreReels.size() << " generic=" << genericScore.size() << ")"; }
+      if (s_failLog > 0) { --s_failLog; PLOGW << "[ReelDmd] build produced no image (scoreReels="
+            << plan.scoreReels.size() << ")"; }
       ClearActive();
       return;
    }
 
    m_lastSig = sig;
    m_haveSig = true;
+}
+
+void ReelDmd::FillSurroundPanel(int w, int h)
+{
+   if (w <= 0 || h <= 0 || m_scratch.size() < (size_t)w * h * 4)
+      return;
+   // Vertical gradient at a semi-transparent alpha (top lighter, base a touch
+   // darker and more opaque).
+   for (int y = 0; y < h; ++y)
+   {
+      const float t = (h > 1) ? (float)y / (float)(h - 1) : 0.0f;
+      const uint8_t r = (uint8_t)(kPanelTopR + ((int)kPanelBotR - (int)kPanelTopR) * t + 0.5f);
+      const uint8_t g = (uint8_t)(kPanelTopG + ((int)kPanelBotG - (int)kPanelTopG) * t + 0.5f);
+      const uint8_t b = (uint8_t)(kPanelTopB + ((int)kPanelBotB - (int)kPanelTopB) * t + 0.5f);
+      const uint8_t a = (uint8_t)(kPanelTopA + ((int)kPanelBotA - (int)kPanelTopA) * t + 0.5f);
+      uint8_t* const row = m_scratch.data() + (size_t)y * w * 4;
+      for (int x = 0; x < w; ++x) { row[x * 4] = r; row[x * 4 + 1] = g; row[x * 4 + 2] = b; row[x * 4 + 3] = a; }
+   }
+   // Raised 2px beveled metal frame: bright highlight on the top/left edges, dark
+   // shadow on the bottom/right, so the panel reads as a raised piece of hardware.
+   const auto edge = [this, w, h](int x, int y, int dRGB) {
+      if (x < 0 || x >= w || y < 0 || y >= h)
+         return;
+      uint8_t* const p = m_scratch.data() + ((size_t)y * w + x) * 4;
+      for (int c = 0; c < 3; ++c) { const int v = (int)p[c] + dRGB; p[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+      p[3] = 255;
+   };
+   for (int x = 0; x < w; ++x) { edge(x, 0, +46); edge(x, 1, +24); edge(x, h - 2, -16); edge(x, h - 1, -30); }
+   for (int y = 0; y < h; ++y) { edge(0, y, +46); edge(1, y, +24); edge(w - 2, y, -16); edge(w - 1, y, -30); }
 }
 
 void ReelDmd::ClearActive()
@@ -299,275 +314,348 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
    return true;
 }
 
+// Draw one digit cell (cellIndex into the strip) stretched to FILL dstCellW x
+// dstCellH at (boxX, boxY), plus the recessed-window border. Stretching matches
+// the engine (DispReel maps the whole source cell onto a quad sized from the
+// reel's authored width:height), so the on-glass digit aspect is the AUTHORED
+// aspect, not the strip image's native cell aspect.
+void ReelDmd::DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int boxY, int cellW, int cellH)
+{
+   if (!strip.ok || cellW <= 0 || cellH <= 0)
+      return;
+   const int srcCW = strip.cellW, srcCH = strip.cellH;
+   const int gc = (strip.gridCols > 0) ? (cellIndex % strip.gridCols) : 0;
+   const int gr = (strip.gridCols > 0) ? (cellIndex / strip.gridCols) : 0;
+   const int srcCellX = gc * strip.cellW, srcCellY = gr * strip.cellH;
+
+   for (int y = 0; y < cellH; ++y)
+   {
+      const int dy = boxY + y;
+      if (dy < 0 || dy >= m_outH) continue;
+      const int sy = srcCellY + (cellH > 1 ? (y * (srcCH - 1)) / (cellH - 1) : 0);
+      if (sy < 0 || sy >= strip.imgH) continue;
+      const uint8_t* const srow = strip.src + (size_t)sy * strip.srcPitch;
+      for (int x = 0; x < cellW; ++x)
+      {
+         const int dx = boxX + x;
+         if (dx < 0 || dx >= m_outW) continue;
+         const int sx = srcCellX + (cellW > 1 ? (x * (srcCW - 1)) / (cellW - 1) : 0);
+         if (sx < 0 || sx >= strip.imgW) continue;
+         const uint8_t* const sp = srow + (size_t)sx * 3;
+         uint8_t* const dp = m_scratch.data() + ((size_t)dy * m_outW + dx) * 4;
+         dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+         dp[3] = 255; // digits are fully opaque (the surround carries the alpha)
+      }
+   }
+
+   // Recessed-window edge: top/left darkened (shadow), bottom/right lightened.
+   const auto shade = [this](int x, int y, int delta) {
+      if (x < 0 || x >= m_outW || y < 0 || y >= m_outH) return;
+      uint8_t* const p = m_scratch.data() + ((size_t)y * m_outW + x) * 4;
+      for (int c = 0; c < 3; ++c) { const int v = (int)p[c] + delta; p[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+      p[3] = 255;
+   };
+   const int x0 = boxX, y0 = boxY, x1 = boxX + cellW - 1, y1 = boxY + cellH - 1;
+   for (int x = x0; x <= x1; ++x) { shade(x, y0, -66); shade(x, y1, +32); }
+   for (int y = y0; y <= y1; ++y) { shade(x0, y, -66); shade(x1, y, +32); }
+}
+
 // Blit `count` of the reel's current digit cells (starting at reel index
-// startReel) into m_scratch, nearest-neighbor scaled to dstCellW x dstCellH,
-// packed left to right starting at pixel (dstX, dstY). Returns the destination x
-// just past the last cell drawn.
+// startReel), packed left to right from (dstX, dstY). Returns the dest x past the
+// last cell. (Reads the reel's own digits; used for the real score reels.)
 int ReelDmd::BlitReelCells(const ReelStrip& strip, DispReel* reel, int startReel, int count,
                            int dstX, int dstY, int dstCellW, int dstCellH)
 {
    if (!strip.ok || reel == nullptr || dstCellW <= 0 || dstCellH <= 0)
       return dstX;
-
    const int dr = (reel->m_d.m_digitrange > 0) ? reel->m_d.m_digitrange : 0;
-
-   // Each glyph is drawn aspect-preserving (contain-fit) and centered within its
-   // dstCellW x dstCellH box. Reel strips differ wildly in cell aspect (the main
-   // gottlieb digit is tall, the 100K/credit glyphs are wide/short), so a plain
-   // stretch would badly distort them; contain-fit keeps each glyph true.
-   const int srcCW = strip.cellW;
-   const int srcCH = strip.cellH;
-   // Fit srcCW:srcCH inside dstCellW:dstCellH.
-   int drawW = dstCellW;
-   int drawH = (srcCW > 0) ? (int)((int64_t)dstCellW * srcCH / srcCW) : dstCellH;
-   if (drawH > dstCellH)
-   {
-      drawH = dstCellH;
-      drawW = (srcCH > 0) ? (int)((int64_t)dstCellH * srcCW / srcCH) : dstCellW;
-   }
-   drawW = std::max(1, std::min(drawW, dstCellW));
-   drawH = std::max(1, std::min(drawH, dstCellH));
-   const int padX = (dstCellW - drawW) / 2;
-   const int padY = (dstCellH - drawH) / 2;
-
    for (int i = 0; i < count; ++i)
    {
-      const int reelIdx = startReel + i;
-      const int digit = reel->GetReelDigit(reelIdx);
+      const int digit = reel->GetReelDigit(startReel + i);
       const int cellIndex = (digit >= 0 && digit <= dr) ? digit : 0;
-      const int gc = (strip.gridCols > 0) ? (cellIndex % strip.gridCols) : 0;
-      const int gr = (strip.gridCols > 0) ? (cellIndex / strip.gridCols) : 0;
-      const int srcCellX = gc * strip.cellW; // top-left of source cell, in source px
-      const int srcCellY = gr * strip.cellH;
-      const int boxX = dstX + i * dstCellW;
-
-      for (int y = 0; y < drawH; ++y)
-      {
-         const int dy = dstY + padY + y;
-         if (dy < 0 || dy >= m_outH)
-            continue;
-         // Nearest-neighbor source row within the source cell.
-         const int sy = srcCellY + (drawH > 1 ? (y * (srcCH - 1)) / (drawH - 1) : 0);
-         if (sy < 0 || sy >= strip.imgH)
-            continue;
-         const uint8_t* const srow = strip.src + (size_t)sy * strip.srcPitch;
-         for (int x = 0; x < drawW; ++x)
-         {
-            const int dx = boxX + padX + x;
-            if (dx < 0 || dx >= m_outW)
-               continue;
-            const int sx = srcCellX + (drawW > 1 ? (x * (srcCW - 1)) / (drawW - 1) : 0);
-            if (sx < 0 || sx >= strip.imgW)
-               continue;
-            const uint8_t* const sp = srow + (size_t)sx * 3;
-            uint8_t* const dp = m_scratch.data() + ((size_t)dy * m_outW + dx) * 3;
-            dp[0] = sp[0];
-            dp[1] = sp[1];
-            dp[2] = sp[2];
-         }
-      }
+      DrawDigitCell(strip, cellIndex, dstX + i * dstCellW, dstY, dstCellW, dstCellH);
    }
    return dstX + count * dstCellW;
 }
 
-// Build the full 2x2 backglass composite: four player score cells (each folding
-// in its Reel100K overflow digit) in a 2x2 grid, plus a centered ball-in-play /
-// credit row underneath.
-bool ReelDmd::CompositeBackglass(const NamedReels& named)
+// Render `value` as `count` right-aligned digits using `strip`'s 0-9 cells, so an
+// aux value (ball / credit / overflow carry) renders in the clean score font
+// instead of the table's backglass aux graphic.
+void ReelDmd::BlitValue(const ReelStrip& strip, long value, int count, int dstX, int dstY, int cellW, int cellH)
 {
-   // The main score strip drives the base cell geometry; find any present score
-   // reel to anchor it.
-   ReelStrip scoreStrip[4];
-   DispReel* anchorScore = nullptr;
-   for (int p = 0; p < 4; ++p)
+   if (!strip.ok || value < 0 || count <= 0)
+      return;
+   long pow10 = 1;
+   for (int i = 1; i < count; ++i) pow10 *= 10;
+   for (int i = 0; i < count; ++i)
    {
-      if (named.score[p] != nullptr && LoadStrip(named.score[p], scoreStrip[p]))
-      {
-         if (anchorScore == nullptr)
-            anchorScore = named.score[p];
-      }
+      const int digit = (int)((value / pow10) % 10);
+      DrawDigitCell(strip, digit, dstX + i * cellW, dstY, cellW, cellH);
+      pow10 /= (pow10 > 1) ? 10 : 1;
    }
-   if (anchorScore == nullptr)
-      return false; // no usable main score art
-
-   // Base cell from the first usable score strip. All other reels' cells are
-   // scaled to this cell height so glyphs line up; cell width keeps each strip's
-   // own cell aspect.
-   ReelStrip anchorStrip;
-   if (!LoadStrip(anchorScore, anchorStrip))
-      return false;
-
-   // Integer downscale so the whole composite stays within kMaxImageWidth. The
-   // widest element is the player grid: 2 columns, each up to (1 + maxScoreReels)
-   // base-width cells, plus a column gap.
-   int maxScoreReels = 0;
-   for (int p = 0; p < 4; ++p)
-      if (named.score[p] != nullptr)
-         maxScoreReels = std::max(maxScoreReels, named.score[p]->GetReels());
-   if (maxScoreReels <= 0)
-      return false;
-   const bool anyK100 = named.k100[0] || named.k100[1] || named.k100[2] || named.k100[3];
-   const int maxCellsPerCol = (anyK100 ? 1 : 0) + maxScoreReels;
-
-   int down = 1;
-   while ((2 * maxCellsPerCol * anchorStrip.cellW) / down > kMaxImageWidth)
-      ++down;
-
-   // Uniform digit-box geometry. Every score / 100K digit occupies one
-   // baseCellW x baseCellH box; BlitReelCells contain-fits each glyph inside it
-   // (so the wide 100K glyph and the tall main digits each render true, just
-   // centered in a common box). This keeps the four player columns aligned.
-   const int baseCellW = std::max(1, anchorStrip.cellW / down);
-   const int baseCellH = std::max(1, anchorStrip.cellH / down);
-
-   // Each player column is (optional 100K box) + maxScoreReels boxes wide, so
-   // every column has the same width and the ones-place lines up across players.
-   ReelStrip k100Strip[4];
-   int scoreReels[4] = { 0, 0, 0, 0 };
-   bool playerHas[4] = { false, false, false, false };
-   bool k100Has[4] = { false, false, false, false };
-   for (int p = 0; p < 4; ++p)
-   {
-      if (named.score[p] == nullptr || !scoreStrip[p].ok)
-         continue;
-      playerHas[p] = true;
-      scoreReels[p] = named.score[p]->GetReels();
-      if (named.k100[p] != nullptr && LoadStrip(named.k100[p], k100Strip[p]))
-         k100Has[p] = true;
-   }
-
-   const int gap = std::max(2, baseCellH / 8);                  // gap between grid cells
-   const int colCells = maxCellsPerCol;                         // boxes per column
-   const int colW = colCells * baseCellW;
-   const int rowH = baseCellH;
-   const int gridW = 2 * colW + gap;
-   const int gridH = 2 * rowH + gap;
-
-   // Ball-in-play / credit row, smaller (~0.7x base box), centered beneath grid.
-   ReelStrip bipStrip, creditStrip;
-   const bool haveBip = (named.bip != nullptr) && LoadStrip(named.bip, bipStrip);
-   const bool haveCredit = (named.credit != nullptr) && LoadStrip(named.credit, creditStrip);
-   const int smallCellH = std::max(1, (baseCellH * 7) / 10);
-   const int smallCellW = std::max(1, (baseCellW * 7) / 10);
-   const int bipReels = haveBip ? named.bip->GetReels() : 0;
-   const int creditReels = haveCredit ? named.credit->GetReels() : 0;
-   const int rowSpacer = (haveBip && haveCredit) ? baseCellW : 0; // gap between the two readouts
-   const int bipRowW = (bipReels + creditReels) * smallCellW + rowSpacer;
-   const int bipRowH = (haveBip || haveCredit) ? smallCellH : 0;
-   const int rowGap = (bipRowH > 0) ? gap : 0;
-
-   // Final composite extents (no outer margin; the box's Fit:Contain centers it).
-   const int outW = std::max(gridW, bipRowW);
-   const int outH = gridH + rowGap + bipRowH;
-   if (outW <= 0 || outH <= 0)
-      return false;
-
-   m_outW = outW;
-   m_outH = outH;
-   m_scratch.assign((size_t)outW * outH * 3, 0);
-
-   // Grid cell origins: SR1 top-left, SR2 top-right, SR3 bottom-left, SR4 bottom-right.
-   const int cellX[4] = { 0, colW + gap, 0, colW + gap };
-   const int cellY[4] = { 0, 0, rowH + gap, rowH + gap };
-
-   for (int p = 0; p < 4; ++p)
-   {
-      if (!playerHas[p])
-         continue;
-      // Right-align the player's boxes within the uniform column so scores of
-      // differing reel counts share the ones-place column. Content boxes =
-      // (this player's 100K box, if any) + this player's score reels.
-      const int contentBoxes = (k100Has[p] ? 1 : 0) + scoreReels[p];
-      int dx = cellX[p] + (colCells - contentBoxes) * baseCellW; // right-align
-      const int dy = cellY[p];
-      if (k100Has[p])
-         dx = BlitReelCells(k100Strip[p], named.k100[p], 0, named.k100[p]->GetReels(), dx, dy, baseCellW, rowH);
-      BlitReelCells(scoreStrip[p], named.score[p], 0, scoreReels[p], dx, dy, baseCellW, rowH);
-   }
-
-   // BIP / credit row, centered horizontally beneath the grid.
-   if (bipRowH > 0)
-   {
-      const int rowY = gridH + rowGap;
-      int dx = (outW - bipRowW) / 2;
-      if (dx < 0)
-         dx = 0;
-      if (haveBip)
-         dx = BlitReelCells(bipStrip, named.bip, 0, bipReels, dx, rowY, smallCellW, smallCellH);
-      if (haveBip && haveCredit)
-         dx += rowSpacer;
-      if (haveCredit)
-         BlitReelCells(creditStrip, named.credit, 0, creditReels, dx, rowY, smallCellW, smallCellH);
-   }
-
-   SetReelImage(outW, outH, m_scratch.data());
-   m_haveImage = true;
-   return true;
 }
 
-// Faithful multi-reel composite: place each visible, on-backglass score reel at
-// its real backglass position so the box mirrors the table's EM head (a 4-player
-// 2x2, a single score, whatever the table actually shows). Naming-independent;
-// honoring each reel's live visibility resolves the dim/lit overlapping reel pairs
-// that 4-player EM recreations use (only the shown reel is drawn).
-//
-// Reel positions/sizes are in the editor canvas space (EDITOR_BG_WIDTH x
-// EDITOR_BG_HEIGHT), the same coordinates DispReel::Render uses.
-bool ReelDmd::CompositeByPosition(const std::vector<DispReel*>& scoreReels)
+// Multiply the RGB of pixels in the rect toward black by pct% (dim inactive rows).
+void ReelDmd::DimRect(int x, int y, int w, int h, int pct)
 {
-   if (scoreReels.empty())
+   const int keep = std::max(0, 100 - pct);
+   for (int yy = y; yy < y + h; ++yy)
+   {
+      if (yy < 0 || yy >= m_outH) continue;
+      for (int xx = x; xx < x + w; ++xx)
+      {
+         if (xx < 0 || xx >= m_outW) continue;
+         uint8_t* const p = m_scratch.data() + ((size_t)yy * m_outW + xx) * 4;
+         p[0] = (uint8_t)((int)p[0] * keep / 100);
+         p[1] = (uint8_t)((int)p[1] * keep / 100);
+         p[2] = (uint8_t)((int)p[2] * keep / 100);
+      }
+   }
+}
+
+// Soft glow frame in (r,g,b) around the rect: bright inner edge + outward falloff.
+void ReelDmd::DrawGlow(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b)
+{
+   const int thick = std::max(2, h / 12);
+   const auto blend = [this, r, g, b](int px, int py, float a) {
+      if (px < 0 || px >= m_outW || py < 0 || py >= m_outH || a <= 0.f) return;
+      if (a > 1.f) a = 1.f;
+      uint8_t* const p = m_scratch.data() + ((size_t)py * m_outW + px) * 4;
+      p[0] = (uint8_t)(p[0] * (1.f - a) + r * a);
+      p[1] = (uint8_t)(p[1] * (1.f - a) + g * a);
+      p[2] = (uint8_t)(p[2] * (1.f - a) + b * a);
+      const int av = (int)p[3] + (int)(a * 200.f); p[3] = (uint8_t)(av > 255 ? 255 : av);
+   };
+   // Outward falloff rings around the rect border.
+   for (int t = 1; t <= thick; ++t)
+   {
+      const float a = 0.55f * (1.f - (float)(t - 1) / (float)thick);
+      for (int xx = x - t; xx <= x + w - 1 + t; ++xx) { blend(xx, y - t, a); blend(xx, y + h - 1 + t, a); }
+      for (int yy = y - t; yy <= y + h - 1 + t; ++yy) { blend(x - t, yy, a); blend(x + w - 1 + t, yy, a); }
+   }
+   // Bright inner 1px edge.
+   for (int xx = x; xx < x + w; ++xx) { blend(xx, y, 0.8f); blend(xx, y + h - 1, 0.8f); }
+   for (int yy = y; yy < y + h; ++yy) { blend(x, yy, 0.8f); blend(x + w - 1, yy, 0.8f); }
+}
+
+// Procedural indicator icon centred at (cx,cy): metallic pinball or silver coin.
+void ReelDmd::DrawIconDisc(int cx, int cy, int radius, bool coin)
+{
+   if (radius <= 0) return;
+   const int r2 = radius * radius;
+   for (int yy = -radius; yy <= radius; ++yy)
+   {
+      const int py = cy + yy;
+      if (py < 0 || py >= m_outH) continue;
+      for (int xx = -radius; xx <= radius; ++xx)
+      {
+         const int d2 = xx * xx + yy * yy;
+         if (d2 > r2) continue;
+         const int px = cx + xx;
+         if (px < 0 || px >= m_outW) continue;
+         // Radial shade: bright highlight toward top-left, darker toward edge.
+         const float nd = (float)d2 / (float)r2;             // 0 center -> 1 edge
+         const float hl = (float)(-xx - yy) / (float)(2 * radius) + 0.5f; // top-left bias
+         int base = coin ? 150 : 205;
+         int v = (int)(base * (1.10f - 0.55f * nd) * (0.78f + 0.32f * hl));
+         v = v < 30 ? 30 : (v > 255 ? 255 : v);
+         uint8_t cr = (uint8_t)v, cg = (uint8_t)v, cb = (uint8_t)v;
+         if (coin) { cb = (uint8_t)(v * 0.92f); } // faint cool tint so it reads as a coin
+         // Edge ring darkening for both; coin gets a thin inner rim.
+         if (nd > 0.82f) { cr = (uint8_t)(cr * 0.5f); cg = (uint8_t)(cg * 0.5f); cb = (uint8_t)(cb * 0.5f); }
+         else if (coin && nd > 0.60f && nd < 0.72f) { cr = (uint8_t)(cr * 0.7f); cg = (uint8_t)(cg * 0.7f); cb = (uint8_t)(cb * 0.7f); }
+         uint8_t* const p = m_scratch.data() + ((size_t)py * m_outW + px) * 4;
+         p[0] = cr; p[1] = cg; p[2] = cb; p[3] = 255;
+      }
+   }
+}
+
+// Rasterize a label string with the bundled era serif (TeX Gyre Bonum) via SDL_ttf
+// once per (text, height), caching the glyph-coverage (alpha) bitmap. The font is
+// opened lazily and kept for the session (intentionally not closed - avoids any
+// SDL_ttf teardown-order issues; the process is killed on table close).
+const ReelDmd::LabelBitmap* ReelDmd::GetLabelBitmap(const char* s, int glyphH) const
+{
+#ifdef __STANDALONE__
+   if (s == nullptr) return nullptr;
+   if (glyphH < 6) glyphH = 6;
+   const std::string key = std::string(s) + ":" + std::to_string(glyphH);
+   const auto it = m_labelCache.find(key);
+   if (it != m_labelCache.end())
+      return &it->second;
+
+   if (!m_labelFontTried)
+   {
+      m_labelFontTried = true;
+      TTF_Init(); // refcounted / idempotent (the engine may already have inited it)
+      if (g_pvp != nullptr)
+      {
+         const std::string path = g_pvp->m_myPath + "assets" + PATH_SEPARATOR_CHAR + "TeXGyreBonum-Regular.otf";
+         m_labelFont = TTF_OpenFont(path.c_str(), (float)glyphH);
+         if (m_labelFont == nullptr)
+            PLOGW << "[ReelDmd] label font load failed: " << path;
+      }
+   }
+
+   LabelBitmap lb;
+   TTF_Font* const font = static_cast<TTF_Font*>(m_labelFont);
+   if (font != nullptr)
+   {
+      TTF_SetFontSize(font, (float)glyphH);
+      const SDL_Color white = { 255, 255, 255, 255 };
+      SDL_Surface* const surf = TTF_RenderText_Blended(font, s, strlen(s), white);
+      if (surf != nullptr)
+      {
+         SDL_Surface* const rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
+         SDL_DestroySurface(surf);
+         if (rgba != nullptr)
+         {
+            lb.w = rgba->w;
+            lb.h = rgba->h;
+            lb.cov.resize((size_t)lb.w * lb.h, 0);
+            const uint8_t* const px = static_cast<const uint8_t*>(rgba->pixels);
+            for (int yy = 0; yy < lb.h; ++yy)
+               for (int xx = 0; xx < lb.w; ++xx)
+                  lb.cov[(size_t)yy * lb.w + xx] = px[(size_t)yy * rgba->pitch + xx * 4 + 3]; // alpha = coverage
+            SDL_DestroySurface(rgba);
+         }
+      }
+   }
+   const auto res = m_labelCache.emplace(key, std::move(lb));
+   return &res.first->second;
+#else
+   (void)s; (void)glyphH;
+   return nullptr;
+#endif
+}
+
+int ReelDmd::TextWidth(const char* s, int glyphH) const
+{
+   const LabelBitmap* const lb = GetLabelBitmap(s, glyphH);
+   return (lb != nullptr) ? lb->w : 0;
+}
+
+// Blit the cached label coverage, tinting with (r,g,b); `y` is the vertical CENTRE
+// of the row (the rasterized bitmap is centred on it). Returns the width drawn.
+int ReelDmd::DrawLabel(const char* s, int x, int y, int glyphH, uint8_t r, uint8_t g, uint8_t b)
+{
+   const LabelBitmap* const lb = GetLabelBitmap(s, glyphH);
+   if (lb == nullptr || lb->w <= 0 || lb->h <= 0)
+      return 0;
+   const int top = y - lb->h / 2;
+   for (int yy = 0; yy < lb->h; ++yy)
+   {
+      const int dy = top + yy;
+      if (dy < 0 || dy >= m_outH) continue;
+      for (int xx = 0; xx < lb->w; ++xx)
+      {
+         const int a = lb->cov[(size_t)yy * lb->w + xx];
+         if (a <= 0) continue;
+         const int dx = x + xx;
+         if (dx < 0 || dx >= m_outW) continue;
+         uint8_t* const p = m_scratch.data() + ((size_t)dy * m_outW + dx) * 4;
+         p[0] = (uint8_t)((p[0] * (255 - a) + (int)r * a) / 255);
+         p[1] = (uint8_t)((p[1] * (255 - a) + (int)g * a) / 255);
+         p[2] = (uint8_t)((p[2] * (255 - a) + (int)b * a) / 255);
+         const int av = (int)p[3] + a; p[3] = (uint8_t)(av > 255 ? 255 : av);
+      }
+   }
+   return lb->w;
+}
+
+// The unified composite. Every table renders here: player score reels in a
+// position-ranked grid (4 players -> 2x2, single score -> 1x1), the active
+// player's row highlighted, plus our own clean indicators for the non-score
+// state: a separate lit overflow (100K) lamp pip, and a status row with the
+// ball-in-play number and credit - each drawn in the score font with a
+// procedural icon, NOT the table's backglass aux graphics (which are graphics
+// meant for a real backglass and look like disembodied chunks out of context).
+// Positions/sizes are in editor-canvas space.
+bool ReelDmd::CompositeUnified(const std::vector<DispReel*>& reels, const reel::ReelPlan& plan)
+{
+   if (plan.scoreReels.empty())
       return false;
 
-   // Keep reels whose center lies within this margin of the backglass canvas. It
-   // drops off-canvas HUD duplicates (parked at x>1000) while keeping edge reels
-   // that slightly overhang the canvas (e.g. Royal Flush's ScoreReel1 at x=-3).
    constexpr float kMargin = 150.0f;
 
-   // Build each visible reel's canvas-space rect, mirroring DispReel::Render's
-   // advance: first digit at m_v1 + spacing, each digit cw wide, stepping cw + sp.
-   std::vector<reel::ReelRect> rects;
-   rects.reserve(scoreReels.size());
-   for (int i = 0; i < (int)scoreReels.size(); ++i)
+   // DIAGNOSTIC: dump every score reel's name / current value / visibility, so we
+   // can see which reel actually carries the live score (and whether it changes).
    {
-      DispReel* r = scoreReels[i];
-      if (r == nullptr)
-         continue;
+      std::string sv;
+      for (int idx : plan.scoreReels)
+      {
+         DispReel* const r = reels[idx];
+         sv += r->GetName() + "=" + std::to_string((long)r->GetCurrentValue())
+             + (r->m_d.m_visible ? "(vis) " : "(hid) ");
+      }
+      PLOGI << "[ReelDmd] scoreVals " << sv;
+   }
+
+   // A reel digit's on-glass aspect (width:height) is the AUTHORED reel box, since
+   // the engine stretches the source cell to m_width:m_height. Fall back to the
+   // strip cell aspect only when a reel carries no authored size.
+   const auto authoredAR = [](const DispReel* r, const ReelStrip& s) -> float {
+      const float w = r->m_d.m_width, h = r->m_d.m_height;
+      if (w > 0.0f && h > 0.0f) return w / h;
+      return (s.cellH > 0) ? (float)s.cellW / (float)s.cellH : 0.5f;
+   };
+
+   // Some tables (e.g. El Dorado) HIDE the reel that actually carries the score in
+   // cabinet view (ShowDT=false hides the desktop reels) while leaving decoy reels
+   // visible at 0. Detect that: if no visible score reel has a value but a hidden
+   // one does, the table's `visible` flag is unreliable - select reels by VALUE
+   // (non-zero) instead. Only triggers on that exact pattern; normal tables, where
+   // the score sits on a visible reel, keep visibility-based selection.
+   bool anyVisibleNonZero = false, anyHiddenNonZero = false;
+   for (int idx : plan.scoreReels)
+   {
+      const bool nz = reels[idx]->GetCurrentValue() != 0;
+      if (reels[idx]->m_d.m_visible) anyVisibleNonZero |= nz;
+      else                           anyHiddenNonZero |= nz;
+   }
+   const bool selectByValue = !anyVisibleNonZero && anyHiddenNonZero;
+
+   // --- 1. Select + grid the score reels (visible-first, fallback all on-canvas) ---
+   std::vector<reel::ReelRect> rects;
+   rects.reserve(plan.scoreReels.size());
+   for (int j = 0; j < (int)plan.scoreReels.size(); ++j)
+   {
+      DispReel* r = reels[plan.scoreReels[j]];
       const int rc = r->GetReels();
       if (rc <= 0)
          continue;
-      const float cw = r->m_d.m_width;
-      const float ch = r->m_d.m_height;
+      const float cw = r->m_d.m_width, ch = r->m_d.m_height;
       const float sp = (r->m_d.m_reelspacing > 0.0f) ? r->m_d.m_reelspacing : 0.0f;
       reel::ReelRect rect;
-      rect.index = i;
+      rect.index = j;
       rect.x = r->m_d.m_v1.x + sp;
       rect.y = r->m_d.m_v1.y + sp;
       rect.w = (float)rc * (cw + sp);
       rect.h = ch;
-      rect.visible = r->m_d.m_visible; // only mirror what the backglass actually shows
+      rect.visible = selectByValue ? (r->GetCurrentValue() != 0) : r->m_d.m_visible;
       rects.push_back(rect);
    }
-
-   // Prefer the currently-visible reels (in a game, the lit reel of each dim/lit
-   // pair). If nothing is visible yet (e.g. attract, before the script lights a
-   // player up), fall back to all on-canvas reels so the box still shows the
-   // scores instead of staying blank.
    reel::ReelLayout layout = reel::PlaceReels(rects, (float)EDITOR_BG_WIDTH, (float)EDITOR_BG_HEIGHT, kMargin, /*requireVisible*/ true);
    if (layout.placed.empty())
       layout = reel::PlaceReels(rects, (float)EDITOR_BG_WIDTH, (float)EDITOR_BG_HEIGHT, kMargin, /*requireVisible*/ false);
-   if (layout.placed.empty() || layout.w <= 0.0f || layout.h <= 0.0f)
+   if (layout.placed.empty())
+   {
+      if (plan.primaryScore >= 0 && plan.primaryScore < (int)reels.size())
+         return Composite(reels[plan.primaryScore]);
       return false;
+   }
 
-   // Load each placed reel's strip once and gather geometry for the grid.
    const int nPlaced = (int)layout.placed.size();
    std::vector<ReelStrip> strips(nPlaced);
    std::vector<int> reelCounts(nPlaced, 0);
    std::vector<bool> okReel(nPlaced, false);
+   std::vector<DispReel*> placedReel(nPlaced, nullptr);
    float sumH = 0.0f, sumBlockW = 0.0f;
    int okCount = 0, anchor = -1;
    for (int i = 0; i < nPlaced; ++i)
    {
-      DispReel* r = scoreReels[layout.placed[i].index];
+      DispReel* r = reels[plan.scoreReels[layout.placed[i].index]];
+      placedReel[i] = r;
       if (!LoadStrip(r, strips[i]))
          continue;
       reelCounts[i] = std::max(1, r->GetReels());
@@ -579,76 +667,234 @@ bool ReelDmd::CompositeByPosition(const std::vector<DispReel*>& scoreReels)
    }
    if (anchor < 0)
       return false;
-
    const float avgH = sumH / (float)okCount;
    const float avgBlockW = sumBlockW / (float)okCount;
-
-   // Cluster the reels into a compact row/col grid (4 players -> 2x2, a single
-   // score -> 1x1) instead of spreading them across the backglass with black gaps.
    const reel::GridLayout grid = reel::AssignGrid(layout.placed, avgH * 0.6f, avgBlockW * 0.6f);
    const int gridCols = std::max(1, grid.cols);
    const int gridRows = std::max(1, grid.rows);
 
-   // Uniform digit cell sized from the SOURCE strip aspect, so digits keep their
-   // true proportions (the on-playfield width/height squashes them - that was the
-   // stretch). Lay out for a target height, shrinking it if we'd exceed kMaxImageWidth.
-   const float srcAR = (strips[anchor].cellH > 0)
-      ? (float)strips[anchor].cellW / (float)strips[anchor].cellH : 0.5f;
+   // Per-reel digit aspect from the authored reel box (not the strip's native cell
+   // aspect), so each score's digits render at the proportions the table draws.
+   std::vector<float> reelAR(nPlaced, 0.8f);
+   for (int i = 0; i < nPlaced; ++i)
+      if (okReel[i])
+         reelAR[i] = authoredAR(placedReel[i], strips[i]);
 
-   int cellH = 120, cellW = 1, gapX = 2, gapY = 2, border = 2, outW = 1, outH = 1;
-   std::vector<int> colW;
-   for (int attempt = 0; attempt < 10; ++attempt)
+   // --- 2. Overflow carry value per score cell. Drawn later as a SEPARATE lit lamp
+   //        pip (not folded into the number). Find the nearest same-row overflow reel. ---
+   std::vector<long> ovValue(nPlaced, 0); // carry digit to show (0 = no pip for this cell)
+   bool anyOverflow = false;
+   for (int i = 0; i < nPlaced; ++i)
    {
-      cellW = std::max(1, (int)(cellH * srcAR + 0.5f));
-      gapX = std::max(2, cellW / 3);
+      if (!okReel[i]) continue;
+      const float scx = layout.placed[i].x + 0.5f * layout.placed[i].w;
+      const float scy = layout.placed[i].y + 0.5f * layout.placed[i].h;
+      int best = -1; float bestD = 1e18f;
+      for (int k = 0; k < (int)plan.overflowReels.size(); ++k)
+      {
+         DispReel* ov = reels[plan.overflowReels[k]];
+         const float ow = (float)std::max(1, ov->GetReels()) * (ov->m_d.m_width + ov->m_d.m_reelspacing);
+         const float ocx = ov->m_d.m_v1.x + 0.5f * ow;
+         const float ocy = ov->m_d.m_v1.y + 0.5f * ov->m_d.m_height;
+         const float dyAbs = (ocy > scy) ? (ocy - scy) : (scy - ocy);
+         if (dyAbs > avgH) continue;
+         const float d = (ocx - scx) * (ocx - scx) + (ocy - scy) * (ocy - scy);
+         if (d < bestD) { bestD = d; best = k; }
+      }
+      if (best >= 0)
+      {
+         const long v = (long)reels[plan.overflowReels[best]]->GetCurrentValue();
+         if (v > 0) { ovValue[i] = v; anyOverflow = true; }
+      }
+   }
+
+   // --- 3. Aux STATE only (we render our own digits, never the table's aux graphic) ---
+   DispReel* const bipReel    = plan.bipReels.empty()    ? nullptr : reels[plan.bipReels[0]];
+   DispReel* const creditReel = plan.creditReels.empty() ? nullptr : reels[plan.creditReels[0]];
+   const long bipValue  = bipReel ? (long)bipReel->GetCurrentValue() : -1;
+   const long credValue = creditReel ? (long)creditReel->GetCurrentValue() : -1;
+   const bool haveBall = bipValue >= 0;
+   const bool haveCred = credValue >= 0;
+   const int credDigits = haveCred ? (credValue >= 100 ? 3 : (credValue >= 10 ? 2 : 1)) : 0;
+
+   // Current player: the single lit PlayerUp lamp, mapped to its nearest score row.
+   // Resolve by lamp value first, then by a single visible lamp; if ambiguous or
+   // absent, no row is highlighted (graceful - the rest renders unchanged).
+   int activeCell = -1;
+   {
+      int litLamp = -1; bool ambiguous = false;
+      for (int idx : plan.playerUpReels)
+         if (reels[idx]->GetCurrentValue() > 0) { if (litLamp < 0) litLamp = idx; else ambiguous = true; }
+      if (litLamp < 0 && !ambiguous)
+         for (int idx : plan.playerUpReels)
+            if (reels[idx]->m_d.m_visible) { if (litLamp < 0) litLamp = idx; else ambiguous = true; }
+      if (litLamp >= 0 && !ambiguous)
+      {
+         DispReel* const lamp = reels[litLamp];
+         const float lcx = lamp->m_d.m_v1.x + 0.5f * (lamp->m_d.m_width + lamp->m_d.m_reelspacing);
+         const float lcy = lamp->m_d.m_v1.y + 0.5f * lamp->m_d.m_height;
+         float bestD = 1e18f;
+         for (int i = 0; i < nPlaced; ++i)
+         {
+            if (!okReel[i]) continue;
+            const float cx = layout.placed[i].x + 0.5f * layout.placed[i].w;
+            const float cy = layout.placed[i].y + 0.5f * layout.placed[i].h;
+            const float d = (cx - lcx) * (cx - lcx) + (cy - lcy) * (cy - lcy);
+            if (d < bestD) { bestD = d; activeCell = i; }
+         }
+      }
+   }
+
+   // Active-scorer fallback: when no PlayerUp lamp resolves (e.g. player-up gated on
+   // ShowDT, which is false in cabinet view), highlight the placed score reel whose
+   // value most recently increased - that player is "up". Reset when all are zero.
+   {
+      bool allZero = true;
+      for (int i = 0; i < nPlaced; ++i)
+      {
+         if (!okReel[i]) continue;
+         const long v = (long)placedReel[i]->GetCurrentValue();
+         if (v != 0) allZero = false;
+         auto it = m_prevScoreVal.find(placedReel[i]);
+         if (it != m_prevScoreVal.end() && v > it->second) m_activeScorer = placedReel[i];
+         m_prevScoreVal[placedReel[i]] = v;
+      }
+      if (allZero) m_activeScorer = nullptr; // new game / attract
+   }
+   if (activeCell < 0)
+   {
+      DispReel* want = m_activeScorer;
+      if (want == nullptr && plan.primaryScore >= 0 && plan.primaryScore < (int)reels.size())
+         want = reels[plan.primaryScore]; // default before any scoring (typically player 1)
+      for (int i = 0; want != nullptr && i < nPlaced; ++i)
+         if (okReel[i] && placedReel[i] == want) { activeCell = i; break; }
+   }
+
+   // --- 4. Resolve pixel geometry (cellH uniform; per-reel digit widths). The grid
+   //        reserves a left slot for the overflow pip; a status row holds ball + credit. ---
+   int cellH = 120, gapX = 2, gapY = 2, border = 2, outW = 1, outH = 1;
+   int smallCellH = 1, statusRowH = 0, statDigitW = 1, pipW = 0, pipGap = 0;
+   std::vector<int> cw(nPlaced, 1);
+   std::vector<int> colW;
+   for (int attempt = 0; attempt < 12; ++attempt)
+   {
+      for (int i = 0; i < nPlaced; ++i)
+         if (okReel[i]) cw[i] = std::max(1, (int)(cellH * reelAR[i] + 0.5f));
+      const int cellWref = std::max(1, cw[anchor]);
+      gapX = std::max(2, cellWref / 3);
       gapY = std::max(2, cellH / 4);
       border = std::max(3, cellH / 6);
+      pipW = anyOverflow ? cw[anchor] : 0;          // overflow lamp pip width
+      pipGap = anyOverflow ? gapX : 0;
+      const int lead = pipW + pipGap;               // reserved left slot per row (blank if no pip)
       colW.assign(gridCols, 0);
       for (int i = 0; i < nPlaced; ++i)
          if (okReel[i])
          {
-            const int bw = reelCounts[i] * cellW;
+            const int bw = lead + reelCounts[i] * cw[i];
             if (bw > colW[grid.pos[i].col]) colW[grid.pos[i].col] = bw;
          }
       int gridW = (gridCols - 1) * gapX;
       for (int w : colW) gridW += w;
       const int gridH = gridRows * cellH + (gridRows - 1) * gapY;
-      outW = gridW + 2 * border;
-      outH = gridH + 2 * border;
-      if (outW <= kMaxImageWidth)
-         break;
-      cellH = std::max(8, (cellH * kMaxImageWidth) / outW); // shrink and retry
+
+      smallCellH = std::max(1, (cellH * 7) / 10);
+      statDigitW = std::max(1, (int)(smallCellH * reelAR[anchor] + 0.5f));
+      const int labelH = std::max(7, (smallCellH * 55) / 100);
+      const int lblGap = std::max(2, statDigitW / 4);
+      const int midGap = statDigitW * 2;
+      const int ballW = haveBall ? (TextWidth("BALL", labelH) + lblGap + statDigitW) : 0;
+      const int credW = haveCred ? (TextWidth("CREDIT", labelH) + lblGap + credDigits * statDigitW) : 0;
+      const int statusW = ballW + credW + ((haveBall && haveCred) ? midGap : 0);
+      statusRowH = (haveBall || haveCred) ? smallCellH : 0;
+      const int rowGap = (statusRowH > 0) ? gapY : 0;
+
+      outW = std::max(gridW, statusW) + 2 * border;
+      outH = gridH + rowGap + statusRowH + 2 * border;
+      if (outW <= kMaxImageWidth) break;
+      cellH = std::max(8, (cellH * kMaxImageWidth) / outW);
    }
 
-   m_outW = outW;
-   m_outH = outH;
-   // Fill with a muted surround colour (not pure black) so the reels read as a
-   // framed readout; the digit strips (black drum + light digit) draw over it, so
-   // the gaps and border become the surround.
-   m_scratch.assign((size_t)outW * outH * 3, 0);
-   for (size_t p = 0; p + 2 < m_scratch.size(); p += 3)
-   {
-      m_scratch[p] = 28; m_scratch[p + 1] = 28; m_scratch[p + 2] = 34;
-   }
+   // --- 5. Allocate + surround fill ---
+   m_outW = outW; m_outH = outH;
+   m_scratch.assign((size_t)outW * outH * 4, 0);
+   FillSurroundPanel(outW, outH);
 
-   // Column x-origins (columns laid left to right with gapX between).
-   std::vector<int> colX(gridCols, border);
+   int gridW = (gridCols - 1) * gapX;
+   for (int w : colW) gridW += w;
+   const int gridH = gridRows * cellH + (gridRows - 1) * gapY;
+   const int lead = pipW + pipGap;
+   std::vector<int> colX(gridCols, 0);
+   colX[0] = border + std::max(0, (outW - 2 * border - gridW) / 2);
    for (int c = 1; c < gridCols; ++c)
       colX[c] = colX[c - 1] + colW[c - 1] + gapX;
 
+   // --- 6. Score cells + overflow lamp pip, then current-player highlight/dim ---
    for (int i = 0; i < nPlaced; ++i)
    {
-      if (!okReel[i])
-         continue;
+      if (!okReel[i]) continue;
       const int col = grid.pos[i].col, row = grid.pos[i].row;
-      const int blockW = reelCounts[i] * cellW;
-      const int dx = colX[col] + (colW[col] - blockW); // right-align so the ones place lines up
+      const int dgw = cw[i];
+      const int rowContentW = lead + reelCounts[i] * dgw;
+      int dx = colX[col] + (colW[col] - rowContentW); // right-align score within its column
       const int dy = border + row * (cellH + gapY);
-      BlitReelCells(strips[i], scoreReels[layout.placed[i].index], 0, reelCounts[i], dx, dy, cellW, cellH);
+      if (anyOverflow)
+      {
+         if (ovValue[i] > 0)
+         {
+            BlitValue(strips[anchor], ovValue[i], 1, dx, dy, pipW, cellH); // carry in the score font
+            DrawGlow(dx, dy, pipW, cellH, kAccentR, kAccentG, kAccentB);   // separate "lit lamp" glow
+         }
+         dx += lead; // advance past the pip slot (blank when this player hasn't rolled over)
+      }
+      BlitReelCells(strips[i], placedReel[i], 0, reelCounts[i], dx, dy, dgw, cellH);
+   }
+   if (activeCell >= 0) // current player resolved -> glow active row, dim the others
+   {
+      for (int i = 0; i < nPlaced; ++i)
+      {
+         if (!okReel[i]) continue;
+         const int rx = colX[grid.pos[i].col], rw = colW[grid.pos[i].col];
+         const int dy = border + grid.pos[i].row * (cellH + gapY);
+         if (i == activeCell) DrawGlow(rx, dy, rw, cellH, kAccentR, kAccentG, kAccentB);
+         else                 DimRect(rx, dy, rw, cellH, 40);
+      }
    }
 
-   PLOGI << "[ReelDmd] CompositeByPosition placed=" << nPlaced << " grid=" << gridRows << "x" << gridCols
-         << " cell=" << cellW << "x" << cellH << " image=" << outW << "x" << outH;
+   // --- 7. Status row: "BALL" + lit digit, and "CREDIT" + number (small text font) ---
+   if (statusRowH > 0)
+   {
+      const int labelH = std::max(7, (smallCellH * 55) / 100);
+      const int lblGap = std::max(2, statDigitW / 4);
+      const int midGap = statDigitW * 2;
+      const int ballW = haveBall ? (TextWidth("BALL", labelH) + lblGap + statDigitW) : 0;
+      const int credW = haveCred ? (TextWidth("CREDIT", labelH) + lblGap + credDigits * statDigitW) : 0;
+      const int statusW = ballW + credW + ((haveBall && haveCred) ? midGap : 0);
+      const int rowY = border + gridH + gapY;
+      const int labelY = rowY + smallCellH / 2; // DrawLabel centres the text on this y
+      constexpr uint8_t lR = 158, lG = 162, lB = 170;                   // muted label grey
+      int sx = border + std::max(0, (outW - 2 * border - statusW) / 2);
+      if (haveBall)
+      {
+         sx += DrawLabel("BALL", sx, labelY, labelH, lR, lG, lB);
+         sx += lblGap;
+         DrawGlow(sx, rowY, statDigitW, smallCellH, kAccentR, kAccentG, kAccentB);
+         BlitValue(strips[anchor], bipValue, 1, sx, rowY, statDigitW, smallCellH);
+         sx += statDigitW;
+         if (haveCred) sx += midGap;
+      }
+      if (haveCred)
+      {
+         sx += DrawLabel("CREDIT", sx, labelY, labelH, lR, lG, lB);
+         sx += lblGap;
+         BlitValue(strips[anchor], credValue, credDigits, sx, rowY, statDigitW, smallCellH);
+      }
+   }
+
+   PLOGI << "[ReelDmd] unified placed=" << nPlaced << " grid=" << gridRows << "x" << gridCols
+         << " overflow=" << (anyOverflow ? 1 : 0) << " ball=" << bipValue << " credit=" << credValue
+         << " playerUpLamps=" << plan.playerUpReels.size() << " active=" << activeCell
+         << " cell=" << cw[anchor] << "x" << cellH << " image=" << outW << "x" << outH;
    SetReelImage(outW, outH, m_scratch.data());
    m_haveImage = true;
    return true;
@@ -669,18 +915,27 @@ bool ReelDmd::Composite(DispReel* reel)
    if (reelCount <= 0)
       return false;
 
+   // Digit aspect from the authored reel box (engine stretches the source cell to
+   // m_width:m_height); strip cell aspect only as a fallback.
+   const float w = reel->m_d.m_width, h = reel->m_d.m_height;
+   const float ar = (w > 0.0f && h > 0.0f) ? (w / h)
+                  : ((strip.cellH > 0) ? (float)strip.cellW / (float)strip.cellH : 0.5f);
+
    int down = 1;
    while ((reelCount * strip.cellW) / down > kMaxImageWidth)
       ++down;
 
-   const int outCellW = std::max(1, strip.cellW / down);
    const int outCellH = std::max(1, strip.cellH / down);
+   int outCellW = std::max(1, (int)(outCellH * ar + 0.5f));
+   if (reelCount * outCellW > kMaxImageWidth) // keep the upload within budget
+      outCellW = std::max(1, kMaxImageWidth / std::max(1, reelCount));
 
    const int outW = reelCount * outCellW;
    const int outH = outCellH;
    m_outW = outW;
    m_outH = outH;
-   m_scratch.assign((size_t)outW * outH * 3, 0);
+   m_scratch.assign((size_t)outW * outH * 4, 0);
+   FillSurroundPanel(outW, outH);
 
    BlitReelCells(strip, reel, 0, reelCount, 0, 0, outCellW, outCellH);
 

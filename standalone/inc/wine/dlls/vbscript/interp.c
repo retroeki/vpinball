@@ -24,6 +24,15 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
+#ifdef __STANDALONE__
+#include <android/log.h>
+/* DIAGNOSTIC (TEMPORARY - service-menu UAF crash hunt). Revert after capture.
+   g_dbg_member_ident carries the current "obj.member = value" member name into
+   stack_assume_disp so the byref AddRef log can name the crashing member. */
+#define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
+static const WCHAR *g_dbg_member_ident = NULL;
+#endif
+
 static DISPID propput_dispid = DISPID_PROPERTYPUT;
 static const unsigned max_call_depth = 1024;
 
@@ -557,8 +566,22 @@ static HRESULT stack_assume_disp(exec_ctx_t *ctx, unsigned n, IDispatch **disp)
 
         V_VT(v) = V_VT(ref);
         V_UNKNOWN(v) = V_UNKNOWN(ref);
-        if(V_UNKNOWN(v))
+        if(V_UNKNOWN(v)) {
+#ifdef __STANDALONE__
+            /* DIAGNOSTIC (TEMPORARY): about to AddRef an object reached via ByRef
+               (e.g. an array element such as gBOT(kk)). If that points at a freed
+               wrapper this SIGSEGVs inside IUnknown_AddRef; the LAST line logged
+               here before the crash names the crashing member + dangling pointer. */
+            {
+                char _idb[96]; int _i; const WCHAR *_id = g_dbg_member_ident;
+                for(_i = 0; _i < 95 && _id && _id[_i]; _i++) _idb[_i] = (char)_id[_i];
+                _idb[_i] = 0;
+                VBS_DBG_LOG("[assume-disp] byref AddRef member=%s disp=%p vt=%d",
+                            _idb[0] ? _idb : "?", (void*)V_UNKNOWN(v), (int)V_VT(v));
+            }
+#endif
             IUnknown_AddRef(V_UNKNOWN(v));
+        }
     }
 
     if(disp)
@@ -1191,6 +1214,9 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
 
     TRACE("%s\n", debugstr_w(identifier));
 
+#ifdef __STANDALONE__
+    g_dbg_member_ident = identifier; /* DIAGNOSTIC (TEMPORARY): carry member name into stack_assume_disp */
+#endif
     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
     if(FAILED(hres))
         return hres;

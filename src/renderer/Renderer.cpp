@@ -3300,9 +3300,22 @@ RenderTarget* Renderer::SetupAncillaryRenderTarget(VPXWindowId window, VPX::Rend
    return rd->GetCurrentRenderTarget();
 }
 
+// Implemented in lib/src/VPinballLib.cpp (statically linked): true while ReelDmd
+// is pushing a live EM score-reel composite (EM tables only; never for DMD/segment
+// score views). Lets the score-view surround be transparent over the scene.
+extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::vector<uint8_t>* out);
+
 void Renderer::ClearEmbeddedAncillaryWindow(VPXWindowId window, VPX::RenderOutput& output, RenderTarget* embedRT)
 {
    if (output.GetMode() != VPX::RenderOutput::OM_EMBEDDED)
+      return;
+
+   // EM score-reel view: skip the opaque black fill so the cabinet shows through
+   // the semi-transparent reel surround (the reel composite is RGBA: opaque digits
+   // + chrome, translucent field). Scoped to the ScoreView window AND only when a
+   // reel image is active, so DMD/segment score views keep their black backing and
+   // the backglass/topper outputs are untouched.
+   if (window == VPXWindowId::VPXWINDOW_ScoreView && GetReelImage(nullptr, nullptr, nullptr, nullptr))
       return;
 
    bool isOutputLinear;

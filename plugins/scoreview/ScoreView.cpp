@@ -736,14 +736,17 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
       {
          // The live EM score-reel image (composited by ReelDmd) drawn as a
          // smooth, alpha-blended textured quad via the basic shader (NOT dots).
+         // RGBA: digits opaque, surround panel semi-transparent so the table
+         // shows through behind the reels (the basic shader honors per-pixel
+         // alpha, and DrawImage enables blending for a non-opaque texture).
          int w = 0, h = 0;
          uint64_t version = 0;
-         std::vector<uint8_t> rgb;
-         if (!GetReelImage(&w, &h, &version, &rgb) || w <= 0 || h <= 0 || rgb.size() < (size_t)w * h * 3)
+         std::vector<uint8_t> rgba;
+         if (!GetReelImage(&w, &h, &version, &rgba) || w <= 0 || h <= 0 || rgba.size() < (size_t)w * h * 4)
             continue; // no reel image active -> draw nothing
-         // 24-bit sRGB, tightly packed. Re-upload each frame (cheap for a small
+         // 32-bit sRGBA, tightly packed. Re-upload each frame (cheap for a small
          // reel strip; correctness over the optional version cache for now).
-         m_vpxApi->UpdateTexture(&visual.dmdTex, w, h, VPXTextureFormat::VPXTEXFMT_sRGB8, rgb.data());
+         m_vpxApi->UpdateTexture(&visual.dmdTex, w, h, VPXTextureFormat::VPXTEXFMT_sRGBA8, rgba.data());
          ctx->DrawImage(ctx, visual.dmdTex,
             visual.tint.x, visual.tint.y, visual.tint.z, 1.f, // tint + alpha
             0.f, 0.f, (float)w, (float)h,                     // full texture
