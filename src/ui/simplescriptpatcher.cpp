@@ -2406,7 +2406,7 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script, const st
             LogPatch(a.first, a.second);
         if (!tableApplied.empty())
             PLOGI.printf("SimpleScriptPatcher: per-table patches for '%s' (%zu)", tableFilename.c_str(), tableApplied.size());
-        patched = !s_patchReport.empty(); // include per-table edits in the finalize/log decision
+        if (!tableApplied.empty()) patched = true; // include per-table edits in the finalize/log decision
     }
 
     // CRITICAL: Normalize line endings to CRLF AND sanitize non-ASCII in a single
