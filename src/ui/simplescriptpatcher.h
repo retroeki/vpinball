@@ -34,7 +34,7 @@ public:
      * Patch a VBScript for Wine/Android compatibility.
      * Returns the patched script.
      */
-    static std::string PatchScript(const std::string& script);
+    static std::string PatchScript(const std::string& script, const std::string& tableFilename);
 
     /**
      * Get a report of what was patched (for logging)

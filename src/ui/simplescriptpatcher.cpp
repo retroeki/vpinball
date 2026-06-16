@@ -134,6 +134,7 @@
 
 #include "simplescriptpatcher.h"
 #include "scriptpatcher_internal.h"
+#include "ui/tablepatches.h"
 #include <sstream>
 #include <algorithm>
 #include <cstdio>
@@ -2303,7 +2304,7 @@ End Class
 // =============================================================================
 // Main Entry Point
 // =============================================================================
-std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
+std::string SimpleScriptPatcher::PatchScript(const std::string& script, const std::string& tableFilename) {
     s_patchReport = "";
     s_needsDropTargetClass = false;
     s_needsStandupTargetClass = false;
@@ -2393,6 +2394,19 @@ std::string SimpleScriptPatcher::PatchScript(const std::string& script) {
     if (!s_patchReport.empty()) {
         patched = true;
         result = InjectHelpers(result);
+    }
+
+    // Per-table layer: runs after all core rules, on the core-patched output. A no-op
+    // (byte-identical) for any file not in the registry, so non-registered tables are
+    // unaffected. See src/ui/tablepatches.{h,cpp}.
+    {
+        std::vector<std::pair<std::string, int>> tableApplied;
+        result = tablepatches::ApplyTableSpecificPatches(result, tableFilename, &tableApplied);
+        for (const auto& a : tableApplied)
+            LogPatch(a.first, a.second);
+        if (!tableApplied.empty())
+            PLOGI.printf("SimpleScriptPatcher: per-table patches for '%s' (%zu)", tableFilename.c_str(), tableApplied.size());
+        patched = !s_patchReport.empty(); // include per-table edits in the finalize/log decision
     }
 
     // CRITICAL: Normalize line endings to CRLF AND sanitize non-ASCII in a single

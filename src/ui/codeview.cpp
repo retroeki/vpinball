@@ -1974,7 +1974,7 @@ void CodeViewer::LoadFromStream(IStream *pistream, const HCRYPTHASH hcrypthash, 
 #else
    m_script_text = szText;
    // Apply Wine VBScript compatibility patches for DTArray/STArray patterns
-   m_script_text = SimpleScriptPatcher::PatchScript(m_script_text);
+   m_script_text = SimpleScriptPatcher::PatchScript(m_script_text, m_psh ? m_psh->GetTableFilename() : string());
 #endif
    delete[] szText;
 
@@ -2021,7 +2021,7 @@ void CodeViewer::LoadFromFile(const string& filename)
 #else
 		m_script_text = szText;
 		// Apply Wine VBScript compatibility patches for DTArray/STArray patterns
-		m_script_text = SimpleScriptPatcher::PatchScript(m_script_text);
+		m_script_text = SimpleScriptPatcher::PatchScript(m_script_text, m_psh ? m_psh->GetTableFilename() : string());
 #endif
 		delete[] szText;
 

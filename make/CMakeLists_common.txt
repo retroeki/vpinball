@@ -252,6 +252,8 @@ set(VPX_SOURCES
    src/ui/scriptpatcher_wine.cpp
    src/ui/simplescriptpatcher.cpp
    src/ui/simplescriptpatcher.h
+   src/ui/tablepatches.cpp
+   src/ui/tablepatches.h
    src/ui/hitrectsur.cpp
    src/ui/hitrectsur.h
    src/ui/hitsur.cpp

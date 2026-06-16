@@ -380,6 +380,7 @@ public:
    void SelectItem(IScriptable *piscript) final;
    void DoCodeViewCommand(int command) final;
    void SetDirtyScript(SaveDirtyState sds) final;
+   string GetTableFilename() const override { return m_filename; }
    void ExportMesh(ObjLoader &loader) final;
 
    // Multi-object manipulation

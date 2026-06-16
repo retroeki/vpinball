@@ -89,6 +89,7 @@ public:
    virtual void SelectItem(IScriptable *piscript) = 0;
    virtual void SetDirtyScript(SaveDirtyState sds) = 0;
    virtual void DoCodeViewCommand(int command) = 0;
+   virtual string GetTableFilename() const { return string(); } // per-table patcher keying
 };
 
 class CodeViewDispatch final
