@@ -71,6 +71,18 @@ ReelRole ClassifyRole(const ReelInput& r);
 // true iff the table has at least one Score reel.
 ReelPlan ClassifyReels(const std::vector<ReelInput>& reels);
 
+// A custom character/segment display built from per-character DispReels: a group of
+// single-wheel (reelCount==1) image-grid reels that share ONE non-decimal font strip
+// image. Many original tables render their score this way instead of via PinMAME or
+// 0-9 decimal reels (e.g. DragonFire's led0..led39 on "REEL"). Returns the input
+// indices of the largest such group, or empty if there is none.
+//
+// PURELY STRUCTURAL: it CANNOT distinguish a table whose real score is on a PinMAME
+// segment display (Ali) from one with no real display (DragonFire) - they look the
+// same here. That discrimination happens at the ScoreView source-priority layer
+// (ScoreView::Select demotes the reel image below any fully-matched real display).
+std::vector<int> ClassifyCharDisplay(const std::vector<ReelInput>& reels);
+
 // --- faithful position-based layout (used by the generic render path) ---
 
 // One score reel's on-screen rectangle in editor-canvas coordinates (the space

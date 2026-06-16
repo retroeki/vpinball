@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 
 namespace reel
 {
@@ -206,6 +207,36 @@ GridLayout AssignGrid(const std::vector<PlacedReel>& placed, float rowTol, float
       g.pos[i].col = colOf[i];
    }
    return g;
+}
+
+// One character cell of a custom display: a single image-grid wheel drawn from a
+// font strip richer than the 10 decimal glyphs. reelCount>=2 0-9 reels are real
+// scores (IsScoreReel); a single 0-9 wheel is a credit/decimal flag - both excluded.
+static bool IsCharCell(const ReelInput& r)
+{
+   return r.reelCount == 1 && r.useImageGrid && r.digitRange != 9 && r.hasImage && !r.image.empty();
+}
+
+std::vector<int> ClassifyCharDisplay(const std::vector<ReelInput>& reels)
+{
+   // A real character line is many cells wide; a few status flags that happen to
+   // share a font must not qualify.
+   constexpr int kMinCharCells = 4;
+
+   // Group candidate cells by shared font image (case-insensitive). The author's
+   // collection groups them too, but the shared strip image is the structural
+   // invariant and needs no engine/collection plumbing.
+   std::map<std::string, std::vector<int>> groups;
+   for (int i = 0; i < (int)reels.size(); ++i)
+      if (IsCharCell(reels[i]))
+         groups[ToLower(reels[i].image)].push_back(i);
+
+   const std::vector<int>* best = nullptr;
+   for (const auto& kv : groups)
+      if ((int)kv.second.size() >= kMinCharCells && (best == nullptr || kv.second.size() > best->size()))
+         best = &kv.second;
+
+   return best ? *best : std::vector<int>{};
 }
 
 } // namespace reel

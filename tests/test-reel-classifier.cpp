@@ -29,6 +29,7 @@ using reel::ReelPlan;
 using reel::ClassifyReels;
 using reel::ClassifyRole;
 using reel::IsScoreReel;
+using reel::ClassifyCharDisplay;
 using reel::ReelRect;
 using reel::ReelLayout;
 using reel::PlaceReels;
@@ -165,6 +166,32 @@ static const std::vector<ReelInput> Ali_SS = {
    R("b0", 1, 10), R("b1", 1, 10), R("b2", 1, 10), R("b3", 1, 10), R("b4", 1, 10), R("b5", 1, 10),
    R("d0", 1, 10), R("d1", 1, 10), R("d2", 1, 10), R("d3", 1, 10), R("d4", 1, 10), R("d5", 1, 10),
 };
+
+// DragonFire (rosve, original) - the score is a custom 40-character LED line: a
+// collection of single-wheel image-grid reels (led0..led39) all driven from one
+// 54-glyph font strip image "REEL". No PinMAME display, no 0-9 decimal reels.
+static std::vector<ReelInput> DragonFireDisplay()
+{
+   std::vector<ReelInput> v;
+   for (int i = 0; i < 40; ++i)
+      v.push_back(R(("led" + std::to_string(i)).c_str(), 1, 53, 0, /*hasImage*/ true,
+                    "REEL", /*useImageGrid*/ true));
+   return v;
+}
+
+// Ali (Stern 1980) JPSalas - WITH a realistic shared segment font + image grid.
+// Structurally identical to DragonFire (a per-character display) - so the pure,
+// structural detector MUST flag it too. The DragonFire-vs-Ali distinction (Ali's
+// real score is on a PinMAME segment display) is resolved at the ScoreView
+// source-priority layer, NOT here. This fixture documents that on purpose.
+static std::vector<ReelInput> AliFontDisplay()
+{
+   std::vector<ReelInput> v;
+   const char* cells[] = {"a0","a1","a2","a3","a4","a5","b0","b1","b2","b3","b4","b5"};
+   for (const char* c : cells)
+      v.push_back(R(c, 1, 10, 0, /*hasImage*/ true, "AliSegFont", /*useImageGrid*/ true));
+   return v;
+}
 
 // ----------------------------------------------------------------------------
 
@@ -362,10 +389,50 @@ static void TestAssignGrid()
    CHECK(g.pos[0].row == g.pos[1].row && g.pos[0].col == g.pos[1].col, "AssignGrid: dim/lit pair share a cell");
 }
 
+static void TestCharDisplay()
+{
+   // DragonFire: 40 single-wheel image-grid cells sharing "REEL" -> the whole group.
+   const std::vector<ReelInput> df = DragonFireDisplay();
+   const std::vector<int> dfCells = ClassifyCharDisplay(df);
+   CHECK((int)dfCells.size() == 40, "CharDisplay: DragonFire -> 40-cell group detected");
+
+   // It must be additive: the decimal-score path is unaffected (no score reels here).
+   CHECK(!ClassifyReels(df).activate, "CharDisplay: DragonFire has no decimal score reel");
+
+   // Ali (with a real shared font) is structurally a char display too -> detected.
+   CHECK((int)ClassifyCharDisplay(AliFontDisplay()).size() == 12, "CharDisplay: Ali font line detected (ambiguity is real)");
+
+   // Decimal EM tables are NOT char displays (no image grid).
+   CHECK(ClassifyCharDisplay(RoyalFlush).empty(), "CharDisplay: RoyalFlush (decimal reels) -> none");
+   CHECK(ClassifyCharDisplay(FastDraw).empty(), "CharDisplay: FastDraw (decimal reels) -> none");
+
+   // A handful of unrelated single non-decimal flags must NOT qualify.
+   CHECK(ClassifyCharDisplay(Centigrade37).empty(), "CharDisplay: Centigrade aux flags -> none");
+
+   // Below the minimum group size: 3 grid cells sharing a font is not a display.
+   std::vector<ReelInput> tiny = {
+      R("x0", 1, 15, 0, true, "font", true), R("x1", 1, 15, 0, true, "font", true),
+      R("x2", 1, 15, 0, true, "font", true),
+   };
+   CHECK(ClassifyCharDisplay(tiny).empty(), "CharDisplay: below min cells -> none");
+
+   // Two fonts present: the larger group wins.
+   std::vector<ReelInput> twofonts = {
+      R("a0",1,15,0,true,"fontA",true), R("a1",1,15,0,true,"fontA",true),
+      R("a2",1,15,0,true,"fontA",true), R("a3",1,15,0,true,"fontA",true),
+      R("b0",1,15,0,true,"fontB",true), R("b1",1,15,0,true,"fontB",true),
+      R("b2",1,15,0,true,"fontB",true), R("b3",1,15,0,true,"fontB",true),
+      R("b4",1,15,0,true,"fontB",true),
+   };
+   const std::vector<int> tf = ClassifyCharDisplay(twofonts);
+   CHECK((int)tf.size() == 5, "CharDisplay: largest shared-font group wins");
+}
+
 int main()
 {
    TestIsScoreReel();
    TestClassifyRole();
+   TestCharDisplay();
 
    // One unified role-based system for every table. Counts: score, overflow, credit, ball-in-play.
    // Royal Flush / Card Whiz now go through the SAME path (no curated names):
