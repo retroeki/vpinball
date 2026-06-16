@@ -651,12 +651,26 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
    if (layout.placed.empty() || layout.w <= 0.0f || layout.h <= 0.0f)
       return false;
 
-   // Output sized to the authored display's aspect, width capped so the panel
-   // texture stays small. Height follows the authored bounding-box ratio.
+   // Load the shared font strip ONCE. Every char cell in this group is driven from
+   // the same font image (ClassifyCharDisplay groups by shared image) with identical
+   // grid geometry; only the displayed glyph index varies per cell. Decoding it once
+   // per cell (40x for DragonFire) on every rebuild was pure waste and the main
+   // per-composite cost; load it a single time and reuse it for all cells.
+   ReelStrip strip;
+   if (!LoadStrip(reels[cells[layout.placed[0].index]], strip, /*wantAlpha*/ true))
+      return false;
+
+   // Output sized to the authored display's aspect (width capped so the panel texture
+   // stays small), plus a uniform inner margin (`pad`) so the glyphs are not flush to
+   // the panel edge. The surround fill covers the whole panel incl. the margin, so the
+   // padding reads as gunmetal breathing room between the bevel frame and the glyphs.
    constexpr int kOutW = 512;
-   const int outW = kOutW;
-   int outH = (int)((layout.h / layout.w) * (float)kOutW + 0.5f);
-   if (outH < 1) outH = 1;
+   const int contentW = kOutW;
+   int contentH = (int)((layout.h / layout.w) * (float)kOutW + 0.5f);
+   if (contentH < 1) contentH = 1;
+   const int pad = std::max(4, (int)((float)contentH * 0.15f + 0.5f));
+   const int outW = contentW + 2 * pad;
+   const int outH = contentH + 2 * pad;
    m_outW = outW;
    m_outH = outH;
    m_scratch.assign((size_t)outW * outH * 4, 0);
@@ -665,20 +679,17 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
    static int s_dbg = 8;
    const bool dbg = (s_dbg > 0);
    if (dbg) { --s_dbg; PLOGI << "[ReelDmd] CharDisplay bbox=(" << layout.x << "," << layout.y << " " << layout.w << "x" << layout.h
-                              << ") placed=" << layout.placed.size() << " out=" << outW << "x" << outH; }
+                              << ") placed=" << layout.placed.size() << " out=" << outW << "x" << outH << " pad=" << pad; }
 
-   const float sx = (float)outW / layout.w;
-   const float sy = (float)outH / layout.h;
+   const float sx = (float)contentW / layout.w;
+   const float sy = (float)contentH / layout.h;
    bool anyDrawn = false;
    int dbgCells = 0;
    for (const reel::PlacedReel& pr : layout.placed)
    {
       DispReel* const r = reels[cells[pr.index]];
-      ReelStrip strip;
-      if (!LoadStrip(r, strip, /*wantAlpha*/ true))
-         continue;
-      const int dstX = (int)((pr.x - layout.x) * sx + 0.5f);
-      const int dstY = (int)((pr.y - layout.y) * sy + 0.5f);
+      const int dstX = pad + (int)((pr.x - layout.x) * sx + 0.5f);
+      const int dstY = pad + (int)((pr.y - layout.y) * sy + 0.5f);
       int dstW = (int)(pr.w * sx + 0.5f);
       int dstH = (int)(pr.h * sy + 0.5f);
       if (dstW < 1) dstW = 1;
