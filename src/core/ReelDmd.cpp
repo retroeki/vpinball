@@ -353,7 +353,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out) const
 // the engine (DispReel maps the whole source cell onto a quad sized from the
 // reel's authored width:height), so the on-glass digit aspect is the AUTHORED
 // aspect, not the strip image's native cell aspect.
-void ReelDmd::DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int boxY, int cellW, int cellH)
+void ReelDmd::DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int boxY, int cellW, int cellH, bool border)
 {
    if (!strip.ok || cellW <= 0 || cellH <= 0)
       return;
@@ -383,15 +383,20 @@ void ReelDmd::DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int
    }
 
    // Recessed-window edge: top/left darkened (shadow), bottom/right lightened.
-   const auto shade = [this](int x, int y, int delta) {
-      if (x < 0 || x >= m_outW || y < 0 || y >= m_outH) return;
-      uint8_t* const p = m_scratch.data() + ((size_t)y * m_outW + x) * 4;
-      for (int c = 0; c < 3; ++c) { const int v = (int)p[c] + delta; p[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
-      p[3] = 255;
-   };
-   const int x0 = boxX, y0 = boxY, x1 = boxX + cellW - 1, y1 = boxY + cellH - 1;
-   for (int x = x0; x <= x1; ++x) { shade(x, y0, -66); shade(x, y1, +32); }
-   for (int y = y0; y <= y1; ++y) { shade(x0, y, -66); shade(x1, y, +32); }
+   // Only for mechanical reel-digit windows; LED/segment character cells have no
+   // window frame (border=false), so skip it there.
+   if (border)
+   {
+      const auto shade = [this](int x, int y, int delta) {
+         if (x < 0 || x >= m_outW || y < 0 || y >= m_outH) return;
+         uint8_t* const p = m_scratch.data() + ((size_t)y * m_outW + x) * 4;
+         for (int c = 0; c < 3; ++c) { const int v = (int)p[c] + delta; p[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+         p[3] = 255;
+      };
+      const int x0 = boxX, y0 = boxY, x1 = boxX + cellW - 1, y1 = boxY + cellH - 1;
+      for (int x = x0; x <= x1; ++x) { shade(x, y0, -66); shade(x, y1, +32); }
+      for (int y = y0; y <= y1; ++y) { shade(x0, y, -66); shade(x1, y, +32); }
+   }
 }
 
 // Blit `count` of the reel's current digit cells (starting at reel index
@@ -635,9 +640,15 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
    m_scratch.assign((size_t)outW * outH * 4, 0);
    FillSurroundPanel(outW, outH);
 
+   static int s_dbg = 8;
+   const bool dbg = (s_dbg > 0);
+   if (dbg) { --s_dbg; PLOGI << "[ReelDmd] CharDisplay bbox=(" << layout.x << "," << layout.y << " " << layout.w << "x" << layout.h
+                              << ") placed=" << layout.placed.size() << " out=" << outW << "x" << outH; }
+
    const float sx = (float)outW / layout.w;
    const float sy = (float)outH / layout.h;
    bool anyDrawn = false;
+   int dbgCells = 0;
    for (const reel::PlacedReel& pr : layout.placed)
    {
       DispReel* const r = reels[cells[pr.index]];
@@ -650,8 +661,18 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
       int dstH = (int)(pr.h * sy + 0.5f);
       if (dstW < 1) dstW = 1;
       if (dstH < 1) dstH = 1;
-      // One wheel, one glyph: BlitReelCells draws this reel's current cell index.
-      BlitReelCells(strip, r, /*startReel*/ 0, /*count*/ 1, dstX, dstY, dstW, dstH);
+      // One wheel, one glyph: draw this cell's current glyph WITHOUT the reel-digit
+      // window bevel (these are LED/segment character cells, not reel windows).
+      const int dr = (r->m_d.m_digitrange > 0) ? r->m_d.m_digitrange : 0;
+      const int digit = r->GetReelDigit(0);
+      const int cellIndex = (digit >= 0 && digit <= dr) ? digit : 0;
+      DrawDigitCell(strip, cellIndex, dstX, dstY, dstW, dstH, /*border*/ false);
+      if (dbg && dbgCells < 6)
+      {
+         ++dbgCells;
+         PLOGI << "[ReelDmd]   cell '" << r->GetName() << "' digit=" << digit << " vis=" << (r->m_d.m_visible ? 1 : 0)
+               << " auth=(" << pr.x << "," << pr.y << " " << pr.w << "x" << pr.h << ") dst=(" << dstX << "," << dstY << " " << dstW << "x" << dstH << ")";
+      }
       anyDrawn = true;
    }
    if (!anyDrawn)

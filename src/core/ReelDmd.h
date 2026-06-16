@@ -44,8 +44,9 @@ private:
    bool LoadStrip(DispReel* reel, ReelStrip& out) const;
 
    // Draw one digit cell (cellIndex into the strip) into m_scratch, stretched to
-   // fill dstCellW x dstCellH at (boxX, boxY), with the recessed-window border.
-   void DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int boxY, int cellW, int cellH);
+   // fill dstCellW x dstCellH at (boxX, boxY). With border=true a recessed-window
+   // bevel is drawn (mechanical reel digits); border=false omits it (LED/segment cells).
+   void DrawDigitCell(const ReelStrip& strip, int cellIndex, int boxX, int boxY, int cellW, int cellH, bool border = true);
 
    // Blit `count` of the reel's current digit cells (starting at reel index
    // `startReel`) into m_scratch, scaled to dstCellW x dstCellH, packed left to
