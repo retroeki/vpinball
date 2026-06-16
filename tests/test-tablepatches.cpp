@@ -53,6 +53,25 @@ int main() {
       CHECK(ApplyTableSpecificPatches(s, "Other.vpx", testPatches, 1) == s,
             "regex entry no-op on other file");
    }
+   // applied out-parameter: one entry per applied edit; empty when no match (production registry).
+   {
+      std::vector<std::pair<std::string, int>> log;
+      ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "DragonFire.vpx", &log);
+      CHECK(log.size() == 1 && log[0].second == 1, "applied: one entry, count 1 for one literal edit");
+      std::vector<std::pair<std::string, int>> nolog;
+      ApplyTableSpecificPatches("Desktop=Table1.ShowDT", "SomethingElse.vpx", &nolog);
+      CHECK(nolog.empty(), "applied: empty when no match");
+   }
+   // regex applied count reflects actual occurrences (custom registry).
+   {
+      const TablePatch testPatches[] = {
+         { "Multi.vpx", "X", "Y", true, "regex multi" },
+      };
+      std::vector<std::pair<std::string, int>> log;
+      const std::string out = ApplyTableSpecificPatches("X X X", "Multi.vpx", testPatches, 1, &log);
+      CHECK(out == "Y Y Y", "regex multi: all occurrences replaced");
+      CHECK(log.size() == 1 && log[0].second == 3, "applied: regex count == 3 occurrences");
+   }
    printf("%s (%d failures)\n", g_fail ? "FAILURES" : "ALL PASS", g_fail);
    return g_fail ? 1 : 0;
 }

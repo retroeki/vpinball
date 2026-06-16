@@ -2,6 +2,7 @@
 #include "ui/tablepatches.h"
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <regex>
 
 namespace tablepatches {
@@ -14,8 +15,12 @@ const size_t kTablePatchCount = sizeof(kTablePatches) / sizeof(kTablePatches[0])
 
 namespace {
 std::string Basename(const std::string& path) {
-   const size_t s = path.find_last_of("/\\");
-   return (s == std::string::npos) ? path : path.substr(s + 1);
+   size_t end = path.size();
+   while (end > 0 && (path[end - 1] == '/' || path[end - 1] == '\\'))
+      --end; // ignore trailing separators so "foo/bar/" -> "bar"
+   const size_t s = path.find_last_of("/\\", end == 0 ? std::string::npos : end - 1);
+   const size_t start = (s == std::string::npos) ? 0 : s + 1;
+   return path.substr(start, end - start);
 }
 std::string ToLower(std::string s) {
    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -49,10 +54,16 @@ std::string ApplyTableSpecificPatches(const std::string& script, const std::stri
       if (p.isRegex) {
          try {
             const std::regex re(p.find);
-            std::string out = std::regex_replace(result, re, std::string(p.replace));
-            if (out != result) { result = std::move(out); n = 1; }
+            const int matchCount = static_cast<int>(
+               std::distance(std::sregex_iterator(result.cbegin(), result.cend(), re), std::sregex_iterator()));
+            if (matchCount > 0) {
+               result = std::regex_replace(result, re, std::string(p.replace));
+               n = matchCount; // accurate count for the `applied` contract {description, occurrences}
+            }
          } catch (const std::regex_error&) {
-            n = 0; // bad pattern -> skip safely
+            // A malformed pattern in the (author-controlled) kTablePatches registry is a
+            // safe no-op; the entry's own unit test is expected to catch a bad pattern.
+            n = 0;
          }
       } else {
          n = ReplaceAllLiteral(result, p.find, p.replace);
