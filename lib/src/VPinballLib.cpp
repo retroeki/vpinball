@@ -73,6 +73,15 @@ static void GetPUPVideoSourceSize(int& width, int& height)
    height = g_pupVideoSourceHeight;
 }
 
+// True while the PUP plugin is rendering a video into the ScoreView DMD (it calls
+// SetPUPVideoSourceSize each such render). The PUP video is the authoritative DMD when
+// present, so ReelDmd defers its EM-reel / char-display composite to it. Tables with no
+// PUP pack never set these, so they stay 0 and the reels render as usual.
+extern "C" bool IsPUPVideoActive()
+{
+   return g_pupVideoSourceWidth.load() > 0 && g_pupVideoSourceHeight.load() > 0;
+}
+
 // ScoreView's currently-resolved source pixel size, pushed by the ScoreView
 // plugin each render (mirrors the PUP video-size pattern above). 0 = nothing
 // resolved (render disabled / no matching source).

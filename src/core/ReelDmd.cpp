@@ -29,6 +29,12 @@
 // (0,0,nullptr) clears the channel.
 extern "C" void SetReelImage(int width, int height, const uint8_t* rgba);
 
+// Implemented in lib/src/VPinballLib.cpp. True while a PUP video owns the ScoreView DMD.
+// The PUP video is the authoritative DMD when present, so ReelDmd clears its channel and
+// defers (the ScoreView then renders nothing and its source size falls back to the PUP
+// video's, so the PUP video shows instead of the reel composite).
+extern "C" bool IsPUPVideoActive();
+
 namespace
 {
 // Cap the composited image width so a many-reel set with a large strip never
@@ -129,6 +135,18 @@ void ReelDmd::Update()
 {
    if (m_player == nullptr)
       return;
+
+   // A PUP video drives the DMD when present; the reel/char composite is a last-resort
+   // source, so defer to it. Clearing our channel makes the ScoreView render nothing, and
+   // its reported source size falls back to the PUP video's dimensions, so the PUP video
+   // shows. Tables with no PUP pack keep the PUP size at 0 and are unaffected. (Fixes the
+   // char-display detector hijacking PUP-video tables that also have LED-strip DispReels,
+   // e.g. TNA's dmd-letters reels.)
+   if (IsPUPVideoActive())
+   {
+      ClearActive();
+      return;
+   }
 
    std::vector<DispReel*> reels;
    CollectReels(m_player, reels);
