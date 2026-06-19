@@ -4,6 +4,14 @@ set -e
 
 source ./platforms/config.sh
 
+# 16 KB page size support (Android 15+ / Google Play). CMake initializes
+# CMAKE_SHARED_LINKER_FLAGS from the LDFLAGS env var on a fresh configure, so
+# every from-source dependency .so below links with 16 KB-aligned LOAD
+# segments. ffmpeg sets this explicitly via --extra-ldflags; this covers the
+# rest. Cache-buster suffixes below were bumped so the bumped deps actually
+# rebuild (cache keys are content SHAs and would otherwise skip the rebuild).
+export LDFLAGS="${LDFLAGS} -Wl,-z,max-page-size=16384"
+
 echo "Building external libraries..."
 echo "  SDL_SHA: ${SDL_SHA}"
 echo "  SDL_IMAGE_SHA: ${SDL_IMAGE_SHA}"
@@ -35,7 +43,7 @@ cd "external/android-arm64-v8a/${BUILD_TYPE}"
 # build SDL3, SDL3_image, SDL3_ttf
 #
 
-SDL3_EXPECTED_SHA="${SDL_SHA}-${SDL_IMAGE_SHA}-${SDL_TTF_SHA}_001"
+SDL3_EXPECTED_SHA="${SDL_SHA}-${SDL_IMAGE_SHA}-${SDL_TTF_SHA}_002"
 SDL3_FOUND_SHA="$([ -f SDL3/cache.txt ] && cat SDL3/cache.txt || echo "")"
 
 if [ "${SDL3_EXPECTED_SHA}" != "${SDL3_FOUND_SHA}" ]; then
@@ -114,7 +122,7 @@ fi
 # build freeimage
 #
 
-FREEIMAGE_EXPECTED_SHA="${FREEIMAGE_SHA}_001"
+FREEIMAGE_EXPECTED_SHA="${FREEIMAGE_SHA}_002"
 FREEIMAGE_FOUND_SHA="$([ -f freeimage/cache.txt ] && cat freeimage/cache.txt || echo "")"
 
 if [ "${FREEIMAGE_EXPECTED_SHA}" != "${FREEIMAGE_FOUND_SHA}" ]; then
@@ -186,7 +194,7 @@ fi
 # build pinmame
 #
 
-PINMAME_EXPECTED_SHA="${PINMAME_SHA}_001"
+PINMAME_EXPECTED_SHA="${PINMAME_SHA}_002"
 PINMAME_FOUND_SHA="$([ -f pinmame/cache.txt ] && cat pinmame/cache.txt || echo "")"
 
 if [ "${PINMAME_EXPECTED_SHA}" != "${PINMAME_FOUND_SHA}" ]; then
@@ -252,7 +260,7 @@ fi
 # build libdmdutil
 #
 
-LIBDMDUTIL_EXPECTED_SHA="${LIBDMDUTIL_SHA}_001"
+LIBDMDUTIL_EXPECTED_SHA="${LIBDMDUTIL_SHA}_002"
 LIBDMDUTIL_FOUND_SHA="$([ -f libdmdutil/cache.txt ] && cat libdmdutil/cache.txt || echo "")"
 
 if [ "${LIBDMDUTIL_EXPECTED_SHA}" != "${LIBDMDUTIL_FOUND_SHA}" ]; then
@@ -285,7 +293,7 @@ fi
 # build libaltsound
 #
 
-LIBALTSOUND_EXPECTED_SHA="${LIBALTSOUND_SHA}_001"
+LIBALTSOUND_EXPECTED_SHA="${LIBALTSOUND_SHA}_002"
 LIBALTSOUND_FOUND_SHA="$([ -f libaltsound/cache.txt ] && cat libaltsound/cache.txt || echo "")"
 
 if [ "${LIBALTSOUND_EXPECTED_SHA}" != "${LIBALTSOUND_FOUND_SHA}" ]; then
@@ -317,7 +325,7 @@ fi
 # build libdof
 #
 
-LIBDOF_EXPECTED_SHA="${LIBDOF_SHA}_001"
+LIBDOF_EXPECTED_SHA="${LIBDOF_SHA}_002"
 LIBDOF_FOUND_SHA="$([ -f libdof/cache.txt ] && cat libdof/cache.txt || echo "")"
 
 if [ "${LIBDOF_EXPECTED_SHA}" != "${LIBDOF_FOUND_SHA}" ]; then
@@ -400,7 +408,7 @@ fi
 # build libzip
 #
 
-LIBZIP_EXPECTED_SHA="${LIBZIP_SHA}_001"
+LIBZIP_EXPECTED_SHA="${LIBZIP_SHA}_002"
 LIBZIP_FOUND_SHA="$([ -f libzip/cache.txt ] && cat libzip/cache.txt || echo "")"
 
 if [ "${LIBZIP_EXPECTED_SHA}" != "${LIBZIP_FOUND_SHA}" ]; then

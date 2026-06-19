@@ -79,6 +79,13 @@ add_compile_options(-fPIC)
 
 add_library(vpinball SHARED ${VPINBALL_SOURCES})
 
+if(PLATFORM STREQUAL "android")
+   # 16 KB page size support (Android 15+ / Google Play): align LOAD segments
+   # to 16 KB. The dependency .so set this via LDFLAGS in
+   # platforms/android-arm64-v8a/external.sh; mirror it for libvpinball.so.
+   target_link_options(vpinball PRIVATE "-Wl,-z,max-page-size=16384")
+endif()
+
 target_include_directories(vpinball PUBLIC
    ${CMAKE_SOURCE_DIR}/third-party/include
    ${CMAKE_SOURCE_DIR}
