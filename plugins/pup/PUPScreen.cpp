@@ -409,7 +409,7 @@ void PUPScreen::SetMask(const string& path)
 void PUPScreen::Stop()
 {
    assert(std::this_thread::get_id() == m_apiThread);
-   LOGI("PUPScreen::Stop() called on screen %d", m_screenNum);
+   LOGI_DBG("PUPScreen::Stop() called on screen %d", m_screenNum);
    m_pMediaPlayerManager->Stop();
 }
 
@@ -452,7 +452,7 @@ void PUPScreen::SetLength(int length)
 void PUPScreen::SetAsBackGround(int mode)
 {
    assert(std::this_thread::get_id() == m_apiThread);
-   LOGI("PUPScreen::SetAsBackGround(%d) called on screen %d", mode, m_screenNum);
+   LOGI_DBG("PUPScreen::SetAsBackGround(%d) called on screen %d", mode, m_screenNum);
    m_pMediaPlayerManager->SetAsBackGround(mode != 0);
 }
 

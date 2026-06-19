@@ -402,6 +402,23 @@ static void TestCharDisplay()
    // Ali (with a real shared font) is structurally a char display too -> detected.
    CHECK((int)ClassifyCharDisplay(AliFontDisplay()).size() == 12, "CharDisplay: Ali font line detected (ambiguity is real)");
 
+   // JPSalas "Scapino LEDs" / 1977-1985 SS recreations: per-digit LED reels in the
+   // LEGACY stacked-image mode (useImageGrid=FALSE, dr=10, shared leds* strip). The
+   // useImageGrid gate used to exclude these; the render path handles them, so they
+   // MUST be detected now.
+   std::vector<ReelInput> jpLeds;
+   for (const char* c : {"a001", "a002", "a003", "a004", "a005", "a006", "a007"})
+      jpLeds.push_back(R(c, 1, 10, 0, /*hasImage*/ true, "leds-Bally", /*useImageGrid*/ false));
+   CHECK((int)ClassifyCharDisplay(jpLeds).size() == 7,
+         "CharDisplay: JPSalas legacy LED reels (useImageGrid=false) detected");
+
+   // ...but a legacy group below the minimum size still must NOT qualify.
+   std::vector<ReelInput> jpTiny = {
+      R("a001", 1, 10, 0, true, "leds", false), R("a002", 1, 10, 0, true, "leds", false),
+      R("a003", 1, 10, 0, true, "leds", false),
+   };
+   CHECK(ClassifyCharDisplay(jpTiny).empty(), "CharDisplay: legacy LED group below min cells -> none");
+
    // Decimal EM tables are NOT char displays (no image grid).
    CHECK(ClassifyCharDisplay(RoyalFlush).empty(), "CharDisplay: RoyalFlush (decimal reels) -> none");
    CHECK(ClassifyCharDisplay(FastDraw).empty(), "CharDisplay: FastDraw (decimal reels) -> none");

@@ -73,13 +73,20 @@ static void GetPUPVideoSourceSize(int& width, int& height)
    height = g_pupVideoSourceHeight;
 }
 
-// True while the PUP plugin is rendering a video into the ScoreView DMD (it calls
-// SetPUPVideoSourceSize each such render). The PUP video is the authoritative DMD when
-// present, so ReelDmd defers its EM-reel / char-display composite to it. Tables with no
-// PUP pack never set these, so they stay 0 and the reels render as usual.
-extern "C" bool IsPUPVideoActive()
+// Whether a PUP pack is loaded for the current table (set by the PUP plugin at load via
+// SetPUPPackActive, independent of rendering). When a pack is present the PUP video is the
+// authoritative DMD, so ReelDmd defers its EM-reel / char-display composite to it. A
+// render-time signal does NOT work here: while ReelDmd holds the ScoreView the PUP never
+// renders into it, so its video source size never gets set. Tables with no pupvideos/<rom>
+// folder leave this false and the reels render as usual.
+static std::atomic<bool> g_pupPackActive{false};
+extern "C" void SetPUPPackActive(bool active)
 {
-   return g_pupVideoSourceWidth.load() > 0 && g_pupVideoSourceHeight.load() > 0;
+   g_pupPackActive = active;
+}
+extern "C" bool IsPUPActive()
+{
+   return g_pupPackActive.load();
 }
 
 // ScoreView's currently-resolved source pixel size, pushed by the ScoreView
@@ -524,7 +531,7 @@ void VPinballLib::InitHeadless(VPinballEventCallback callback)
 
 void VPinballLib::UpdateEventCallback(VPinballEventCallback callback)
 {
-   PLOGI.printf("UpdateEventCallback called");
+   PLOGD.printf("UpdateEventCallback called");
    SetEventCallback(callback);
 }
 
@@ -1585,8 +1592,9 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
 
       g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot("__scoreview_capture__",
          [](bool success) {
-            if (!success)
+            if (!success) {
                PLOGE << "[DMDCapture] screenshot request failed";
+            }
          });
    }, this, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
 }

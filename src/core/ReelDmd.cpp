@@ -22,6 +22,21 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #endif
 
+#include "core/ScoreViewLog.h"
+// Gate this file's diagnostic logging behind the score-reel/ScoreView debug switch (off
+// by default). Set VPX_SCOREVIEW_DEBUG_LOG=1 (ScoreViewLog.h) to enable.
+#if VPX_SCOREVIEW_DEBUG_LOG
+   #define SVLOG  PLOGI
+   #define SVLOGW PLOGW
+#else
+   // Disabled: a throwaway sink that swallows the whole << chain as a plain expression
+   // statement. No if/else, so no -Wdangling-else at unbraced call sites, and the
+   // optimizer drops it entirely; the stream args still get compiled so they can't bit-rot.
+   namespace { struct ScoreViewNullLog { template <class T> ScoreViewNullLog& operator<<(const T&) { return *this; } }; }
+   #define SVLOG  ScoreViewNullLog{}
+   #define SVLOGW ScoreViewNullLog{}
+#endif
+
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
 // Hands a tightly-packed w*h*4 sRGBA image of the active score reels to the
 // ScoreView plugin's Image visual. Digits are opaque; the surround panel is
@@ -29,11 +44,11 @@
 // (0,0,nullptr) clears the channel.
 extern "C" void SetReelImage(int width, int height, const uint8_t* rgba);
 
-// Implemented in lib/src/VPinballLib.cpp. True while a PUP video owns the ScoreView DMD.
-// The PUP video is the authoritative DMD when present, so ReelDmd clears its channel and
+// Implemented in lib/src/VPinballLib.cpp. True when a PUP pack is loaded for the current
+// table. The PUP video is the authoritative DMD then, so ReelDmd clears its channel and
 // defers (the ScoreView then renders nothing and its source size falls back to the PUP
 // video's, so the PUP video shows instead of the reel composite).
-extern "C" bool IsPUPVideoActive();
+extern "C" bool IsPUPActive();
 
 namespace
 {
@@ -118,13 +133,13 @@ bool ReelDmd::ShouldActivate() const
    if ((int)act != m_loggedActivate)
    {
       m_loggedActivate = (int)act;
-      PLOGI << "[ReelDmd] ShouldActivate=" << (act ? "true" : "false") << " dispReels=" << reels.size();
+      SVLOG << "[ReelDmd] ShouldActivate=" << (act ? "true" : "false") << " dispReels=" << reels.size();
       // One-shot ground-truth dump: every reel's name/geometry/image, so we can
       // see exactly what ReelDmd reads (e.g. whether m_szImage is populated).
       const int nImages = (m_player->m_ptable != nullptr) ? (int)m_player->m_ptable->GetImageList().size() : -1;
-      PLOGI << "[ReelDmd] DUMP tableImages=" << nImages;
+      SVLOG << "[ReelDmd] DUMP tableImages=" << nImages;
       for (DispReel* r : reels)
-         PLOGI << "[ReelDmd]   reel '" << r->GetName() << "' rc=" << r->GetReels()
+         SVLOG << "[ReelDmd]   reel '" << r->GetName() << "' rc=" << r->GetReels()
                << " dr=" << r->GetRange() << " grid=" << (r->m_d.m_useImageGrid ? 1 : 0)
                << " vis=" << (r->m_d.m_visible ? 1 : 0) << " img='" << r->m_d.m_szImage << "'";
    }
@@ -142,10 +157,15 @@ void ReelDmd::Update()
    // shows. Tables with no PUP pack keep the PUP size at 0 and are unaffected. (Fixes the
    // char-display detector hijacking PUP-video tables that also have LED-strip DispReels,
    // e.g. TNA's dmd-letters reels.)
-   if (IsPUPVideoActive())
    {
-      ClearActive();
-      return;
+      const bool pupActive = IsPUPActive();
+      static int s_pupLog = 12; // throttle: log the first dozen frames' PUP state (gated by SVLOG)
+      if (s_pupLog > 0) { --s_pupLog; SVLOG << "[ReelDmd] Update: IsPUPActive=" << (pupActive ? 1 : 0); }
+      if (pupActive)
+      {
+         ClearActive();
+         return;
+      }
    }
 
    std::vector<DispReel*> reels;
@@ -223,7 +243,7 @@ void ReelDmd::Update()
    {
       // No usable strip art -> drop the channel rather than show stale/blank.
       static int s_failLog = 12; // throttle: LoadStrip logs carry the real reason
-      if (s_failLog > 0) { --s_failLog; PLOGW << "[ReelDmd] build produced no image (scoreReels="
+      if (s_failLog > 0) { --s_failLog; SVLOGW << "[ReelDmd] build produced no image (scoreReels="
             << plan.scoreReels.size() << ")"; }
       ClearActive();
       return;
@@ -285,14 +305,14 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
    const Texture* pin = m_player->m_ptable->GetImage(imgName);
    if (pin == nullptr)
    {
-      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL GetImage('" << imgName << "') -> null"; }
+      if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL GetImage('" << imgName << "') -> null"; }
       return false;
    }
 
    std::shared_ptr<const BaseTexture> raw = pin->GetRawBitmap(false, 0);
    if (raw == nullptr)
    {
-      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL GetRawBitmap('" << imgName << "') null, fileSize=" << pin->GetFileSize(); }
+      if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL GetRawBitmap('" << imgName << "') null, fileSize=" << pin->GetFileSize(); }
       return false;
    }
 
@@ -306,7 +326,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
       std::shared_ptr<BaseTexture> conv = raw->Convert(target);
       if (conv == nullptr)
       {
-         if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL Convert(" << BaseTexture::GetFormatString(target) << ") null '" << imgName << "' fmt=" << (int)bmp->m_format; }
+         if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL Convert(" << BaseTexture::GetFormatString(target) << ") null '" << imgName << "' fmt=" << (int)bmp->m_format; }
          return false;
       }
       bmp = conv;
@@ -318,14 +338,14 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
    const int imgH = (int)bmp->height();
    if (imgW <= 0 || imgH <= 0)
    {
-      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL bad size " << imgW << "x" << imgH << " '" << imgName << "'"; }
+      if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL bad size " << imgW << "x" << imgH << " '" << imgName << "'"; }
       return false;
    }
 
    const uint8_t* const src = static_cast<const uint8_t*>(bmp->datac());
    if (src == nullptr)
    {
-      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL datac() null '" << imgName << "'"; }
+      if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL datac() null '" << imgName << "'"; }
       return false;
    }
 
@@ -354,7 +374,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
    const int cellH = imgH / gridRows;
    if (cellW <= 0 || cellH <= 0)
    {
-      if (s_log > 0) { --s_log; PLOGW << "[ReelDmd] LoadStrip FAIL cell " << cellW << "x" << cellH << " (img " << imgW << "x" << imgH << " grid " << gridCols << "x" << gridRows << ") '" << imgName << "'"; }
+      if (s_log > 0) { --s_log; SVLOGW << "[ReelDmd] LoadStrip FAIL cell " << cellW << "x" << cellH << " (img " << imgW << "x" << imgH << " grid " << gridCols << "x" << gridRows << ") '" << imgName << "'"; }
       return false;
    }
 
@@ -368,7 +388,7 @@ bool ReelDmd::LoadStrip(DispReel* reel, ReelStrip& out, bool wantAlpha) const
    out.cellW = cellW;
    out.cellH = cellH;
    out.ok = true;
-   if (s_log > 0) { --s_log; PLOGI << "[ReelDmd] LoadStrip OK '" << imgName << "' img=" << imgW << "x" << imgH << " cells=" << gridCols << "x" << gridRows << " fmt=" << (int)bmp->m_format << " ch=" << out.channels << " emissive=" << (out.emissive ? 1 : 0) << " rawAlpha=" << (raw->HasAlpha() ? 1 : 0); }
+   if (s_log > 0) { --s_log; SVLOG << "[ReelDmd] LoadStrip OK '" << imgName << "' img=" << imgW << "x" << imgH << " cells=" << gridCols << "x" << gridRows << " fmt=" << (int)bmp->m_format << " ch=" << out.channels << " emissive=" << (out.emissive ? 1 : 0) << " rawAlpha=" << (raw->HasAlpha() ? 1 : 0); }
    return true;
 }
 
@@ -572,7 +592,7 @@ const ReelDmd::LabelBitmap* ReelDmd::GetLabelBitmap(const char* s, int glyphH) c
          const std::string path = g_pvp->m_myPath + "assets" + PATH_SEPARATOR_CHAR + "TeXGyreBonum-Regular.otf";
          m_labelFont = TTF_OpenFont(path.c_str(), (float)glyphH);
          if (m_labelFont == nullptr)
-            PLOGW << "[ReelDmd] label font load failed: " << path;
+            SVLOGW << "[ReelDmd] label font load failed: " << path;
       }
    }
 
@@ -696,7 +716,7 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
 
    static int s_dbg = 8;
    const bool dbg = (s_dbg > 0);
-   if (dbg) { --s_dbg; PLOGI << "[ReelDmd] CharDisplay bbox=(" << layout.x << "," << layout.y << " " << layout.w << "x" << layout.h
+   if (dbg) { --s_dbg; SVLOG << "[ReelDmd] CharDisplay bbox=(" << layout.x << "," << layout.y << " " << layout.w << "x" << layout.h
                               << ") placed=" << layout.placed.size() << " out=" << outW << "x" << outH << " pad=" << pad; }
 
    const float sx = (float)contentW / layout.w;
@@ -721,7 +741,7 @@ bool ReelDmd::CompositeCharDisplay(const std::vector<DispReel*>& reels, const st
       if (dbg && dbgCells < 6)
       {
          ++dbgCells;
-         PLOGI << "[ReelDmd]   cell '" << r->GetName() << "' digit=" << digit << " vis=" << (r->m_d.m_visible ? 1 : 0)
+         SVLOG << "[ReelDmd]   cell '" << r->GetName() << "' digit=" << digit << " vis=" << (r->m_d.m_visible ? 1 : 0)
                << " auth=(" << pr.x << "," << pr.y << " " << pr.w << "x" << pr.h << ") dst=(" << dstX << "," << dstY << " " << dstW << "x" << dstH << ")";
       }
       anyDrawn = true;
@@ -759,7 +779,7 @@ bool ReelDmd::CompositeUnified(const std::vector<DispReel*>& reels, const reel::
          sv += r->GetName() + "=" + std::to_string((long)r->GetCurrentValue())
              + (r->m_d.m_visible ? "(vis) " : "(hid) ");
       }
-      PLOGI << "[ReelDmd] scoreVals " << sv;
+      SVLOG << "[ReelDmd] scoreVals " << sv;
    }
 
    // A reel digit's on-glass aspect (width:height) is the AUTHORED reel box, since
@@ -1062,7 +1082,7 @@ bool ReelDmd::CompositeUnified(const std::vector<DispReel*>& reels, const reel::
       }
    }
 
-   PLOGI << "[ReelDmd] unified placed=" << nPlaced << " grid=" << gridRows << "x" << gridCols
+   SVLOG << "[ReelDmd] unified placed=" << nPlaced << " grid=" << gridRows << "x" << gridCols
          << " overflow=" << (anyOverflow ? 1 : 0) << " ball=" << bipValue << " credit=" << credValue
          << " playerUpLamps=" << plan.playerUpReels.size() << " active=" << activeCell
          << " cell=" << cw[anchor] << "x" << cellH << " image=" << outW << "x" << outH;

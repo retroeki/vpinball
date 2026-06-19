@@ -10,6 +10,21 @@
 
 // External function to store video source dimensions for JNI queries
 extern "C" void SetPUPVideoSourceSize(int width, int height);
+// Tell the host a PUP pack is (un)loaded for this table, so ReelDmd defers its reel/char
+// composite to the PUP video DMD. Implemented in lib/src/VPinballLib.cpp.
+extern "C" void SetPUPPackActive(bool active);
+
+// Per-trigger diagnostic logging. QueueTriggerData / Trigger match fire on every queued
+// trigger and every trigger match during play, which spams the logcat on PUP tables. Off
+// by default; set PUP_TRIGGER_DEBUG_LOG to 1 (or -DPUP_TRIGGER_DEBUG_LOG=1) to trace trigger routing.
+#ifndef PUP_TRIGGER_DEBUG_LOG
+#define PUP_TRIGGER_DEBUG_LOG 0
+#endif
+#if PUP_TRIGGER_DEBUG_LOG
+   #define TRIGLOG(...) LOGI(__VA_ARGS__)
+#else
+   #define TRIGLOG(...) ((void)0)
+#endif
 
 namespace PUP {
 
@@ -83,6 +98,7 @@ void PUPManager::SetGameDir(const string& szRomName)
    std::lock_guard<std::mutex> lock(m_queueMutex);
 
    m_szPath = path;
+   SetPUPPackActive(true); // a PUP pack exists for this table -> ReelDmd defers to the PUP DMD
    LOGI("PUP path: %s", m_szPath.c_str());
 
    // Load Fonts
@@ -217,6 +233,7 @@ void PUPManager::Unload()
    m_dmd = nullptr;
 
    m_szPath.clear();
+   SetPUPPackActive(false);
 }
 
 void PUPManager::UnloadFonts()
@@ -436,7 +453,7 @@ void PUPManager::QueueTriggerData(PUPTriggerData data)
 {
    if (data.value == 0)
       return;
-   LOGI("QueueTriggerData: type=%c, number=%d, value=%d", data.type, data.number, data.value);
+   TRIGLOG("QueueTriggerData: type=%c, number=%d, value=%d", data.type, data.number, data.value);
    {
       std::lock_guard<std::mutex> lock(m_queueMutex);
       m_triggerDataQueue.push_back({ data.type, data.number, data.value });
@@ -607,7 +624,7 @@ void PUPManager::ProcessQueue()
                {
                   if ((trigger.m_type == triggerData.type) && (trigger.m_number == triggerData.number))
                   {
-                     LOGI("Trigger match: type=%c, number=%d, setting value=%d", trigger.m_type, trigger.m_number, triggerData.value);
+                     TRIGLOG("Trigger match: type=%c, number=%d, setting value=%d", trigger.m_type, trigger.m_number, triggerData.value);
                      trigger.m_value = triggerData.value;
                   }
                }

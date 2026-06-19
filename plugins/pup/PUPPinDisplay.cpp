@@ -144,7 +144,7 @@ void PUPPinDisplay::playresume(int screenNum)
 
 void PUPPinDisplay::playstop(int screenNum)
 {
-   LOGI("PUPPinDisplay::playstop(%d) called", screenNum);
+   LOGI_DBG("PUPPinDisplay::playstop(%d) called", screenNum);
    std::shared_ptr<PUPScreen> pScreen = m_pupManager.GetScreen(screenNum, true);
    if (pScreen)
       pScreen->Stop();
@@ -215,7 +215,7 @@ void PUPPinDisplay::SetScreenEx(int screenNum, int xpos, int ypos, int swidth, i
    }
    if (swidth && sheight) {
       // If not 0, this is used to define a custom screen size from script. The only known use case is when using PUPDMDControl to render to a real DMD
-      LOGE("Not fully implemented: screenNum=%d, xpos=%d, ypos=%d, swidth=%d, sheight=%d, popup=%d", screenNum, xpos, ypos, swidth, sheight, popup);
+      LOGE_DBG("Not fully implemented: screenNum=%d, xpos=%d, ypos=%d, swidth=%d, sheight=%d, popup=%d", screenNum, xpos, ypos, swidth, sheight, popup);
    }
 }
 
@@ -317,7 +317,7 @@ void PUPPinDisplay::SendMSG(const string& szMsg)
                         // set screen custompos { 'mt':301, 'SN':15,'FN':15,'CP':'parent_screen,x,y,w,h'} CP = CustomPos String, coordinates relative in %
                         // Ignore dynamic CustomPos changes - on Android scoreview there's no backglass frame
                         // to mask sub-regions, so repositioning causes visible size changes mid-game
-                        LOGI("Ignoring SetCustomPos: screen={%s}, fn=%d, szMsg=%s",pScreen->ToString(false).c_str(), fn, szMsg.c_str());
+                        LOGI_DBG("Ignoring SetCustomPos: screen={%s}, fn=%d, szMsg=%s",pScreen->ToString(false).c_str(), fn, szMsg.c_str());
                         break;
                      case 16:
                         // start executable
@@ -478,7 +478,7 @@ void PUPPinDisplay::LabelSet(int screenNum, const string& LabelName, const strin
    if (!pLabel) {
       if (m_warnedLabels[screenNum].find(LabelName) == m_warnedLabels[screenNum].end())
       {
-         LOGE("Invalid label: screen={%s}, labelName=%s", pScreen->ToString(false).c_str(), LabelName.c_str());
+         LOGE_DBG("Invalid label: screen={%s}, labelName=%s", pScreen->ToString(false).c_str(), LabelName.c_str());
          m_warnedLabels[screenNum].insert(LabelName);
       }
       return;

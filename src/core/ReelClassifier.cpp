@@ -209,12 +209,21 @@ GridLayout AssignGrid(const std::vector<PlacedReel>& placed, float rowTol, float
    return g;
 }
 
-// One character cell of a custom display: a single image-grid wheel drawn from a
-// font strip richer than the 10 decimal glyphs. reelCount>=2 0-9 reels are real
-// scores (IsScoreReel); a single 0-9 wheel is a credit/decimal flag - both excluded.
+// One character cell of a custom display: a single-wheel reel drawn from a shared
+// font/segment strip image. reelCount>=2 0-9 reels are real scores (IsScoreReel);
+// a single 0-9 wheel (digitRange==9) is a credit/decimal flag - both excluded.
+//
+// NOTE: this intentionally does NOT require useImageGrid. JPSalas's "Scapino LEDs"
+// segment displays - and a wide swathe of 1977-1985 solid-state recreations -
+// render each LED digit as a LEGACY stacked-image single-digit reel
+// (useImageGrid=false, digitRange=10, a shared leds* strip). ReelDmd::LoadStrip
+// already slices legacy reels with the exact same cell layout as the engine
+// (gridCols = digitRange+1, one row), so the render path needs no change; and the
+// ">=4 cells sharing one image" grouping in ClassifyCharDisplay guards against a
+// few stray single-digit status flags qualifying.
 static bool IsCharCell(const ReelInput& r)
 {
-   return r.reelCount == 1 && r.useImageGrid && r.digitRange != 9 && r.hasImage && !r.image.empty();
+   return r.reelCount == 1 && r.digitRange != 9 && r.hasImage && !r.image.empty();
 }
 
 std::vector<int> ClassifyCharDisplay(const std::vector<ReelInput>& reels)

@@ -53,6 +53,27 @@ LPI_USE();
 #define LOGW PUP::LPI_LOGW
 #define LOGE PUP::LPI_LOGE
 
+// Gate for verbose per-event PUP diagnostics (lifecycle breadcrumbs like "X called",
+// unsupported-feature notices, label-lookup failures) that fire during normal play and
+// spam the logcat. Off by default; set PUP_DEBUG_LOG to 1 (or -DPUP_DEBUG_LOG=1) to
+// re-enable them. Use the *_DBG variants for logs to hide in release; the plain LOG*
+// macros stay unconditional for genuine, user-actionable errors. (The per-trigger
+// firehose has its own switch, PUP_TRIGGER_DEBUG_LOG, in PUPManager.cpp.)
+#ifndef PUP_DEBUG_LOG
+#define PUP_DEBUG_LOG 0
+#endif
+#if PUP_DEBUG_LOG
+   #define LOGD_DBG(...) LOGD(__VA_ARGS__)
+   #define LOGI_DBG(...) LOGI(__VA_ARGS__)
+   #define LOGW_DBG(...) LOGW(__VA_ARGS__)
+   #define LOGE_DBG(...) LOGE(__VA_ARGS__)
+#else
+   #define LOGD_DBG(...) ((void)0)
+   #define LOGI_DBG(...) ((void)0)
+   #define LOGW_DBG(...) ((void)0)
+   #define LOGE_DBG(...) ((void)0)
+#endif
+
 #ifdef _DEBUG
    #define NOT_IMPLEMENTED(...) { assert(false); LOGE(__VA_ARGS__); }
 #else

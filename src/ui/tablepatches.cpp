@@ -17,6 +17,15 @@ const TablePatch kTablePatches[] = {
    // reel values regardless of visibility, so the in-app DMD panel still renders the score.
    { "DragonFire.vpx", "If Desktop=True Then", "If True Then", false,
      "DragonFire: route LED display to the (hidden) Led reels without un-hiding them" },
+   // RoboCop (Bigus MOD 3.0): the ball dead-stops on the small collidable post Wall15 in the
+   // app but not on Windows. Same .vpx, same geometry - the Android/Clang build uses
+   // approximate-math float flags (-fapprox-func/-freciprocal-math/-fassociative-math), which
+   // tip a marginal resting contact into a stuck one. Zeroing Wall15's friction lets the ball
+   // slip off the post (it's a passive post: no Wall15_Hit handler, unreferenced in script) so
+   // friction can't hold it. Relies on Surface::put_Friction propagating to live hit objects.
+   { "Robocop (Data East 1989)_Bigus(MOD)3.0.vpx", "Sub Table1_Init",
+     "Sub Table1_Init\r\n    Wall15.Friction = 0", false,
+     "RoboCop: zero Wall15 friction so the ball slips off the post instead of dead-stopping (app-only)" },
 };
 const size_t kTablePatchCount = sizeof(kTablePatches) / sizeof(kTablePatches[0]);
 

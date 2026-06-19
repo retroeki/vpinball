@@ -1569,6 +1569,11 @@ STDMETHODIMP Surface::get_Elasticity(float *pVal)
 STDMETHODIMP Surface::put_Elasticity(float newVal)
 {
    m_d.m_elasticity = newVal;
+   // Propagate to the live hit objects so a runtime script change actually takes
+   // effect (SetupHitObject copies these at load; without this the setter only
+   // updates stored data and is a no-op in play). Mirrors put_Collidable.
+   for (size_t i = 0; i < m_vhoCollidable.size(); i++)
+      m_vhoCollidable[i]->m_elasticity = newVal;
    return S_OK;
 }
 
@@ -1581,6 +1586,8 @@ STDMETHODIMP Surface::get_ElasticityFalloff(float* pVal)
 STDMETHODIMP Surface::put_ElasticityFalloff(float newVal)
 {
    m_d.m_elasticityFalloff = newVal;
+   for (size_t i = 0; i < m_vhoCollidable.size(); i++)
+      m_vhoCollidable[i]->m_elasticityFalloff = newVal;
    return S_OK;
 }
 
@@ -1593,6 +1600,8 @@ STDMETHODIMP Surface::get_Friction(float *pVal)
 STDMETHODIMP Surface::put_Friction(float newVal)
 {
    m_d.m_friction = clamp(newVal, 0.f, 1.f);
+   for (size_t i = 0; i < m_vhoCollidable.size(); i++)
+      m_vhoCollidable[i]->SetFriction(m_d.m_friction);
    return S_OK;
 }
 
@@ -1605,6 +1614,8 @@ STDMETHODIMP Surface::get_Scatter(float *pVal)
 STDMETHODIMP Surface::put_Scatter(float newVal)
 {
    m_d.m_scatter = newVal;
+   for (size_t i = 0; i < m_vhoCollidable.size(); i++)
+      m_vhoCollidable[i]->m_scatter = ANGTORAD(newVal); // hit objects store scatter in radians
    return S_OK;
 }
 

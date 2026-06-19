@@ -1258,6 +1258,20 @@ std::string SimpleScriptPatcher::PatchControllerPause(const std::string& script)
     r = RE2Replace(r, p1, ":");
     if (r != before) count++;
 
+    // Single-line If-Then with Controller.Pause, e.g. `If B2SOn Then Controller.Pause = 1`.
+    // Mirror of the Controller.Stop handler (p3b below): replace ONLY the consequent
+    // with `Exit Sub`, keeping the `If ... Then` prefix. Must run BEFORE p2 — otherwise
+    // p2 comments out just the assignment, leaving a bare `If ... Then` with no body,
+    // which VBScript parses as a block-If that wants an `End If`, so the whole script
+    // fails to compile (4 Queens (Bally 1970) Table1_Paused / Table1_unPaused).
+    // CRITICAL: the whitespace right after `Then` is `[ \t]+` (NOT `\s+`) so the match
+    // can never span a newline; a multi-line block `If x Then \n Controller.Pause=y \n
+    // End If` must be left for p2, which safely comments only the inner line.
+    static const RE2 pPauseIf(R"((?i)(If\b[^\r\n]*?\bThen[ \t]+)Controller\.Pause[ \t]*=[ \t]*(?:True|False|1|0))");
+    before = r;
+    r = RE2Replace(r, pPauseIf, "\\1Exit Sub ' Controller.Pause disabled for Android");
+    if (r != before) count++;
+
     // Then handle statements on their own lines (comment them out)
     static const RE2 p2(R"((?i)(\s*)(Controller\.Pause\s*=\s*(True|False|1|0)))");
     before = r;

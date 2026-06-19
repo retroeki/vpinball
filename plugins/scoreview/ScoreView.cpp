@@ -12,6 +12,17 @@
 #include <vector>
 #include <cstdint>
 
+#include "../../src/core/ScoreViewLog.h" // shared switch (plugin include root is plugins/, not src/)
+// Gate this plugin's DIAGNOSTIC logging behind the shared score-reel/ScoreView debug
+// switch (off by default). Genuine parse/load failures (LOGE) stay unconditional.
+#if VPX_SCOREVIEW_DEBUG_LOG
+   #define SVLOG_D(...) LOGD(__VA_ARGS__)
+   #define SVLOG_W(...) LOGW(__VA_ARGS__)
+#else
+   #define SVLOG_D(...) ((void)0)
+   #define SVLOG_W(...) ((void)0)
+#endif
+
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
 extern "C" void SetScoreViewSourceSize(int width, int height);
 // Reel-image channel: ReelDmd (logic thread) composites the active EM table's
@@ -429,7 +440,7 @@ void ScoreView::Parse(const std::filesystem::path& path, std::istream& content)
    m_layouts.push_back(layout);
    // Per-layout load detail is debug-only; the "ScoreView: N layouts loaded"
    // summary in ScoreViewPlugin is sufficient for release/crash logs.
-   LOGD("ScoreView::Parse: Loaded layout from %s (%.0fx%.0f, %d visuals)", path.c_str(), layout.width, layout.height, (int)layout.visuals.size());
+   SVLOG_D("ScoreView::Parse: Loaded layout from %s (%.0fx%.0f, %d visuals)", path.c_str(), layout.width, layout.height, (int)layout.visuals.size());
    #undef CHECK_FIELD
 }
 
@@ -469,7 +480,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
    m_bestLayout = nullptr;
    if (m_layouts.empty())
    {
-      LOGW("ScoreView::Select: No layouts loaded");
+      SVLOG_W("ScoreView::Select: No layouts loaded");
       return;
    }
 
@@ -591,7 +602,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
 
    if (m_bestLayout->unmatchedVisuals > 0)
    {
-      LOGW("ScoreView::Select: Best layout %.0fx%.0f has %d unmatched visuals, disabling ScoreView render",
+      SVLOG_W("ScoreView::Select: Best layout %.0fx%.0f has %d unmatched visuals, disabling ScoreView render",
          m_bestLayout->width, m_bestLayout->height, m_bestLayout->unmatchedVisuals);
       m_bestLayout = nullptr;
    }

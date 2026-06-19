@@ -26,11 +26,21 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
 #ifdef __STANDALONE__
 #include <android/log.h>
-/* DIAGNOSTIC (TEMPORARY - service-menu UAF crash hunt). Revert after capture.
-   g_dbg_member_ident carries the current "obj.member = value" member name into
-   stack_assume_disp so the byref AddRef log can name the crashing member. */
+/* DIAGNOSTIC (VBScript crash-hunt on Android). OFF by default to keep the logcat
+   clean; set VBS_ANDROID_DBG_LOG to 1 (or build with -DVBS_ANDROID_DBG_LOG=1) and
+   rebuild to re-enable. Covers two leftover crash-hunt traces:
+     - the byref AddRef in stack_assume_disp (service-menu UAF): VBS_DBG_LOG plus
+       g_dbg_member_ident name the crashing "obj.member = value" member + pointer;
+     - the recursion-depth tracer in exec_script (runaway-recursion crash hunt).
+   The depth>500 abort guard in exec_script stays active regardless; only its log
+   is gated. */
+#ifndef VBS_ANDROID_DBG_LOG
+#define VBS_ANDROID_DBG_LOG 0
+#endif
+#if VBS_ANDROID_DBG_LOG
 #define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
 static const WCHAR *g_dbg_member_ident = NULL;
+#endif
 #endif
 
 static DISPID propput_dispid = DISPID_PROPERTYPUT;
@@ -567,8 +577,8 @@ static HRESULT stack_assume_disp(exec_ctx_t *ctx, unsigned n, IDispatch **disp)
         V_VT(v) = V_VT(ref);
         V_UNKNOWN(v) = V_UNKNOWN(ref);
         if(V_UNKNOWN(v)) {
-#ifdef __STANDALONE__
-            /* DIAGNOSTIC (TEMPORARY): about to AddRef an object reached via ByRef
+#if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
+            /* DIAGNOSTIC: about to AddRef an object reached via ByRef
                (e.g. an array element such as gBOT(kk)). If that points at a freed
                wrapper this SIGSEGVs inside IUnknown_AddRef; the LAST line logged
                here before the crash names the crashing member + dangling pointer. */
@@ -1214,8 +1224,8 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
 
     TRACE("%s\n", debugstr_w(identifier));
 
-#ifdef __STANDALONE__
-    g_dbg_member_ident = identifier; /* DIAGNOSTIC (TEMPORARY): carry member name into stack_assume_disp */
+#if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
+    g_dbg_member_ident = identifier; /* DIAGNOSTIC: carry member name into stack_assume_disp */
 #endif
     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
     if(FAILED(hres))
@@ -3045,12 +3055,14 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
      * - Detects if same function called repeatedly (possible infinite loop)
      * - Aborts execution at depth 500 to prevent stack overflow crash
      * 
-     * Log output (visible in Android logcat):
+     * Log output (gated behind VBS_ANDROID_DBG_LOG, off by default; set it to 1 to
+     * surface these in Android logcat):
      * - "VBSCRIPT: depth=XX func=FunctionName" - recursion building up
      * - "VBSCRIPT: func called XX times: FunctionName" - repeated calls
      * - "VBSCRIPT: FATAL depth=500: FunctionName" - identifies the culprit
-     * 
-     * To disable: Set recursion_depth checks to very high values or remove this block.
+     *
+     * The depth>500 abort guard stays active regardless of the switch (it prevents a
+     * stack-overflow crash); only the logging above is gated.
      */
     // Track recursion depth to detect infinite recursion
     static int recursion_depth = 0;
@@ -3061,14 +3073,18 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
 
     // Log when depth is high
     if (recursion_depth > 50) {
+#if VBS_ANDROID_DBG_LOG
         fprintf(stderr, "VBSCRIPT: depth=%d func=%ls\n", recursion_depth, func->name ? func->name : L"(null)");
+#endif
     }
 
     // Detect same function called repeatedly
     if (func->name && wstr_cmp(func->name, last_func_name) == 0) {
         same_func_count++;
         if (same_func_count > 100 && same_func_count % 100 == 0) {
+#if VBS_ANDROID_DBG_LOG
             fprintf(stderr, "VBSCRIPT: func called %d times: %ls\n", same_func_count, func->name);
+#endif
         }
     } else {
         if (func->name) {
@@ -3079,7 +3095,9 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
 
     // Abort if recursion is runaway
     if (recursion_depth > 500) {
+#if VBS_ANDROID_DBG_LOG
         fprintf(stderr, "VBSCRIPT: FATAL depth=%d: %ls\n", recursion_depth, func->name ? func->name : L"(null)");
+#endif
         recursion_depth--;
         return E_FAIL;
     }

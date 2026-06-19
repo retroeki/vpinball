@@ -55,6 +55,37 @@ ran cleanly — Layer 2 golden snapshots catch those.
   `python tests/scriptpatcher/check_invariants.py tests/scriptpatcher/corpus`
   into CTest.
 
+## Targeted regression tests
+
+`test_controller_pause_if.py` — locks in the fix for the single-line
+`If ... Then Controller.Pause = X` crash (4 Queens (Bally 1970) 1.2,
+2026-06-16). Before the fix, `p2` commented only the assignment, leaving a
+bare `If ... Then` block-If with no `End If` (whole-script compile failure).
+The `pPauseIf` rule (runs before `p2`) rewrites the consequent to `Exit Sub`,
+mirroring the `Controller.Stop` handler `p3b`. The test asserts both the fix
+**and** the guard against a greedy match swallowing a multi-line block
+`If x Then \n Controller.Pause=y \n End If`. Prefers genuine RE2 via the
+`google-re2` package (the on-device engine); falls back to Python `re`.
+
+```
+python tests/scriptpatcher/test_controller_pause_if.py
+```
+
+Validation against the user's 99-table library (extracted with
+`extract_vpx_scripts.py`, patched through genuine RE2): the fix repairs
+4 Queens (3 dangling-If violations -> 0) and produces **byte-identical output
+on all 98 other tables** (zero regression).
+
+## Corpus sourcing — `extract_vpx_scripts.py`
+
+Realizes "Option A" from `TESTING_PLAN.md`: pulls the pre-patch VBScript out of
+every `.vpx` in a folder (OLE `GameStg/GameData` BIFF `CODE` record) so a
+patcher change can be diffed across a real table library.
+
+```
+python tests/scriptpatcher/extract_vpx_scripts.py "<vpx_dir>" "<out_dir>"
+```
+
 ### Limitations
 
 - Line-oriented lint, not a parser. Can miss bugs that look locally

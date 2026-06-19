@@ -11,6 +11,12 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
+// Display-source enumeration diagnostics (OnDisplaySrcChanged logs every DMD/display
+// source change). Off by default to keep the logcat clean; set RESURI_DEBUG_LOG to 1
+// (or -DRESURI_DEBUG_LOG=1) to trace display-source resolution.
+#ifndef RESURI_DEBUG_LOG
+#define RESURI_DEBUG_LOG 0
+#endif
 using std::string;
 using namespace std::string_literals;
 
@@ -216,14 +222,14 @@ void ResURIResolver::OnDisplaySrcChanged(const unsigned int msgId, void *userDat
    GetDisplaySrcMsg getSrcMsg = { 0, 0, nullptr };
    me->m_msgAPI.BroadcastMsg(me->m_endpointId, me->m_getDisplaySrcMsgId, &getSrcMsg);
    // Log the number of display sources found
-   #ifdef __ANDROID__
+   #if defined(__ANDROID__) && RESURI_DEBUG_LOG
    __android_log_print(ANDROID_LOG_INFO, "ResURIResolver", "OnDisplaySrcChanged: found %d display sources (endpoint=%u)", getSrcMsg.count, me->m_endpointId);
    #endif
    me->m_displaySources.clear();
    me->m_displaySources.resize(getSrcMsg.count);
    getSrcMsg = { getSrcMsg.count, 0, me->m_displaySources.data() };
    me->m_msgAPI.BroadcastMsg(me->m_endpointId, me->m_getDisplaySrcMsgId, &getSrcMsg);
-   #ifdef __ANDROID__
+   #if defined(__ANDROID__) && RESURI_DEBUG_LOG
    for (unsigned int i = 0; i < getSrcMsg.count; i++)
       __android_log_print(ANDROID_LOG_INFO, "ResURIResolver", "  source[%d]: %ux%u endpoint=%u resId=%d", i,
          me->m_displaySources[i].width, me->m_displaySources[i].height,

@@ -73,6 +73,16 @@ int main() {
       CHECK(out == "Y Y Y", "regex multi: all occurrences replaced");
       CHECK(log.size() == 1 && log[0].second == 3, "applied: regex count == 3 occurrences");
    }
+   // RoboCop (production registry): Wall15 friction zeroed at the top of Table1_Init,
+   // nothing else touched.
+   {
+      const std::string s = "Sub Table1_Init\r\n  vpmInit Me\r\nEnd Sub\r\n";
+      CHECK(ApplyTableSpecificPatches(s, "Robocop (Data East 1989)_Bigus(MOD)3.0.vpx")
+               == "Sub Table1_Init\r\n    Wall15.Friction = 0\r\n  vpmInit Me\r\nEnd Sub\r\n",
+            "RoboCop.vpx: Wall15.Friction=0 injected at Table1_Init, rest unchanged");
+      CHECK(ApplyTableSpecificPatches(s, "SomeOther.vpx") == s,
+            "RoboCop patch: no-op on a different table");
+   }
    printf("%s (%d failures)\n", g_fail ? "FAILURES" : "ALL PASS", g_fail);
    return g_fail ? 1 : 0;
 }

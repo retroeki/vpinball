@@ -161,7 +161,7 @@ void PUPLabel::SetSpecial(const string& szSpecial)
             break;
 
          default:
-            LOGE("Unsupported Label.SetSpecial animation type: %d", json["at"s].as<int>(0));
+            LOGE_DBG("Unsupported Label.SetSpecial animation type: %d", json["at"s].as<int>(0));
             break;
          }
       }
@@ -353,7 +353,7 @@ void PUPLabel::SetSpecial(const string& szSpecial)
       break;
 
    default:
-      LOGE("Unsupported Label.SetSpecial mt mode: %d", json["mt"s].as<int>(0));
+      LOGE_DBG("Unsupported Label.SetSpecial mt mode: %d", json["mt"s].as<int>(0));
       break;
    }
 }

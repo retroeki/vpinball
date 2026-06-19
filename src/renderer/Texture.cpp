@@ -1281,6 +1281,47 @@ std::shared_ptr<BaseTexture> BaseTexture::Convert(Format format) const
 
    switch (m_format)
    {
+   case BW:
+      // 8bit BW texels are stored as sRGB-encoded luminance (see GPU upload path:
+      // there is no sGREY8 GPU format), so expand to RGB by replicating the byte.
+      switch (format)
+      {
+      case SRGB:
+         tex = BaseTexture::Create(m_width, m_height, SRGB);
+         if (tex == nullptr)
+            return nullptr;
+         {
+            const uint8_t* const __restrict src_data = static_cast<const uint8_t*>(datac());
+            uint8_t* const __restrict dest_data = static_cast<uint8_t*>(tex->data());
+            const size_t size = (size_t)width() * height();
+            for (size_t o = 0; o < size; ++o)
+            {
+               const uint8_t g = src_data[o];
+               dest_data[o * 3 + 0] = g;
+               dest_data[o * 3 + 1] = g;
+               dest_data[o * 3 + 2] = g;
+            }
+         }
+         break;
+      case SRGBA:
+         tex = BaseTexture::Create(m_width, m_height, SRGBA);
+         if (tex == nullptr)
+            return nullptr;
+         {
+            const uint8_t* const __restrict src_data = static_cast<const uint8_t*>(datac());
+            uint32_t* const __restrict dest_data = reinterpret_cast<uint32_t*>(tex->data());
+            const size_t size = (size_t)width() * height();
+            for (size_t o = 0; o < size; ++o)
+            {
+               const uint32_t g = src_data[o];
+               dest_data[o] = 0xFF000000u | (g << 16) | (g << 8) | g;
+            }
+         }
+         break;
+      default: break;
+      }
+      break;
+
    case RGB:
       switch (format)
       {
