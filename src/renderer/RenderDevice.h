@@ -22,6 +22,8 @@
 #if defined(ENABLE_BGFX)
 #include <thread>
 #include <mutex>
+#include <atomic>
+#include <condition_variable>
 #include "bx/semaphore.h"
 #endif
 
@@ -283,6 +285,19 @@ public:
    bool m_frameNoSync = false; // Flag set when the next frame should be submitted without VBlank sync disabled
    bx::Semaphore m_frameReadySem; // Semaphore to signal when a frame is ready to be submitted
    std::mutex m_frameMutex; // Mutex to lock acces to retained render frame between logic thread and render thread
+
+   // Android Surface lifecycle safety (Family A SIGSEGV fix): the render thread runs bgfx::frame()/
+   // present on its own thread, independent of the game-logic thread that handles the pause ack. When
+   // onPause tears down the ANativeWindow, the render thread must be parked BEFORE the Surface is
+   // destroyed, otherwise bgfx recreates the swapchain against the freed Surface and crashes in
+   // SwapChainVK::update. ParkRenderThread() (from VPinballLib::Pause) blocks until the render thread
+   // confirms it has stopped presenting; UnparkRenderThread() (from VPinballLib::Resume) releases it.
+   std::atomic<bool> m_renderThreadParkRequested{ false };
+   std::atomic<bool> m_renderThreadParked{ false };
+   std::mutex m_renderParkMutex;
+   std::condition_variable m_renderParkCV;
+   void ParkRenderThread();
+   void UnparkRenderThread();
 
    ShaderState& GetUniformState() { return *m_uniformState; }
 

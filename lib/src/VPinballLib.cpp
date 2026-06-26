@@ -1029,6 +1029,14 @@ VPINBALL_STATUS VPinballLib::Pause()
    m_suspendAcknowledged.store(false);
    m_suspended.store(true);
 
+   // Park the bgfx render thread and BLOCK until it confirms it has stopped presenting. The render
+   // thread runs bgfx::frame()/present on its own thread, separate from the game-logic thread that
+   // sets m_suspendAcknowledged below, so that ack alone does NOT stop presentation. Without this the
+   // render thread runs one more present against the Surface that onPause is destroying, recreating the
+   // swapchain against a freed ANativeWindow and crashing in SwapChainVK::update (Family A SIGSEGV).
+   if (g_pplayer->m_renderer && g_pplayer->m_renderer->m_renderDevice)
+      g_pplayer->m_renderer->m_renderDevice->ParkRenderThread();
+
    // Wait for the render loop to acknowledge the suspend (with timeout)
    {
       std::unique_lock<std::mutex> lock(m_suspendMutex);
@@ -1052,7 +1060,12 @@ VPINBALL_STATUS VPinballLib::Resume()
 
    PLOGI << "Resume: Clearing suspend and resuming play state";
 
-   // First clear the suspend flag so the render loop can run again
+   // Release the render thread parked in Pause() BEFORE re-enabling frame production, so the park flag
+   // is already cleared by the time the game loop posts the first frame and wakes the render thread.
+   if (g_pplayer->m_renderer && g_pplayer->m_renderer->m_renderDevice)
+      g_pplayer->m_renderer->m_renderDevice->UnparkRenderThread();
+
+   // Clear the suspend flag so the render loop / game loop can run again
    m_suspended.store(false);
    m_suspendAcknowledged.store(false);
 

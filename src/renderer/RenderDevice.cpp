@@ -9,6 +9,7 @@
 
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include <csignal>
 
 #ifdef __LIBVPINBALL__
@@ -893,6 +894,14 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
       uint64_t lastFlipTick = 0;
       bool gpuVSync = false;
 
+      // --- VPX teardown/swapchain diagnostic instrumentation. Set to 0 to remove. ---
+      // Logs the render-thread events that lead to the Family A onPause swapchain-recreation
+      // SIGSEGV (SwapChainVK::update against a destroyed Android Surface): native-window
+      // pointer changes, bgfx::reset triggers, and a low-rate heartbeat. Event-driven (not
+      // per-frame) to avoid perturbing the timing-sensitive teardown race.
+      #define VPX_TEARDOWN_DIAG 0
+      uint64_t teardownDiagFrameNo = 0;
+
       // Desktop renderloop, synchronized on main display (playfield window), with game logic preparing frames as soon as possible
       while (rd->m_renderDeviceAlive)
       {
@@ -900,6 +909,31 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
          g_pplayer->m_renderProfiler->EnterProfileSection(FrameProfiler::PROFILE_RENDER_WAIT);
          rd->m_frameReadySem.wait();
          g_pplayer->m_renderProfiler->ExitProfileSection();
+
+         // Android Surface teardown safety (Family A SIGSEGV fix): if a park was requested (onPause is
+         // about to destroy the ANativeWindow), acknowledge from THIS render thread and do not present
+         // until resumed. Parking here (after any in-flight present has returned, before the next
+         // bgfx::frame()) guarantees we never recreate the swapchain against a freed Surface.
+         if (rd->m_renderThreadParkRequested.load())
+         {
+            // Release any frame the game loop queued just before the suspend, WITHOUT presenting it
+            // (the Surface may already be gone). The game loop only prepares a new frame when
+            // !m_framePending (player.cpp), so leaving it set would stop all frame production on
+            // resume — the render thread would block forever and the table would render black.
+            // Dropping this one stale pre-pause frame is correct; a fresh frame is drawn on resume.
+            {
+               std::lock_guard<std::mutex> frameLock(rd->m_frameMutex);
+               rd->m_framePending = false;
+               rd->m_frameNoSync = false;
+            }
+            {
+               std::lock_guard<std::mutex> parkLock(rd->m_renderParkMutex);
+               rd->m_renderThreadParked.store(true);
+            }
+            rd->m_renderParkCV.notify_all();
+            continue;
+         }
+
          if (!rd->m_framePending)
             continue;
          const bool useVSync = g_pplayer->GetVideoSyncMode() == VideoSyncMode::VSM_VSYNC;
@@ -907,11 +941,23 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
          const bool needsVSync = useVSync && !noSync; // User has activated VSync, and we are not processing an unsynced frame (offline rendering for example)
          g_pplayer->m_curFrameSyncOnVBlank = needsVSync;
 
+#if VPX_TEARDOWN_DIAG
+         ++teardownDiagFrameNo;
+         bool diagNwhChanged = false;
+         bool diagResetFired = false;
+#endif
+
 #if defined(__ANDROID__)
          void* nwh = SDL_GetPointerProperty(SDL_GetWindowProperties(rd->m_outputWnd[0]->GetCore()), SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL);
          static void* prevNwh = nwh;
          if (nwh != prevNwh)
          {
+#if VPX_TEARDOWN_DIAG
+            PLOGW << "[TeardownDiag] frame=" << teardownDiagFrameNo << " nwh CHANGED " << prevNwh << " -> " << nwh
+                  << (nwh == nullptr ? " (now NULL: skipping frame)" : " (non-null: forcing bgfx reset to re-point swapchain)")
+                  << " useVSync=" << useVSync << " needsVSync=" << needsVSync;
+            diagNwhChanged = true;
+#endif
             prevNwh = nwh;
             if (nwh == nullptr)
                continue;
@@ -922,7 +968,12 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
             gpuVSync = !gpuVSync; // Force reset by making VSync state appear changed
          }
          if (nwh == nullptr)
+         {
+#if VPX_TEARDOWN_DIAG
+            PLOGW << "[TeardownDiag] frame=" << teardownDiagFrameNo << " nwh is NULL: skipping frame (guard hit)";
+#endif
             continue;
+         }
 #endif
 
          // lock prepared frame and submit it
@@ -939,6 +990,15 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
             const int windowHeight = rd->m_outputWnd[0]->GetPixelHeight();
             if ((gpuVSync != needsVSync) || (windowWidth != backBufferWidth) || (windowHeight != backBufferHeight))
             {
+#if VPX_TEARDOWN_DIAG
+               PLOGW << "[TeardownDiag] frame=" << teardownDiagFrameNo << " bgfx::reset "
+                     << backBufferWidth << 'x' << backBufferHeight << " vsync=" << gpuVSync
+                     << " -> " << windowWidth << 'x' << windowHeight << " vsync=" << needsVSync
+                     << " (trigger:" << ((gpuVSync != needsVSync) ? " vsync" : "")
+                     << (((windowWidth != backBufferWidth) || (windowHeight != backBufferHeight)) ? " size" : "")
+                     << " ) -- this queues swapchain recreation processed by bgfx::frame() in Flip()";
+               diagResetFired = true;
+#endif
                gpuVSync = needsVSync;
                backBufferWidth = windowWidth;
                backBufferHeight = windowHeight;
@@ -982,6 +1042,25 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
             #ifdef MSVC_CONCURRENCY_VIEWER
             span* tagSpan = new span(series, 1, _T("BGFX->GPU"));
             #endif
+#if VPX_TEARDOWN_DIAG
+            // Log the state we are about to present with, on the frames that matter (a reset
+            // was queued, the native window changed, or a periodic heartbeat). If a SIGSEGV in
+            // SwapChainVK::update follows this line, this is the exact frame/state that crashed.
+            if (diagResetFired || diagNwhChanged || (teardownDiagFrameNo % 120ull) == 0ull)
+            {
+   #if defined(__ANDROID__)
+               PLOGI << "[TeardownDiag] frame=" << teardownDiagFrameNo << " -> bgfx::frame()/Flip"
+                     << " nwh=" << nwh << " needsVSync=" << needsVSync << " gpuVSync=" << gpuVSync
+                     << " size=" << backBufferWidth << 'x' << backBufferHeight
+                     << (diagResetFired ? " [resetThisFrame]" : "") << (diagNwhChanged ? " [nwhChangedThisFrame]" : "");
+   #else
+               PLOGI << "[TeardownDiag] frame=" << teardownDiagFrameNo << " -> bgfx::frame()/Flip"
+                     << " needsVSync=" << needsVSync << " gpuVSync=" << gpuVSync
+                     << " size=" << backBufferWidth << 'x' << backBufferHeight
+                     << (diagResetFired ? " [resetThisFrame]" : "") << (diagNwhChanged ? " [nwhChangedThisFrame]" : "");
+   #endif
+            }
+#endif
             rd->Flip();
             if (rd->m_screenshotFrameDelay > 0) {
                rd->m_screenshotFrameDelay--;
@@ -2290,6 +2369,42 @@ void RenderDevice::DiscardRenderFrame()
    m_renderFrame->Discard();
    #ifdef ENABLE_BGFX
    ResetActiveView();
+   #endif
+}
+
+// Park the render thread so it stops calling bgfx::frame()/present, and block until it confirms.
+// Called from VPinballLib::Pause() on the main/JNI thread BEFORE onPause allows Android to destroy
+// the Surface. This closes the Family A race where the render thread presents against a freed Surface
+// (SIGSEGV in bgfx SwapChainVK::update). Bounded by a timeout so a stuck present cannot wedge onPause.
+void RenderDevice::ParkRenderThread()
+{
+   #ifdef ENABLE_BGFX
+   // Never call from the render thread itself (would self-deadlock waiting for its own ack).
+   if (std::this_thread::get_id() == m_renderThread.get_id())
+      return;
+   if (!m_renderDeviceAlive)
+      return;
+   m_renderThreadParked.store(false);
+   m_renderThreadParkRequested.store(true);
+   // Wake the render thread in case it is blocked waiting for a frame, so it observes the request.
+   m_frameReadySem.post();
+   std::unique_lock<std::mutex> lock(m_renderParkMutex);
+   const bool parked = m_renderParkCV.wait_for(lock, std::chrono::milliseconds(500),
+      [this]() { return m_renderThreadParked.load(); });
+   if (parked)
+      PLOGI << "ParkRenderThread: render thread parked, safe to release Android surface";
+   else
+      PLOGW << "ParkRenderThread: timeout waiting for render thread to park";
+   #endif
+}
+
+// Release the render thread parked by ParkRenderThread(). Called from VPinballLib::Resume().
+// No wake needed: the game-logic thread resumes posting frames once play state is restored.
+void RenderDevice::UnparkRenderThread()
+{
+   #ifdef ENABLE_BGFX
+   m_renderThreadParkRequested.store(false);
+   m_renderThreadParked.store(false);
    #endif
 }
 
