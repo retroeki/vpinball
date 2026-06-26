@@ -7884,6 +7884,7 @@ STDMETHODIMP PinTable::get_Option(BSTR optionName, float minValue, float maxValu
       if ((option.id.type == prop.value().type) && (option.id.index == prop.value().index))
       {
          *param = option.value;
+         // PLOGI.printf("get_Option: '%s' resolved=%.3f (default=%.3f)", MakeString(optionName).c_str(), *param, defaultValue);
          return S_OK;
       }
    }

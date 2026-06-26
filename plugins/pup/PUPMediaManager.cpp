@@ -52,11 +52,11 @@ void PUPMediaManager::Play(PUPPlaylist* pPlaylist, const string& szPlayFile, flo
       return;
    }
 
-   LOGD("> Play screen={%s}, playlist={%s}, playFile=%s, path=%s, volume=%.1f, priority=%d, length=%d", m_pScreen->ToString(false).c_str(), pPlaylist->ToString().c_str(), szPlayFile.c_str(), szPath.c_str(), volume, priority, length);
+   LOGD_DBG("> Play screen={%s}, playlist={%s}, playFile=%s, path=%s, volume=%.1f, priority=%d, length=%d", m_pScreen->ToString(false).c_str(), pPlaylist->ToString().c_str(), szPlayFile.c_str(), szPath.c_str(), volume, priority, length);
 
    if (m_pMainPlayer->isBackground)
    {
-      LOGD(". Background video {%s} paused while playing {%s}", m_pMainPlayer->szPath.c_str(), szPath.c_str());
+      LOGD_DBG(". Background video {%s} paused while playing {%s}", m_pMainPlayer->szPath.c_str(), szPath.c_str());
       std::swap(m_pBackgroundPlayer, m_pMainPlayer);
       m_pBackgroundPlayer->player.SetName(GetPlayerName(m_pScreen, false));
       m_pBackgroundPlayer->player.Pause(true);
@@ -187,7 +187,7 @@ void PUPMediaManager::OnPlayerEnd(PUPMediaPlayer* player)
       {
          if (player == &m_pMainPlayer->player && m_pBackgroundPlayer != nullptr)
          {
-            LOGD(". Background video {%s} unpaused ({%s} is finished)", m_pBackgroundPlayer->szPath.c_str(), m_pMainPlayer->szPath.c_str());
+            LOGD_DBG(". Background video {%s} unpaused ({%s} is finished)", m_pBackgroundPlayer->szPath.c_str(), m_pMainPlayer->szPath.c_str());
             std::swap(m_pBackgroundPlayer, m_pMainPlayer);
             m_pBackgroundPlayer->player.SetName(GetPlayerName(m_pScreen, false));
             m_pMainPlayer->player.SetName(GetPlayerName(m_pScreen, true));

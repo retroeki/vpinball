@@ -82,6 +82,12 @@ LPI_IMPLEMENT
 
 void DMDUTILCALLBACK OnDMDUtilLog(DMDUtil_LogLevel logLevel, const char* format, va_list args)
 {
+#ifndef _DEBUG
+   // libdmdutil debug relays are dropped by the host logger in release; skip the double
+   // vsnprintf format instead of building a string that will be discarded.
+   if (logLevel == DMDUtil_LogLevel_DEBUG)
+      return;
+#endif
    va_list args_copy;
    va_copy(args_copy, args);
    int size = vsnprintf(nullptr, 0, format, args_copy);

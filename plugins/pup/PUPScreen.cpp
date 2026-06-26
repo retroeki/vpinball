@@ -224,7 +224,7 @@ void PUPScreen::AddTrigger(PUPTrigger* pTrigger)
    if (!pTrigger)
       return;
 
-   LOGI("Trigger added: screen=%d, trigger=%s", m_screenNum, pTrigger->GetTrigger().c_str());
+   LOGD_DBG("Trigger added: screen=%d, trigger=%s", m_screenNum, pTrigger->GetTrigger().c_str());
    m_triggerMap[pTrigger->GetTrigger()].push_back(pTrigger);
 }
 
@@ -361,7 +361,7 @@ void PUPScreen::Play(const string& szPlaylist, const string& szPlayFile, float v
 void PUPScreen::Play(PUPPlaylist* pPlaylist, const string& szPlayFile, float volume, int priority, bool skipSamePriority, int length)
 {
    assert(std::this_thread::get_id() == m_apiThread);
-   LOGD("play, screen={%s}, playlist={%s}, playFile=%s, volume=%.f, priority=%d", ToString(false).c_str(), pPlaylist->ToString().c_str(), szPlayFile.c_str(), volume, priority);
+   LOGD_DBG("play, screen={%s}, playlist={%s}, playFile=%s, volume=%.f, priority=%d", ToString(false).c_str(), pPlaylist->ToString().c_str(), szPlayFile.c_str(), volume, priority);
    //StopMedia(); // Does it stop the played media on all request like overlays or alphas ? I don't think so but unsure
    switch (pPlaylist->GetFunction())
    {

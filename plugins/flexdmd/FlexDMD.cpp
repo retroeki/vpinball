@@ -279,9 +279,13 @@ void FlexDMD::SetSegmentsFromString(const string& segStr)
    }
 
    if (hasNonZero) {
-      LOGI("SetSegmentsFromString: GOT NON-ZERO SEGMENTS! First few: %u,%u,%u,%u,%u,%u,%u,%u",
-           newSegData[0], newSegData[1], newSegData[2], newSegData[3],
-           newSegData[4], newSegData[5], newSegData[6], newSegData[7]);
+      static int logCount = 0;
+      if (logCount < 5) {
+         logCount++;
+         LOGI("SetSegmentsFromString: GOT NON-ZERO SEGMENTS! First few: %u,%u,%u,%u,%u,%u,%u,%u",
+              newSegData[0], newSegData[1], newSegData[2], newSegData[3],
+              newSegData[4], newSegData[5], newSegData[6], newSegData[7]);
+      }
    }
 
    if (memcmp(m_segData, newSegData, 38 * sizeof(uint16_t)) != 0)

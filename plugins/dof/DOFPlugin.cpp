@@ -75,6 +75,12 @@ LPI_IMPLEMENT
 
 void LIBDOFCALLBACK OnDOFLog(DOF_LogLevel logLevel, const char* format, va_list args)
 {
+#ifndef _DEBUG
+   // libDOF debug relays are dropped by the host logger in release (plog severity = info),
+   // so skip formatting them entirely instead of paying a double vsnprintf + malloc.
+   if (logLevel == DOF_LogLevel_DEBUG)
+      return;
+#endif
    va_list args_copy;
    va_copy(args_copy, args);
    int size = vsnprintf(nullptr, 0, format, args_copy);

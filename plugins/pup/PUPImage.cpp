@@ -88,7 +88,7 @@ void PUPImage::AnalyzeTransparency()
       m_transparentRegion.w = static_cast<float>(maxX - minX + 1) / static_cast<float>(w);
       m_transparentRegion.h = static_cast<float>(maxY - minY + 1) / static_cast<float>(h);
       m_transparentRegion.valid = true;
-      LOGI("PUP FRAME WINDOW: file='%s' transparent region=(%.1f%%, %.1f%%, %.1f%%, %.1f%%) imageSize=(%d,%d)",
+      LOGD_DBG("PUP FRAME WINDOW: file='%s' transparent region=(%.1f%%, %.1f%%, %.1f%%, %.1f%%) imageSize=(%d,%d)",
          m_file.c_str(),
          m_transparentRegion.x * 100.f, m_transparentRegion.y * 100.f,
          m_transparentRegion.w * 100.f, m_transparentRegion.h * 100.f,

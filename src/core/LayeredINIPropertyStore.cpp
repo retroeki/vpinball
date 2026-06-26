@@ -72,7 +72,12 @@ void LayeredINIPropertyStore::Load(const LayeredINIPropertyStore& store)
 bool LayeredINIPropertyStore::LoadFromINI(PropertyRegistry::PropId id)
 {
    const PropertyDef* prop = m_registry.get().GetProperty(id);
-   if (!m_ini.has(prop->m_groupId) || !m_ini[prop->m_groupId].has(prop->m_propId))
+   const bool present = m_ini.has(prop->m_groupId) && m_ini[prop->m_groupId].has(prop->m_propId);
+   // diagnostic logging disabled for release
+   // if (prop->m_groupId == "TableOption")
+   //    PLOGI << "LoadFromINI[TableOption]: '" << prop->m_propId << "' present=" << present
+   //          << " raw='" << (present ? m_ini[prop->m_groupId][prop->m_propId] : string("<none>")) << "'";
+   if (!present)
       return false;
    const string value = m_ini[prop->m_groupId][prop->m_propId];
    switch (prop->m_type)

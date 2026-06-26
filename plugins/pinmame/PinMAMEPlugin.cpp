@@ -24,6 +24,13 @@ using namespace std::string_literals;
 
 namespace PinMAME {
 
+// Gate for verbose per-event PinMAME host-bridge diagnostics: the per-switch read/write
+// traces below fire on every host switch set/get during play. Off by default; set to 1
+// (or -DPINMAME_DEBUG_LOG=1) and rebuild to re-enable. Genuine errors (LOGE) stay on.
+#ifndef PINMAME_DEBUG_LOG
+#define PINMAME_DEBUG_LOG 0
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Scriptable object definitions
 
@@ -257,10 +264,14 @@ static void OnSetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, 
       LOGE("[SetSwitch] no controller running, sw=%d state=%d ignored", s->switchNum, s->state);
       return;
    }
+#if PINMAME_DEBUG_LOG
    const bool prev = controller->GetSwitch(s->switchNum);
+#endif
    controller->SetSwitch(s->switchNum, s->state != 0);
+#if PINMAME_DEBUG_LOG
    const bool now = controller->GetSwitch(s->switchNum);
    LOGI("[SetSwitch] sw=%d state=%d (prev=%d → now=%d)", s->switchNum, s->state, prev ? 1 : 0, now ? 1 : 0);
+#endif
    s->handled = 1;
 }
 
@@ -280,7 +291,9 @@ static void OnGetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, 
    if (controller == nullptr) return;
    g->value = controller->GetSwitch(g->switchNum) ? 1 : 0;
    g->handled = 1;
+#if PINMAME_DEBUG_LOG
    LOGI("[GetSwitch] sw=%d value=%d", g->switchNum, g->value);
+#endif
 }
 
 PSC_ERROR_IMPLEMENT(scriptApi); // Implement script error

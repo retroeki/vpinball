@@ -548,11 +548,18 @@ static DisplayFrame GetRenderFrame(const CtlResId id)
 static void onGetRenderDMDSrc(const unsigned int eventId, void* userData, void* msgData)
 {
    GetDisplaySrcMsg& msg = *static_cast<GetDisplaySrcMsg*>(msgData);
-   LPI_LOGI("onGetRenderDMDSrc: queried, %zu FlexDMD instances", flexDmds.size());
+   // diagnostic logging disabled for release
+   // static int logCount = 0;
+   // const bool doLog = logCount < 5;
+   // if (doLog) {
+   //    logCount++;
+   //    LPI_LOGI("onGetRenderDMDSrc: queried, %zu FlexDMD instances", flexDmds.size());
+   // }
    for (const FlexDMD* pFlex : flexDmds)
    {
-      LPI_LOGI("onGetRenderDMDSrc: instance id=%d show=%d renderMode=%d w=%d h=%d",
-         pFlex->GetId(), pFlex->GetShow(), (int)pFlex->GetRenderMode(), pFlex->GetWidth(), pFlex->GetHeight());
+      // if (doLog)
+      //    LPI_LOGI("onGetRenderDMDSrc: instance id=%d show=%d renderMode=%d w=%d h=%d",
+      //       pFlex->GetId(), pFlex->GetShow(), (int)pFlex->GetRenderMode(), pFlex->GetWidth(), pFlex->GetHeight());
       if (pFlex->GetShow() && ((pFlex->GetRenderMode() == RenderMode_DMD_GRAY_2) || (pFlex->GetRenderMode() == RenderMode_DMD_GRAY_4) || (pFlex->GetRenderMode() == RenderMode_DMD_RGB)))
       {
          if (msg.count < msg.maxEntryCount)
@@ -567,7 +574,8 @@ static void onGetRenderDMDSrc(const unsigned int eventId, void* userData, void* 
             // TODO we should also provide identify frame to allow colorization/upscaling/pup events/...
          }
          msg.count++;
-         LPI_LOGI("onGetRenderDMDSrc: added source %dx%d (count now %d)", pFlex->GetWidth(), pFlex->GetHeight(), msg.count);
+         // if (doLog)
+         //    LPI_LOGI("onGetRenderDMDSrc: added source %dx%d (count now %d)", pFlex->GetWidth(), pFlex->GetHeight(), msg.count);
       }
    }
 }

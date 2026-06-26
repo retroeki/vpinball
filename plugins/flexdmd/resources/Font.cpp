@@ -182,7 +182,11 @@ void Font::DrawCharacter(Flex::SurfaceGraphics* pGraphics, char character, char 
          DrawCharacter(pGraphics, character, previousCharacter, x, y);
       }
       else if (m_pBitmapFont->GetCharacter(' ')) {
-         LOGD("Missing character 0x%02X replaced by ' '", character);
+         static int s_missingCharLogCount = 0;
+         if (s_missingCharLogCount < 10) {
+            s_missingCharLogCount++;
+            LOGD("Missing character 0x%02X replaced by ' '", character);
+         }
          m_pBitmapFont->SetCharacter(character, m_pBitmapFont->GetCharacter(' '));
          DrawCharacter(pGraphics, character, previousCharacter, x, y);
       }

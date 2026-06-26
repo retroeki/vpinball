@@ -248,15 +248,15 @@ bool PUPTrigger::IsResting() const
 
 std::function<void()> PUPTrigger::Trigger() {
    if (IsResting()) {
-      LOGD("skipping resting trigger: trigger={%s}", ToString().c_str());
+      LOGD_DBG("skipping resting trigger: trigger={%s}", ToString().c_str());
       return [](){};
    }
    if (m_pScreen->GetMode() == PUPScreen::Mode::Off) {
-      LOGD("skipping trigger on Off screen: trigger={%s}", ToString().c_str());
+      LOGD_DBG("skipping trigger on Off screen: trigger={%s}", ToString().c_str());
       return [](){};
    }
    m_lastTriggered = SDL_GetTicks();
-   LOGD("processing trigger: trigger={%s}", ToString().c_str());
+   LOGD_DBG("processing trigger: trigger={%s}", ToString().c_str());
    return m_action;
 }
 

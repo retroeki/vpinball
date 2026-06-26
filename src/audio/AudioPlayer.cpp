@@ -213,6 +213,16 @@ static void TryPromoteAudioThread(const char* label)
 }
 #endif
 
+// Real-time audio diagnostics. The SDL and AAudio playback callbacks can wrap the
+// actual mixing with per-buffer timing instrumentation (two steady_clock reads plus
+// gap/late accounting) feeding PLOGD. That work runs on the realtime audio thread on
+// every buffer, so it is compiled out by default; the PLOGD output is debug-level and
+// dropped in release anyway. Set to 1 (or -DVPX_AUDIO_RT_DIAG=1) and rebuild to measure
+// mixing time / verify SCHED_FIFO. Off => Android uses the stock ma_engine callback.
+#ifndef VPX_AUDIO_RT_DIAG
+#define VPX_AUDIO_RT_DIAG 0
+#endif
+
 void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, int additional_amount, const int total_amount)
 {
    auto pDevice = static_cast<ma_device_ex*>(pUserData);
@@ -225,9 +235,11 @@ void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, i
    }
 #endif
 
+#if VPX_AUDIO_RT_DIAG
    const uint64_t entryNs = static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(
          std::chrono::steady_clock::now().time_since_epoch()).count());
+#endif
 
    // Resizing on the audio thread would malloc; we pre-size in ma_device_init__sdl,
    // but keep a defensive resize in case the device asks for a larger chunk.
@@ -239,6 +251,7 @@ void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, i
    ma_device__read_frames_from_client(&pDevice->device, nFrames, pDevice->buffer.data());
    SDL_PutAudioStreamData(stream, pDevice->buffer.data(), nFrames * sizePerMAFrame);
 
+#if VPX_AUDIO_RT_DIAG
    const uint64_t exitNs = static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(
          std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -302,9 +315,10 @@ void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, i
       pDevice->diagMaxMixNs = 0;
       pDevice->diagMaxGapNs = 0;
    }
+#endif
 }
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && VPX_AUDIO_RT_DIAG
 // AAudio data callback. miniaudio calls this from AAudio's realtime SCHED_FIFO
 // thread (granted because we requested LOW_LATENCY perfMode). The actual
 // mixing is delegated to ma_engine_data_callback_internal; this wrapper only
@@ -625,9 +639,10 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
          engineConfig.noAutoStart = MA_TRUE;
          outEngine = std::make_unique<ma_engine>();
          ma_engine_init(&engineConfig, outEngine.get());
-#ifdef __ANDROID__
-         // Use the diagnostic wrapper so we can verify SCHED_FIFO inheritance
-         // and measure mixing time on AAudio's RT callback thread.
+#if defined(__ANDROID__) && VPX_AUDIO_RT_DIAG
+         // Diagnostic wrapper: verify SCHED_FIFO inheritance and measure mixing time on
+         // AAudio's RT callback thread. Compiled out unless VPX_AUDIO_RT_DIAG; otherwise
+         // we use the stock miniaudio callback (priority comes from LOW_LATENCY perfMode).
          outDevice->device.onData = ma_data_callback_aaudio_diag;
 #else
          outDevice->device.onData = ma_engine_data_callback_internal;

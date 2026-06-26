@@ -111,7 +111,7 @@ void PUPLabel::SetVisible(bool visible)
 
 void PUPLabel::SetSpecial(const string& szSpecial)
 {
-   LOGD("PUPLabel::SetSpecial: name=%s, caption=%s, json=%s", m_szName.c_str(), m_szCaption.c_str(), szSpecial.c_str());
+   LOGD_DBG("PUPLabel::SetSpecial: name=%s, caption=%s, json=%s", m_szName.c_str(), m_szCaption.c_str(), szSpecial.c_str());
 
    string str = trim_string(szSpecial);
    if (str.empty())

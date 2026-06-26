@@ -511,7 +511,7 @@ void AudioStreamPlayer::AudioStreamCallback(void *userdata, SDL_AudioStream *str
    {
       me->m_throttling = throttle;
       SDL_SetAudioStreamFrequencyRatio(me->m_stream, throttle);
-      PLOGI << "PlayedTS: " << playedTS << "ms / NowTS: " << nowTS << "ms / Delta: " << (nowTS - playedTS) << "ms / Buffer: " << (sourceTS - playedTS) << "ms / Frequency ratio : " << throttle;
+      PLOGD << "PlayedTS: " << playedTS << "ms / NowTS: " << nowTS << "ms / Delta: " << (nowTS - playedTS) << "ms / Buffer: " << (sourceTS - playedTS) << "ms / Frequency ratio : " << throttle;
    }
 }
 

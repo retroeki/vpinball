@@ -559,13 +559,17 @@ static void OnSegSrcChanged(const unsigned int, void* userData, void* msgData)
       }
    }
    {
-      std::stringstream ss;
-      ss << "AlphaDMD: seg sources changed, " << selectedSources.size() << " display(s) [";
-      for (size_t i = 0; i < selectedSources.size(); i++)
-         ss << (i == 0 ? "" : ", ") << selectedSources[i].nElements;
-      ss << "] -> layout=" << static_cast<int>(dmdLayout)
-         << (dmdLayout == DmdLayouts::Undefined ? " (UNSUPPORTED, nothing published)" : "");
-      LPI_LOGI("%s", ss.str().c_str());
+      static int logCount = 0;
+      if (logCount < 10) {
+         logCount++;
+         std::stringstream ss;
+         ss << "AlphaDMD: seg sources changed, " << selectedSources.size() << " display(s) [";
+         for (size_t i = 0; i < selectedSources.size(); i++)
+            ss << (i == 0 ? "" : ", ") << selectedSources[i].nElements;
+         ss << "] -> layout=" << static_cast<int>(dmdLayout)
+            << (dmdLayout == DmdLayouts::Undefined ? " (UNSUPPORTED, nothing published)" : "");
+         LPI_LOGI("%s", ss.str().c_str());
+      }
    }
    lock.unlock();
 

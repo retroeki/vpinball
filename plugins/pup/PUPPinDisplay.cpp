@@ -292,12 +292,12 @@ void PUPPinDisplay::SendMSG(const string& szMsg)
                         break;
                      case 4:
                         // set StayOnTop { "mt":301, "SN": XX, "FN":4, "FS":1/0 }
-                        LOGD("Stay on top requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
+                        LOGD_DBG("Stay on top requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
                         pScreen->SetMode((json["FS"s].exists() && json["FS"s].as<int>() == 1) ? PUPScreen::Mode::ForceOn : PUPScreen::Mode::ForceBack);
                         break;
                      case 6:
                         // Bring screen to the front
-                        LOGD("Bring screen to front requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
+                        LOGD_DBG("Bring screen to front requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
                         pScreen->SendToFront();
                         break;
                      case 10:
@@ -306,7 +306,7 @@ void PUPPinDisplay::SendMSG(const string& szMsg)
                         break;
                      case 11:
                         // set all volume { "mt":301, "SN": XX, "FN":11, "VL":9}  VL=volume level
-                        LOGD("Set all volume requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
+                        LOGD_DBG("Set all volume requested: screen={%s}, fn=%d, szMsg=%s", pScreen->ToString(false).c_str(), fn, szMsg.c_str());
                         pScreen->SetVolume(static_cast<float>(json["VL"s].as<double>()));
                         break;
                      case 12:

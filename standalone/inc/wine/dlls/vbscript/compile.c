@@ -31,11 +31,20 @@
  * compile, parse_script success, etc.) goes through COMPILE_INFO so it doesn't
  * masquerade as 17+ false errors before every real one. */
 #define COMPILE_LOG(...)  __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
-#define COMPILE_INFO(...) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__)
+#define COMPILE_INFO(...) do { if (g_vbsCompileInfoCycle <= VBS_COMPILE_INFO_MAX_CYCLES) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__); } while(0)
 #else
 #define COMPILE_LOG(...)  fprintf(stderr, __VA_ARGS__)
-#define COMPILE_INFO(...) fprintf(stderr, __VA_ARGS__)
+#define COMPILE_INFO(...) do { if (g_vbsCompileInfoCycle <= VBS_COMPILE_INFO_MAX_CYCLES) fprintf(stderr, __VA_ARGS__); } while(0)
 #endif
+
+/* The COMPILE_INFO progress logs ("Starting parse_script", "Compiling function: X", ...)
+ * are the VBScript-compile diagnostic oracle, valuable at table load. But tables that call
+ * Eval/Execute/ExecuteGlobal re-enter compile_script at runtime (~1/sec for some), spamming
+ * ~7 INFO lines per call during play. Cap the progress logs to the first few compile cycles
+ * per process: keeps the load-time oracle, silences the runtime Execute/Eval repeats.
+ * COMPILE_LOG (compile failures, ERROR severity) stays unconditional. */
+#define VBS_COMPILE_INFO_MAX_CYCLES 5
+static int g_vbsCompileInfoCycle = 0;
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 WINE_DECLARE_DEBUG_CHANNEL(vbscript_disas);
@@ -2333,6 +2342,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
     }
 
     ctx.parser.lcid = script->lcid;
+    ++g_vbsCompileInfoCycle;
     COMPILE_INFO("Starting parse_script...\n");
     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
     COMPILE_INFO("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
