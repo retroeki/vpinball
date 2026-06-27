@@ -1228,7 +1228,34 @@ void Primitive::Render(const unsigned int renderMask)
    if (isReflectionPass && !m_d.m_reflectionEnabled)
       return;
    
-   if (isStaticOnly && !m_d.m_staticRendering)
+   // EXPERIMENTAL (ExperimentalAutoStatic): bake primitives whose world transform has been stable >= 1.5s into the
+   // static prepass instead of redrawing them every dynamic frame. Excludes grouped, already-static and reflective prims.
+   // Runs once per frame BEFORE the gates (so even already-baked prims are re-checked for movement); dirty coalesces.
+   const bool autoStaticOn = m_rd->m_experimentalAutoStaticOpt && !m_groupdRendering && !m_d.m_staticRendering
+      && (reflection_probe == nullptr) && g_pplayer->m_renderer->IsUsingStaticPrepass();
+   if (autoStaticOn && m_autoStaticLastEvalFrame != g_pplayer->m_overall_frames)
+   {
+      m_autoStaticLastEvalFrame = g_pplayer->m_overall_frames;
+      RecalculateMatrices();
+      if (!(m_fullMatrix == m_autoStaticLastMatrix))
+      {
+         m_autoStaticLastMatrix = m_fullMatrix;
+         m_autoStaticStableSinceMs = g_pplayer->m_time_msec;
+         if (m_autoStaticEligible) { m_autoStaticEligible = false; g_pplayer->m_renderer->InvalidateStaticPrepass(); }
+      }
+      else if (!m_autoStaticEligible && (g_pplayer->m_time_msec - m_autoStaticStableSinceMs) >= 1500u)
+      {
+         m_autoStaticEligible = true;
+         g_pplayer->m_renderer->InvalidateStaticPrepass();
+      }
+   }
+   else if (!autoStaticOn && m_autoStaticEligible)
+   {
+      m_autoStaticEligible = false; // no longer eligible (flag off / became reflective) -> render dynamically again
+      g_pplayer->m_renderer->InvalidateStaticPrepass();
+   }
+
+   if (isStaticOnly && !m_d.m_staticRendering && !m_autoStaticEligible)
       return;
 
    // Don't render in LS when state off (visibility driven by light sequencer)
@@ -1237,7 +1264,7 @@ void Primitive::Render(const unsigned int renderMask)
 
    // only render if we have dynamic reflections to render above the statically prerendered primitive
    RenderTarget *const reflections = reflection_probe ? reflection_probe->Render(renderMask) : nullptr;
-   if (isDynamicOnly && m_d.m_staticRendering && (reflections == nullptr))
+   if (isDynamicOnly && (m_d.m_staticRendering || m_autoStaticEligible) && (reflections == nullptr))
       return;
 
    // Update lightmap before checking anything that uses alpha

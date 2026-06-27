@@ -114,6 +114,12 @@ PropInt(Player, MaxPrerenderedFrames, "Max. Prerendered Frames"s, "Maximum numbe
 PropInt(Player, VisualLatencyCorrection, "Visual Latency Correction"s,
    "Leave at -1 to get default latency correction based on display frequency.\nIf you measured your setup latency using tools like Intel's PresentMon, enter the average latency in ms."s,
    -1, 200, -1);
+// Single A/B toggle (set from the app's Experimental settings) gating render perf optimizations:
+//  (1) drop BGFX_TEXTURE_BLIT_DST on write-only render targets so tilers can framebuffer-compress them, and
+//  (2) skip redundant per-draw uniform re-uploads on the GL/GLES/Vulkan bgfx backends.
+// Experimental: may improve perf or cause visual glitches depending on GPU/driver, hence the toggle.
+PropBool(Player, ExperimentalRendererOpt, "Experimental Renderer Optimizations"s, "Skip redundant per-draw shader uniform uploads (GL/GLES/Vulkan) and drop the blit-destination flag on write-only render targets to allow GPU framebuffer compression. Experimental: may improve performance or cause visual glitches depending on GPU/driver."s, false);
+PropBool(Player, ExperimentalAutoStatic, "Experimental Auto-Static Geometry"s, "Detect table geometry that has not moved for a moment and bake it into the cached static prepass instead of redrawing it every frame. Experimental: large CPU/draw-call reduction on geometry-heavy tables, but may cause flicker or wrong static reflections on some tables."s, false);
 
 // Graphics settings
 #if defined(ENABLE_BGFX)

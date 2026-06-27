@@ -176,6 +176,12 @@ public:
    TextureManager m_texMan;
    const bool m_compressTextures;
 
+   // EXPERIMENTAL renderer optimizations, single A/B toggle from the app ([Player] ExperimentalRendererOpt).
+   // Read once at device init; gates the BLIT_DST drop in RenderTarget and the uniform re-push skip in Shader.
+   bool m_experimentalRendererOpt = false;
+   // EXPERIMENTAL auto-static geometry baking, separate A/B toggle ([Player] ExperimentalAutoStatic). Read once at init.
+   bool m_experimentalAutoStaticOpt = false;
+
    bool UseLowPrecision() const { return m_useLowPrecision; }
 
    unsigned int m_vsyncCount = 0;
@@ -211,6 +217,16 @@ public:
    unsigned int m_curTextureUpdates = 0, m_frameTextureUpdates = 0;
    unsigned int m_curLockCalls = 0, m_frameLockCalls = 0;
    unsigned int m_curDrawnTriangles = 0, m_frameDrawnTriangles = 0;
+   // Diagnostic trackers (bgfx): detect program (pipeline) + render-state changes between consecutive draws to expose pipeline-bind churn.
+   uint16_t m_lastSubmitProgramIdx = UINT16_MAX;
+   uint64_t m_lastSubmitState = ~0ull;
+   // Diagnostic (bgfx): per-frame draw-call breakdown by shader, to reveal what the frame's ~550 draws actually are.
+   unsigned int m_curDrawBasic = 0, m_frameDrawBasic = 0;       // primitives/ramps/rubbers/walls/inserts/lightmaps (basic shader)
+   unsigned int m_curDrawLight = 0, m_frameDrawLight = 0;       // bulb lights (light shader)
+   unsigned int m_curDrawFlasher = 0, m_frameDrawFlasher = 0;   // flashers
+   unsigned int m_curDrawDMD = 0, m_frameDrawDMD = 0;           // DMD/displays
+   unsigned int m_curDrawBall = 0, m_frameDrawBall = 0;         // balls
+   unsigned int m_curDrawOther = 0, m_frameDrawOther = 0;       // postprocess/fb/stereo/ui/etc.
 
    uint64_t m_lastPresentFrameTick = 0;
 

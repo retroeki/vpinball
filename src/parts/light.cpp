@@ -357,7 +357,26 @@ void Light::UpdateAnimation(const float diff_time_msec)
    }
 
    if (m_previousIntensity != m_currentIntensity)
+   {
+      // EXPERIMENTAL (ExperimentalRendererOpt): intensity changed -> reset the stability clock; if this light's
+      // lightmap was baked into the static prepass, drop it (render dynamically again) and force one re-bake.
+      m_lightmapStableSinceMs = g_pplayer->m_time_msec;
+      if (m_lightmapBaked)
+      {
+         m_lightmapBaked = false;
+         g_pplayer->m_renderer->InvalidateStaticPrepass();
+      }
       FireGroupEvent(DISPID_AnimateEvents_Animate);
+   }
+   else if (m_rd != nullptr && m_rd->m_experimentalRendererOpt && !m_lightmapBaked && !m_backglass && m_d.m_visible
+      && (m_lightmapMeshBuffer != nullptr) && (m_currentIntensity > 0.f)
+      && ((g_pplayer->m_time_msec - m_lightmapStableSinceMs) >= 1500u)
+      && g_pplayer->m_renderer->IsUsingStaticPrepass())
+   {
+      // Stable long enough to bake: force one re-bake so the next static prepass includes this lightmap. Eligibility
+      // here mirrors the bake condition in Light::Render, so the bake sets m_lightmapBaked and this stops firing (no churn).
+      g_pplayer->m_renderer->InvalidateStaticPrepass();
+   }
 }
 
 void Light::RenderSetup(RenderDevice *device)
@@ -717,11 +736,21 @@ void Light::Render(const unsigned int renderMask)
 
    // Lightmap
    // Log segment light rendering status - only log dynamic pass for p1/p2/p3/p4 segment lights
-   if (!isStaticOnly
+   // EXPERIMENTAL (ExperimentalRendererOpt): bake steady (stable >= 1.5s) playfield lightmaps into the static prepass
+   // rather than redrawing them every dynamic frame. Scoped to the main pass (not reflection/light-buffer/backglass) and
+   // only when the static prepass is used; eligibility mirrors the re-bake hook in the animation update above (no churn).
+   const bool lightmapBakeable = m_rd->m_experimentalRendererOpt
+      && !m_backglass && !isReflectionPass && !isLightBuffer
+      && (m_currentIntensity > 0.f)
+      && ((g_pplayer->m_time_msec - m_lightmapStableSinceMs) >= 1500u)
+      && g_pplayer->m_renderer->IsUsingStaticPrepass();
+   if ((isStaticOnly ? lightmapBakeable : !lightmapBakeable)
       && m_d.m_visible
       && ((m_d.m_reflectionEnabled && !m_backglass) || !isReflectionPass)
       && (m_lightmapMeshBuffer != nullptr)) // in case of degenerate light
    {
+      if (isStaticOnly)
+         m_lightmapBaked = true; // now in the static set (consumed by the un-bake logic in the animation update)
       Texture * const offTexel = m_d.m_BulbLight ? nullptr : m_ptable->GetImage(m_d.m_szImage);
 
       // early out all lights with no contribution

@@ -998,10 +998,14 @@ void Shader::ApplyUniform(const ShaderUniforms uniformName)
    if ((ShaderUniform::coreUniforms[uniformName].type != SUT_Sampler) && memcmp(dst, src, ShaderUniform::coreUniforms[uniformName].stateSize) == 0)
    {
       #if defined(ENABLE_BGFX)
-      // BGFX's OpenGL, OpenGLES & Vulkan backends do not persist uniform state correctly, so we need to re-set them every time
-      if (bgfx::getRendererType() != bgfx::RendererType::OpenGL
-       && bgfx::getRendererType() != bgfx::RendererType::OpenGLES
-       && bgfx::getRendererType() != bgfx::RendererType::Vulkan)
+      // BGFX's OpenGL, OpenGLES & Vulkan backends do not persist uniform state correctly, so we need to re-set them every time.
+      // EXPERIMENTAL (ExperimentalRendererOpt): when enabled, trust bgfx's per-program uniform cache (commit() re-reads the
+      // persistent m_uniforms[] on every program switch) and skip re-pushing unchanged uniforms on these backends too, which
+      // cuts the per-draw uniform storm. Gated behind the app toggle for A/B testing; default keeps the safe per-draw re-push.
+      if (m_renderDevice->m_experimentalRendererOpt
+       || (bgfx::getRendererType() != bgfx::RendererType::OpenGL
+        && bgfx::getRendererType() != bgfx::RendererType::OpenGLES
+        && bgfx::getRendererType() != bgfx::RendererType::Vulkan))
          return;
 
       #elif defined(ENABLE_OPENGL)

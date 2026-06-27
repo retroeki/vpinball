@@ -100,6 +100,11 @@ public:
       // so mode changes that cross the static boundary show up without a restart.
       m_isStaticPrepassDirty = true;
    }
+   // EXPERIMENTAL (ExperimentalRendererOpt): force a static-prepass re-bake (e.g. when a baked light first animates,
+   // or when a steady light becomes eligible to bake). m_isStaticPrepassDirty coalesces, so concurrent calls in one
+   // frame cost at most a single re-bake.
+   void InvalidateStaticPrepass() { m_isStaticPrepassDirty = true; }
+   bool m_frameStaticPrepassRebuilt = false; // diagnostic: did the static prepass actually re-render all static parts this frame
    int GetAOMode() const // 0=Off, 1=Static, 2=Dynamic
    {
       // We must evaluate this dynamically since AO scale and enabled/disable can be changed from script

@@ -133,9 +133,38 @@ void RenderCommand::Execute(const int nInstances, const bool log)
    {
       m_renderState.Apply(m_rd);
       m_shaderState->SetInt(SHADER_layer, RenderTarget::GetCurrentRenderLayer() < 0 ? 0 : RenderTarget::GetCurrentRenderLayer());
-      m_shader->m_state->CopyTo(false, m_shaderState);
+      // EXPERIMENTAL (ExperimentalRendererOpt): skip the per-draw deep copy of the whole uniform byte-blob + the
+      // sampler shared_ptr vector (atomic refcount inc/dec x samplers x ~376 draws/frame). Point the shader at the
+      // command's snapshot for this draw, then restore after End(). OFF = the original CopyTo. m_shaderState already
+      // holds the snapshot captured at record time (CopyTo(true) in SetDrawMesh) plus the per-draw SHADER_layer set above.
+      ShaderState* savedShaderState = nullptr;
+      if (m_rd->m_experimentalRendererOpt)
+      {
+         savedShaderState = m_shader->m_state;
+         m_shader->m_state = m_shaderState;
+      }
+      else
+         m_shader->m_state->CopyTo(false, m_shaderState);
       m_shader->Begin();
       m_rd->m_curDrawCalls++;
+      #if defined(ENABLE_BGFX)
+      // Diagnostic: count program (pipeline) + render-state changes between consecutive draws to expose pipeline-bind churn.
+      // prog-changes is the clean metric (m_curTechniqueChanges is unused elsewhere on bgfx); state-changes also picks up
+      // the depth-bias branch in RenderState::Apply so it reads slightly high. If prog-changes ~= Draws, every draw rebinds
+      // a Vulkan pipeline (station-hopping); if prog-changes << Draws, draws are well grouped and the per-draw cost is elsewhere.
+      {
+         const uint16_t progIdx = m_shader->GetCore().idx;
+         if (progIdx != m_rd->m_lastSubmitProgramIdx) { m_rd->m_curTechniqueChanges++; m_rd->m_lastSubmitProgramIdx = progIdx; }
+         if (m_rd->m_bgfxState != m_rd->m_lastSubmitState) { m_rd->m_curStateChanges++; m_rd->m_lastSubmitState = m_rd->m_bgfxState; }
+         // per-shader draw-call breakdown (what the frame's draws actually are)
+         if (m_shader == m_rd->m_basicShader) m_rd->m_curDrawBasic++;
+         else if (m_shader == m_rd->m_lightShader) m_rd->m_curDrawLight++;
+         else if (m_shader == m_rd->m_flasherShader) m_rd->m_curDrawFlasher++;
+         else if (m_shader == m_rd->m_DMDShader) m_rd->m_curDrawDMD++;
+         else if (m_shader == m_rd->m_ballShader) m_rd->m_curDrawBall++;
+         else m_rd->m_curDrawOther++;
+      }
+      #endif
       switch (m_command)
       {
       case RC_DRAW_QUAD_PT:
@@ -335,6 +364,8 @@ void RenderCommand::Execute(const int nInstances, const bool log)
       default: break;
       }
       m_shader->End();
+      if (savedShaderState != nullptr)
+         m_shader->m_state = savedShaderState; // restore live state pointer (see ExperimentalRendererOpt swap above)
 
       if (log)
       {

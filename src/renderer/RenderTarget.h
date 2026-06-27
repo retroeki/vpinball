@@ -14,7 +14,10 @@ public:
    RenderTarget(RenderDevice* const rd, const SurfaceType type, bgfx::FrameBufferHandle fbh, bgfx::TextureHandle colorTex, bgfx::TextureFormat::Enum colFormat,
       bgfx::TextureHandle depthTex, bgfx::TextureFormat::Enum depthFormat, const string& name, const int width, const int height, const colorFormat format);
    #endif
-   RenderTarget(RenderDevice* const rd, const SurfaceType type, const string& name, const int width, const int height, const colorFormat format, bool with_depth, int nMSAASamples, const char* failureMessage, RenderTarget* sharedDepth = nullptr);
+   // writeOnly: this target is only ever written then GPU-sampled, never a blit/copy destination. When the experimental
+   // renderer optimization is enabled, such targets are created without BGFX_TEXTURE_BLIT_DST so tilers can keep them
+   // framebuffer-compressed (UBWC/AFBC). Leave false (default) for any target that may be a BlitRenderTarget/CopyTo dest.
+   RenderTarget(RenderDevice* const rd, const SurfaceType type, const string& name, const int width, const int height, const colorFormat format, bool with_depth, int nMSAASamples, const char* failureMessage, RenderTarget* sharedDepth = nullptr, bool writeOnly = false);
    ~RenderTarget();
 
    void Activate(const int layer = -1);
@@ -64,6 +67,7 @@ private:
    const int m_nMSAASamples;
    const bool m_has_depth;
    const bool m_shared_depth;
+   bool m_writeOnly = false; // see writeOnly ctor param; propagated through Duplicate()
    std::shared_ptr<Sampler> m_color_sampler;
    std::shared_ptr<Sampler> m_depth_sampler;
 

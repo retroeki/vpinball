@@ -94,7 +94,7 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, bgfx:
 }
 #endif
 
-RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const string& name, const int width, const int height, const colorFormat format, bool with_depth, int nMSAASamples, const char* failureMessage, RenderTarget* sharedDepth)
+RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const string& name, const int width, const int height, const colorFormat format, bool with_depth, int nMSAASamples, const char* failureMessage, RenderTarget* sharedDepth, bool writeOnly)
    : m_name(name)
    , m_type(type)
    , m_nLayers(type == RT_DEFAULT ? 1 : type == RT_CUBEMAP ? 6 : 2)
@@ -106,6 +106,7 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    , m_nMSAASamples(nMSAASamples)
    , m_has_depth(with_depth)
    , m_shared_depth(with_depth && (sharedDepth != nullptr))
+   , m_writeOnly(writeOnly)
 {
    assert(nMSAASamples >= 1);
    assert(type != RT_CUBEMAP || nMSAASamples == 1); // Cubemap render target do not support multisampling
@@ -129,8 +130,12 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    // FIXME BGFX add support for MSAA (not that obvious: resolving by blitting is not supported by bgfx, depth attachment must be write only... see https://github.com/bkaradzic/bgfx/issues/2862)
    msaaFlags = BGFX_TEXTURE_RT;
    // FIXME most render target are not blit destination and are only used as write target (then GPU sampling, no readback) => BGFX_TEXTURE_READ_BACK
-   const uint64_t colorFlags = BGFX_TEXTURE_BLIT_DST | msaaFlags;
-   const uint64_t depthFlags = BGFX_TEXTURE_BLIT_DST | msaaFlags /* MSAA depth buffer must be write only | BGFX_TEXTURE_RT_WRITE_ONLY */;
+   // EXPERIMENTAL (ExperimentalRendererOpt): for targets flagged writeOnly (only written then sampled, never a blit/copy
+   // destination) drop BGFX_TEXTURE_BLIT_DST so the tiler can keep the attachment framebuffer-compressed (UBWC on Adreno /
+   // AFBC on Mali). Gated on the device flag so it can be A/B tested; default path keeps BLIT_DST (current behavior).
+   const bool dropBlitDst = m_writeOnly && m_rd->m_experimentalRendererOpt;
+   const uint64_t colorFlags = (dropBlitDst ? 0ull : BGFX_TEXTURE_BLIT_DST) | msaaFlags;
+   const uint64_t depthFlags = (dropBlitDst ? 0ull : BGFX_TEXTURE_BLIT_DST) | msaaFlags /* MSAA depth buffer must be write only | BGFX_TEXTURE_RT_WRITE_ONLY */;
    switch (format)
    {
    case colorFormat::RED16F: fmt = bgfx::TextureFormat::R16F; break;
@@ -546,7 +551,7 @@ void RenderTarget::UpdateDepthSampler(bool insideBeginEnd)
 RenderTarget* RenderTarget::Duplicate(const string& name, const bool shareDepthSurface)
 {
    assert(!m_is_back_buffer);
-   return new RenderTarget(m_rd, m_type, name, m_width, m_height, m_format, m_has_depth, m_nMSAASamples, "Failed to duplicate render target", shareDepthSurface ? this : nullptr);
+   return new RenderTarget(m_rd, m_type, name, m_width, m_height, m_format, m_has_depth, m_nMSAASamples, "Failed to duplicate render target", shareDepthSurface ? this : nullptr, m_writeOnly);
 }
 
 void RenderTarget::CopyTo(RenderTarget* const dest, const bool copyColor, const bool copyDepth,

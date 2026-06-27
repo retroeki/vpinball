@@ -49,8 +49,15 @@ Renderer::Renderer(PinTable* const table, VPX::Window* wnd, VideoSyncMode& syncM
 #ifdef __ANDROID__
    // SMAA and DLAA shaders have bind group issues on Android Vulkan - force fallback to FXAA
    if (m_FXAA == Quality_SMAA || m_FXAA == Standard_DLAA) {
-      PLOGI << "Android: SMAA/DLAA not supported, falling back to Quality_FXAA";
-      m_FXAA = Quality_FXAA;
+      // EXPERIMENTAL (ExperimentalRendererOpt): fall back to NFAA instead of FXAA. NFAA is a fixed-pattern single
+      // pass with no luma edge-walk loop, so it avoids thread divergence on tiler GPUs. OFF = current Quality_FXAA.
+      if (m_table->m_settings.GetPlayer_ExperimentalRendererOpt()) {
+         PLOGI << "Android: SMAA/DLAA not supported, falling back to Fast_NFAA (experimental opt)";
+         m_FXAA = Fast_NFAA;
+      } else {
+         PLOGI << "Android: SMAA/DLAA not supported, falling back to Quality_FXAA";
+         m_FXAA = Quality_FXAA;
+      }
    }
 #endif
    m_sharpen = m_table->m_settings.GetPlayer_Sharpen();
@@ -221,7 +228,7 @@ Renderer::Renderer(PinTable* const table, VPX::Window* wnd, VideoSyncMode& syncM
       GetBackBufferTexture()->m_type, "BloomBuffer1"s, 
       m_renderWidth / 4, m_renderHeight / 4, 
       GetBackBufferTexture()->GetColorFormat(),
-      false, 1, "Fatal Error: unable to create bloom buffer!");
+      false, 1, "Fatal Error: unable to create bloom buffer!", nullptr, true);
    m_pBloomTmpBufferTexture = m_pBloomBufferTexture->Duplicate("BloomBuffer2"s);
 
    std::shared_ptr<BaseTexture> ballTex = std::shared_ptr<BaseTexture>(BaseTexture::CreateFromFile(g_pvp->m_myPath + "assets" + PATH_SEPARATOR_CHAR + "BallEnv.exr"));
@@ -250,7 +257,7 @@ Renderer::Renderer(PinTable* const table, VPX::Window* wnd, VideoSyncMode& syncM
       m_renderDevice->m_ballShader->SetTexture(SHADER_tex_diffuse_env, m_envRadianceTexture.get());
    #else // Compute radiance on the GPU
       const colorFormat rad_format = envTex->m_format == BaseTexture::RGB_FP32 ? colorFormat::RGBA32F : colorFormat::RGBA16F;
-      m_envRadianceTexture = new RenderTarget(m_renderDevice, SurfaceType::RT_DEFAULT, "Irradiance"s, envTexWidth, envTexHeight, rad_format, false, 1, "Failed to create irradiance render target");
+      m_envRadianceTexture = new RenderTarget(m_renderDevice, SurfaceType::RT_DEFAULT, "Irradiance"s, envTexWidth, envTexHeight, rad_format, false, 1, "Failed to create irradiance render target", nullptr, true);
       m_renderDevice->ResetRenderState();
       m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
       m_renderDevice->SetRenderState(RenderState::ZENABLE, RenderState::RS_FALSE);
@@ -493,7 +500,7 @@ RenderTarget* Renderer::GetPostProcessRenderTarget1()
          min(GetBackBufferTexture()->GetWidth(), m_renderWidth),
          min(GetBackBufferTexture()->GetHeight(), m_renderHeight),
          GetBackBufferTexture()->GetColorFormat() == RGBA10 ? colorFormat::RGBA10 : colorFormat::RGBA8, false, 1, 
-         "Fatal Error: unable to create stereo3D/post-processing AA/sharpen buffer!");
+         "Fatal Error: unable to create stereo3D/post-processing AA/sharpen buffer!", nullptr, true);
    }
    return m_pPostProcessRenderTarget1;
 }
@@ -523,7 +530,7 @@ RenderTarget* Renderer::GetReflectionBufferTexture()
          GetBackBufferTexture()->GetWidth(),
          GetBackBufferTexture()->GetHeight(),
          GetBackBufferTexture()->GetColorFormat(),
-         false, 1, "Fatal Error: unable to create Reflection buffer!");
+         false, 1, "Fatal Error: unable to create Reflection buffer!", nullptr, true);
    }
    return m_pReflectionBufferTexture;
 }
@@ -537,7 +544,7 @@ RenderTarget* Renderer::GetMotionBlurBufferTexture()
          GetBackBufferTexture()->GetWidth(),
          GetBackBufferTexture()->GetHeight(),
          GetBackBufferTexture()->GetColorFormat(),
-         false, 1, "Fatal Error: unable to create MotionBlur buffer!");
+         false, 1, "Fatal Error: unable to create MotionBlur buffer!", nullptr, true);
    }
    return m_pMotionBlurBufferTexture;
 }
@@ -548,8 +555,8 @@ RenderTarget* Renderer::GetAORenderTarget(int idx)
    if (m_pAORenderTarget1 == nullptr)
    {
       m_pAORenderTarget1 = new RenderTarget(m_renderDevice, GetBackBufferTexture()->m_type, "AO1"s, 
-         GetBackBufferTexture()->GetWidth(), GetBackBufferTexture()->GetHeight(), colorFormat::GREY8, false, 1, 
-         "Unable to create AO buffers!\r\nPlease disable Ambient Occlusion.\r\nOr try to (un)set \"Alternative Depth Buffer processing\" in the video options!");
+         max(1, GetBackBufferTexture()->GetWidth() / (m_renderDevice->m_experimentalRendererOpt ? 2 : 1)), max(1, GetBackBufferTexture()->GetHeight() / (m_renderDevice->m_experimentalRendererOpt ? 2 : 1)), colorFormat::GREY8, false, 1, 
+         "Unable to create AO buffers!\r\nPlease disable Ambient Occlusion.\r\nOr try to (un)set \"Alternative Depth Buffer processing\" in the video options!", nullptr, true);
       m_pAORenderTarget2 = m_pAORenderTarget1->Duplicate("AO2"s);
    }
    return idx == 0 ? m_pAORenderTarget1 : m_pAORenderTarget2;
@@ -1415,7 +1422,7 @@ void Renderer::DrawBulbLightBuffer()
       m_renderDevice->DrawGaussianBlur(
          GetBloomBufferTexture(), 
          GetBloomTmpBufferTexture(), 
-         GetBloomBufferTexture(), 19.f); // FIXME kernel size should depend on buffer resolution
+         GetBloomBufferTexture(), (m_renderDevice->m_experimentalRendererOpt ? 15.f : 19.f)); // EXPERIMENTAL: tighter 15x15 bulb-light glow blur when on, else 19x19
       RenderPass * const blurPass2 = m_renderDevice->GetCurrentPass();
       RenderPass * const blurPass1 = blurPass2->m_dependencies[0];
       constexpr float margin = 0.05f; // margin for the blur
@@ -1576,6 +1583,7 @@ void Renderer::RenderItem(IEditable* renderable, bool isNoBackdrop)
 
 void Renderer::RenderStaticPrepass()
 {
+   m_frameStaticPrepassRebuilt = false; // diagnostic: reset each frame; set true below if we actually re-render
    // For VR, we don't use any static pre-rendering
    if (m_stereo3D == STEREO_VR)
       return;
@@ -1588,6 +1596,7 @@ void Renderer::RenderStaticPrepass()
    #endif
 
    m_isStaticPrepassDirty = false;
+   m_frameStaticPrepassRebuilt = true; // diagnostic: the static prepass re-rendered all static parts this frame
 
    TRACE_FUNCTION();
 
@@ -2015,7 +2024,7 @@ void Renderer::UpdateBloom(RenderTarget* renderedRT)
    m_renderDevice->DrawGaussianBlur(
       GetBloomBufferTexture(), 
       GetBloomTmpBufferTexture(),
-      GetBloomBufferTexture(), 39.f); // FIXME kernel size should depend on buffer resolution
+      GetBloomBufferTexture(), (m_renderDevice->m_experimentalRendererOpt ? 23.f : 39.f)); // EXPERIMENTAL: 1/4-res bloom uses a tighter 23x23 kernel when on (~40% fewer taps), else 39x39
 
    if (g_pplayer->GetProfilingMode() == PF_ENABLED)
       m_gpu_profiler.Timestamp(GTS_Bloom);

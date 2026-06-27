@@ -291,6 +291,18 @@ void PerfUI::RenderFPS()
       1e6 / frameLength, 1e-3 * frameLength, 1e-3 * m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME),
       1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(false), 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(true),
       batteryTempC, thermalLabel);
+   // A/B readout for the experimental renderer optimizations. The flag state labels which run this is; the per-frame
+   // uniform-set count is the direct #2 metric (drops sharply when the per-draw uniform storm is cut, since unchanged
+   // uniforms take the early-out before m_curParameterChanges++). Draw calls are shown for context and should be
+   // identical on/off, confirming the scene matches between the two runs. (#1's effect shows in fps/ms + Battery/Thermal.)
+   const RenderDevice* const rd = m_player->m_renderer->m_renderDevice;
+   ImGui::Text("ExpOpt: %s   Draws: %u   Uniform sets: %u\nPipeline: %u prog-changes  %u state-changes\nDraws: basic %u  light %u  flasher %u  dmd %u  ball %u  other %u\nStaticPP: %s   rebuilt-this-frame: %s",
+      rd->m_experimentalRendererOpt ? "ON" : "OFF",
+      rd->Perf_GetNumDrawCalls(), rd->Perf_GetNumParameterChanges(),
+      rd->Perf_GetNumTechniqueChanges(), rd->Perf_GetNumStateChanges(),
+      rd->m_frameDrawBasic, rd->m_frameDrawLight, rd->m_frameDrawFlasher, rd->m_frameDrawDMD, rd->m_frameDrawBall, rd->m_frameDrawOther,
+      m_player->m_renderer->IsUsingStaticPrepass() ? "ON" : "OFF",
+      m_player->m_renderer->m_frameStaticPrepassRebuilt ? "YES" : "no");
    ImGui::EndChild();
    #if defined(ENABLE_BGFX)
    if (pop)

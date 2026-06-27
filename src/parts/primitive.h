@@ -338,6 +338,12 @@ private:
 
    Matrix3D m_fullMatrix;
    Matrix3D m_physicMatrix;
+   // EXPERIMENTAL (ExperimentalAutoStatic): bake unmoving primitives into the static prepass. Tracks the world transform
+   // to detect movement; m_autoStaticEligible = currently treated as static (rendered in prepass, skipped in dynamic pass).
+   Matrix3D m_autoStaticLastMatrix;
+   uint32_t m_autoStaticStableSinceMs = 0;
+   unsigned int m_autoStaticLastEvalFrame = ~0u;
+   bool m_autoStaticEligible = false;
    bool m_skipRendering = false;
    bool m_groupdRendering = false;
    int m_numGroupVertices = 0;

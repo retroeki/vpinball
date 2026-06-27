@@ -1138,6 +1138,13 @@ RenderDevice::RenderDevice(
    // 0 means disable limiting of draw-ahead queue
    int maxPrerenderedFrames = isVR ? 0 : g_pplayer->m_ptable->m_settings.GetPlayer_MaxPrerenderedFrames();
 
+   // EXPERIMENTAL renderer optimizations (single app toggle). Cached here so RenderTarget (m_rd) and Shader
+   // (m_renderDevice) can both branch on it. Default false = current behavior.
+   m_experimentalRendererOpt = g_pplayer->m_ptable->m_settings.GetPlayer_ExperimentalRendererOpt();
+   PLOGI << "Experimental renderer optimizations: " << (m_experimentalRendererOpt ? "ENABLED" : "disabled");
+   m_experimentalAutoStaticOpt = g_pplayer->m_ptable->m_settings.GetPlayer_ExperimentalAutoStatic();
+   PLOGI << "Experimental auto-static geometry: " << (m_experimentalAutoStaticOpt ? "ENABLED" : "disabled");
+
    // Visual latency reduction
    m_visualLatencyCorrection = g_pplayer->m_ptable->m_settings.GetPlayer_VisualLatencyCorrection();
 
@@ -2003,6 +2010,16 @@ void RenderDevice::Flip()
    m_curTextureUpdates = 0;
    m_frameLockCalls = m_curLockCalls;
    m_curLockCalls = 0;
+   #if defined(ENABLE_BGFX)
+   m_lastSubmitProgramIdx = UINT16_MAX; // reset per-frame so first draw counts as a pipeline bind
+   m_lastSubmitState = ~0ull;
+   m_frameDrawBasic = m_curDrawBasic; m_curDrawBasic = 0;
+   m_frameDrawLight = m_curDrawLight; m_curDrawLight = 0;
+   m_frameDrawFlasher = m_curDrawFlasher; m_curDrawFlasher = 0;
+   m_frameDrawDMD = m_curDrawDMD; m_curDrawDMD = 0;
+   m_frameDrawBall = m_curDrawBall; m_curDrawBall = 0;
+   m_frameDrawOther = m_curDrawOther; m_curDrawOther = 0;
+   #endif
 
    // Schedule frame presentation (non blocking call, simply queueing the present command in the driver's render queue with a schedule for execution)
    #if defined(ENABLE_BGFX)

@@ -205,6 +205,11 @@ private:
    LightCenter m_lightcenter;
 
    std::shared_ptr<MeshBuffer> m_lightmapMeshBuffer;
+   // EXPERIMENTAL (ExperimentalRendererOpt): static-prepass lightmap baking. m_lightmapStableSinceMs = time the
+   // intensity last changed; once stable >= a threshold the lightmap is baked into the static prepass instead of
+   // redrawn every dynamic frame. m_lightmapBaked = currently in the static set (drives the dynamic-pass skip + un-bake).
+   uint32_t m_lightmapStableSinceMs = 0;
+   bool m_lightmapBaked = false;
    std::shared_ptr<MeshBuffer> m_lightmapMeshEdgeBuffer;
    std::shared_ptr<MeshBuffer> m_bulbSocketMeshBuffer;
    std::shared_ptr<MeshBuffer> m_bulbLightMeshBuffer;
