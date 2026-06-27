@@ -4,6 +4,9 @@ set -e
 
 source ./platforms/config.sh
 
+# Repo root captured before any cd, so the tracked bgfx source overrides can be located later (see platforms/bgfx-overrides/).
+REPO_ROOT="$(pwd)"
+
 # 16 KB page size support (Android 15+ / Google Play). CMake initializes
 # CMAKE_SHARED_LINKER_FLAGS from the LDFLAGS env var on a fresh configure, so
 # every from-source dependency .so below links with 16 KB-aligned LOAD
@@ -154,7 +157,7 @@ fi
 # build bgfx
 #
 
-BGFX_EXPECTED_SHA="${BGFX_CMAKE_VERSION}-${BGFX_PATCH_SHA}_002"
+BGFX_EXPECTED_SHA="${BGFX_CMAKE_VERSION}-${BGFX_PATCH_SHA}_003"
 BGFX_FOUND_SHA="$([ -f bgfx/cache.txt ] && cat bgfx/cache.txt || echo "")"
 
 if [ "${BGFX_EXPECTED_SHA}" != "${BGFX_FOUND_SHA}" ]; then
@@ -171,6 +174,13 @@ if [ "${BGFX_EXPECTED_SHA}" != "${BGFX_FOUND_SHA}" ]; then
    cd bgfx.cmake
    rm -rf bgfx
    mv ../bgfx-${BGFX_PATCH_SHA} bgfx
+
+   # Apply tracked bgfx source overrides (e.g. Vulkan descriptor-set caching) over the fetched fork source.
+   # Files here win; layout mirrors bgfx (src/renderer_vk.cpp -> bgfx/src/...). See platforms/bgfx-overrides/README.md.
+   if [ -d "${REPO_ROOT}/platforms/bgfx-overrides" ]; then
+      echo "Applying bgfx source overrides from platforms/bgfx-overrides/"
+      cp -rv "${REPO_ROOT}/platforms/bgfx-overrides/." bgfx/
+   fi
    cmake -S. \
       -DCMAKE_SYSTEM_NAME=Android \
       -DCMAKE_SYSTEM_VERSION=34 \
