@@ -41,6 +41,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 #define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
 static const WCHAR *g_dbg_member_ident = NULL;
 #endif
+
+/* Always-on (very cheap) capture of the most recent VBScript "obj.member = ..." assignment
+   target, surfaced into the native crash breadcrumb by the crash watchdog. The COM-lifetime
+   SIGSEGV family (stack_assume_disp / release_exec) lands in Crashlytics with no script
+   context; this names the offending member without needing a logcat or a local repro. It is
+   independent of VBS_ANDROID_DBG_LOG (which only prints to logcat). */
+static char g_vbsLastMemberAssign[96] = { 0 };
+static void vbs_record_member_assign(const WCHAR *id)
+{
+    int i = 0;
+    if (id)
+        for (; i < 95 && id[i]; i++) g_vbsLastMemberAssign[i] = (char)id[i];
+    g_vbsLastMemberAssign[i] = 0;
+}
+#ifdef __cplusplus
+extern "C"
+#endif
+const char *vbs_get_last_member_assign(void) { return g_vbsLastMemberAssign; }
 #endif
 
 static DISPID propput_dispid = DISPID_PROPERTYPUT;
@@ -1226,6 +1244,9 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
 
 #if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
     g_dbg_member_ident = identifier; /* DIAGNOSTIC: carry member name into stack_assume_disp */
+#endif
+#ifdef __STANDALONE__
+    vbs_record_member_assign(identifier); /* record for the native crash breadcrumb (always on) */
 #endif
     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
     if(FAILED(hres))

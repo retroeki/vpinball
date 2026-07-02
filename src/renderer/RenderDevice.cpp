@@ -89,6 +89,11 @@ std::atomic<bool> g_bgfxIsAlive{false};
 #include <ucontext.h>
 #define CRASH_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VPinball_Crash", __VA_ARGS__)
 
+// Provided by the standalone Wine VBScript interpreter (interp.c). Names the most recent
+// "obj.member = ..." assignment target, so the watchdog can attribute the VBScript
+// COM-lifetime UAF family (stack_assume_disp / release_exec) in the crash breadcrumb.
+extern "C" const char* vbs_get_last_member_assign(void);
+
 static std::atomic<bool> s_signalHandlerInstalled{false};
 static std::atomic<bool> s_crashHandled{false};
 static std::atomic<bool> s_watchdogRunning{false};
@@ -164,6 +169,15 @@ static void* crash_watchdog_thread(void* arg)
             }
          }
          
+         // Append the most recent VBScript "obj.member = ..." target. For the COM-lifetime UAF
+         // family (stack_assume_disp / release_exec) this names the script member that referenced
+         // the freed object - the one piece of context the C++ backtrace alone cannot provide.
+         {
+            const char* vbsMember = vbs_get_last_member_assign();
+            if (vbsMember && vbsMember[0] && ptr < stackTrace + 3700)
+               ptr += snprintf(ptr, 200, "VBScript last 'obj.member=' target: %s\n", vbsMember);
+         }
+
          CRASH_LOG("%s", stackTrace);
 
          VPinballLib::ScriptErrorData errorData = {
@@ -925,6 +939,13 @@ void RenderDevice::RenderThread(RenderDevice* rd, const bgfx::Init& initReq)
                std::lock_guard<std::mutex> frameLock(rd->m_frameMutex);
                rd->m_framePending = false;
                rd->m_frameNoSync = false;
+               // Drop the abandoned frame's deferred commands. They capture engine objects
+               // (Ball*, RenderDevice*) by pointer; clearing m_framePending above lets the game
+               // loop run again, and a ball captured by a begin-of-frame lambda here could be
+               // freed (Player::FinishFrame) before this frame's lambdas would otherwise run on
+               // resume -> use-after-free in RenderFrame::Execute (issue 92bf7bb9).
+               if (rd->m_renderFrame)
+                  rd->m_renderFrame->ClearDeferredCommands();
             }
             {
                std::lock_guard<std::mutex> parkLock(rd->m_renderParkMutex);
@@ -2447,7 +2468,7 @@ void RenderDevice::SetRenderTarget(const string& name, RenderTarget* rt, const b
 
 void RenderDevice::AddRenderTargetDependency(RenderTarget* rt, const bool needDepth)
 {
-   if (m_currentPass != nullptr && rt->m_lastRenderPass != nullptr)
+   if (rt != nullptr && m_currentPass != nullptr && rt->m_lastRenderPass != nullptr)
    {
       rt->m_lastRenderPass->m_depthReadback |= needDepth;
       m_currentPass->AddPrecursor(rt->m_lastRenderPass);
@@ -2473,6 +2494,11 @@ void RenderDevice::Clear(const DWORD flags, const DWORD color)
 void RenderDevice::BlitRenderTarget(RenderTarget* source, RenderTarget* destination, bool copyColor, bool copyDepth, const int x1, const int y1, const int w1, const int h1, const int x2,
    const int y2, const int w2, const int h2, const int srcLayer, const int dstLayer)
 {
+   // A null source/destination has been seen in the field (e.g. a reflection-probe render
+   // target that was not allocated) -> SIGSEGV in AddRenderTargetDependency and in the copy
+   // command. There is nothing to blit from/to, so skip rather than crash (issue e6d86bd6).
+   if (source == nullptr || destination == nullptr)
+      return;
    assert(m_currentPass->m_rt == destination); // We must be on a render pass targeted at the destination for correct render pass sorting
    AddRenderTargetDependency(source);
    RenderCommand* cmd = m_renderFrame->NewCommand();

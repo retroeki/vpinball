@@ -284,5 +284,9 @@ void RenderFrame::Discard()
    }
    m_passPool.insert(m_passPool.end(), m_passes.begin(), m_passes.end());
    m_passes.clear();
+   // A discarded frame's deferred commands must be dropped too. Begin-of-frame commands
+   // (e.g. the Ball position update in Ball::Render) capture engine objects by pointer; if
+   // left queued they would run on the next Execute() after those objects were freed.
+   m_beginOfFrameCmds.clear();
    m_endOfFrameCmds.clear();
 }
