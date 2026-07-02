@@ -83,6 +83,36 @@ int main() {
       CHECK(ApplyTableSpecificPatches(s, "SomeOther.vpx") == s,
             "RoboCop patch: no-op on a different table");
    }
+   // 4 Queens (production registry): the `If ShowDT=false Then` hide-DTItems gate is forced
+   // true so the native reels never render in-scene; filename-gated, nothing else touched.
+   {
+      const std::string s = "\tIf ShowDT=false Then\r\n\t\tobj.visible=False\r\n\tend If\r\n";
+      CHECK(ApplyTableSpecificPatches(s, "4 Queens (Bally 1970).vpx")
+               == "\tIf True Then\r\n\t\tobj.visible=False\r\n\tend If\r\n",
+            "4 Queens.vpx: ShowDT=false gate flipped to True, rest unchanged");
+      CHECK(ApplyTableSpecificPatches(s, "SomeOther.vpx") == s,
+            "4 Queens patch: no-op on a different table");
+   }
+   // Beat Time / Circus (production registry): the score-reel ResetToZero is hoisted ahead of the
+   // `If Table1.ShowDT = True` gate (ungated) so the reels zero each new game; the gated block
+   // (visibility swaps) is left intact. Regex entries, filename-gated, one per table.
+   {
+      const std::string s =
+         "\t\tIf Table1.ShowDT = True then\r\n"
+         "\t\t\tFor each obj in PlayerScores\r\n"
+         "\t\t\t\tobj.ResetToZero\r\n"
+         "\t\t\t\tobj.Visible=true\r\n"
+         "\t\t\tnext\r\n";
+      const std::string bt = ApplyTableSpecificPatches(s, "Beat Time (Williams 1967).vpx");
+      CHECK(bt != s && bt.find("ResetToZero") < bt.find("If Table1.ShowDT = True then")
+               && bt.find("obj.Visible=true") != std::string::npos,
+            "Beat Time.vpx: ResetToZero hoisted ahead of the ShowDT gate, visibility intact");
+      const std::string cr = ApplyTableSpecificPatches(s, "Circus (Zaccaria 1977)_Teisen_2.2_burger.vpx");
+      CHECK(cr != s && cr.find("ResetToZero") < cr.find("If Table1.ShowDT = True then"),
+            "Circus.vpx: ResetToZero hoisted ahead of the ShowDT gate");
+      CHECK(ApplyTableSpecificPatches(s, "SomeOther.vpx") == s,
+            "reel-reset hoist: no-op on an unregistered table");
+   }
    printf("%s (%d failures)\n", g_fail ? "FAILURES" : "ALL PASS", g_fail);
    return g_fail ? 1 : 0;
 }

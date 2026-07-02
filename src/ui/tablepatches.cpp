@@ -26,6 +26,36 @@ const TablePatch kTablePatches[] = {
    { "Robocop (Data East 1989)_Bigus(MOD)3.0.vpx", "Sub Table1_Init",
      "Sub Table1_Init\r\n    Wall15.Friction = 0", false,
      "RoboCop: zero Wall15 friction so the ball slips off the post instead of dead-stopping (app-only)" },
+   // 4 Queens (EM): the score is driven BOTH by native DispReels (reel1/reel2, members of the
+   // DTItems collection) and by ReelDmd, which reads the reel VALUES and paints the score into
+   // the in-app ScoreView panel. In the app's forced-Desktop view ShowDT is true, so the table's
+   // own `If ShowDT=false Then <hide DTItems>` init block never runs, and every DTItem (reel1,
+   // reel2, gamov = the "GAME OVER" textbox, credittxt, match m0..m9, tilt, ball-in-play) renders
+   // in the 3D scene, floating over the playfield as a duplicate of the ScoreView panel. Forcing
+   // the branch true hides all DTItems; ReelDmd still shows the score because it reads reel values
+   // regardless of visibility. Same pattern and rationale as the DragonFire entry above.
+   { "4 Queens (Bally 1970).vpx", "If ShowDT=false Then", "If True Then", false,
+     "4 Queens: always run the hide-DTItems branch so native reels + gamov/credit/match never render in-scene; ReelDmd owns the score" },
+   // Beat Time & Circus (EM, same reel framework): the score reels (PlayerScores/PlayerScoresOn)
+   // are driven by relative AddValue, and the ONLY per-new-game ResetToZero is gated behind
+   // `If Table1.ShowDT = True` (the ungated reset is load-time only, in Table1_Init). ShowDT is
+   // false in our render view, so the reels never zero between games and new pulses pile onto the
+   // stale score. Fix: hoist just the two ResetToZero loops OUT of the gate (ungated, immediately
+   // before the If), leaving the block's visibility swaps untouched. Regex `\s+` tolerates the
+   // exact indentation; anchoring on `...For each obj in PlayerScores\s+obj.ResetToZero` matches
+   // ONLY the reset block, never the sibling ShowDT=True visibility-only blocks. ReelDmd reads
+   // reel VALUES, so the ScoreView panel keeps updating. Per-table (filename-gated) on purpose:
+   // the ~43 EM tables sharing this method vary too much for one safe generic rule.
+   { "Beat Time (Williams 1967).vpx",
+     "If Table1\\.ShowDT = True then\\s+For each obj in PlayerScores\\s+obj\\.ResetToZero",
+     "For each obj in PlayerScores\r\n\t\t\tobj.ResetToZero\r\n\t\tNext\r\n\t\tFor each obj in PlayerScoresOn\r\n\t\t\tobj.ResetToZero\r\n\t\tNext\r\n\t\tIf Table1.ShowDT = True then\r\n\t\t\tFor each obj in PlayerScores\r\n\t\t\t\tobj.ResetToZero",
+     true,
+     "Beat Time: hoist the score-reel ResetToZero out of the ShowDT=True gate so reels zero each new game" },
+   { "Circus (Zaccaria 1977)_Teisen_2.2_burger.vpx",
+     "If Table1\\.ShowDT = True then\\s+For each obj in PlayerScores\\s+obj\\.ResetToZero",
+     "For each obj in PlayerScores\r\n\t\t\tobj.ResetToZero\r\n\t\tNext\r\n\t\tFor each obj in PlayerScoresOn\r\n\t\t\tobj.ResetToZero\r\n\t\tNext\r\n\t\tIf Table1.ShowDT = True then\r\n\t\t\tFor each obj in PlayerScores\r\n\t\t\t\tobj.ResetToZero",
+     true,
+     "Circus: hoist the score-reel ResetToZero out of the ShowDT=True gate so reels zero each new game" },
 };
 const size_t kTablePatchCount = sizeof(kTablePatches) / sizeof(kTablePatches[0]);
 
