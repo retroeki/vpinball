@@ -139,7 +139,12 @@ static void ColorizeThread()
          // We received a new identify frame to match & colorize
          lastFrameId = frame.frameId;
          const uint32_t firstrot = Serum_Colorize(const_cast<uint8_t*>(static_cast<const uint8_t*>(frame.frame)));
-         if (firstrot != IDENTIFY_NO_FRAME)
+         // IDENTIFY_SAME_FRAME (0xFFFFFFFE) = Serum matched the SAME frame as last time and produced
+         // no new colorized output; treat it like "no new frame". Without excluding it here, the block
+         // below sets m_hasAnimation = (0xFFFFFFFE != 0) = true and m_animationNextTick = now +
+         // milliseconds(0xFFFFFFFE) ~= 49 days, which permanently freezes Serum color-rotation
+         // (palette-cycling) effects. Skipping the block leaves the existing animation ticking.
+         if (firstrot != IDENTIFY_NO_FRAME && firstrot != IDENTIFY_SAME_FRAME)
          {
             // New frame, eventually starting a new animation
             std::lock_guard<std::mutex> lock2(stateMutex);
