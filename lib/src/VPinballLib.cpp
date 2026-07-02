@@ -52,6 +52,8 @@ MSGPI_EXPORT void MSGPIAPI ScoreViewPluginLoad(const uint32_t sessionId, const M
 MSGPI_EXPORT void MSGPIAPI ScoreViewPluginUnload();
 MSGPI_EXPORT void MSGPIAPI SerumPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI SerumPluginUnload();
+MSGPI_EXPORT void MSGPIAPI VNIPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
+MSGPI_EXPORT void MSGPIAPI VNIPluginUnload();
 MSGPI_EXPORT void MSGPIAPI WMPPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI WMPPluginUnload();
 MSGPI_EXPORT void MSGPIAPI UpscaleDMDPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
@@ -99,6 +101,26 @@ extern "C" void SetScoreViewSourceSize(int width, int height)
 {
    g_scoreViewSourceWidth = width;
    g_scoreViewSourceHeight = height;
+}
+
+// Whether the ScoreView is currently rendering the live EM reel / char-display image
+// (its chosen layout is the reel-only Image layout) rather than a real PinMAME DMD or
+// segment display. Pushed by the ScoreView plugin every render. The host uses this to
+// decide whether to skip the ScoreView window's opaque black fill: skip ONLY when the
+// translucent reel panel is actually on screen. A plain "a reel image exists" test
+// (GetReelImage) is wrong for a table that ALSO carries decorative DispReels - ReelDmd
+// composites them, so a reel image exists, but the ScoreView may have picked a real
+// segment/DMD display that must keep its black backing (e.g. Alien Poker, Ali).
+static std::atomic<bool> g_scoreViewReelActive{false};
+
+extern "C" void SetScoreViewReelActive(bool active)
+{
+   g_scoreViewReelActive = active;
+}
+
+extern "C" bool IsScoreViewReelActive()
+{
+   return g_scoreViewReelActive.load();
 }
 
 // Reel-image channel: lets ReelDmd (logic thread) hand a composited, tightly
@@ -688,6 +710,7 @@ void VPinballLib::RegisterStaticPlugins()
       { "PUP",           &PUPPluginLoad,           &PUPPluginUnload           },
       { "RemoteControl", &RemoteControlPluginLoad, &RemoteControlPluginUnload },
       { "Serum",         &SerumPluginLoad,         &SerumPluginUnload         },
+      { "VNI",           &VNIPluginLoad,           &VNIPluginUnload           },
       { "WMP",           &WMPPluginLoad,           &WMPPluginUnload           },
       { "UpscaleDMD",    &UpscaleDMDPluginLoad,    &UpscaleDMDPluginUnload    }
    };

@@ -10,7 +10,10 @@ BGFX_CMAKE_VERSION=1.135.9046-500
 BGFX_PATCH_SHA=a20c34bbe621cde25c0b5826d90ffec6b9f499d9
 PINMAME_SHA=6ba56f6a8d6b5c912441e4b6b9de2cfa670591cc
 OPENXR_SHA=b15ef6ce120dad1c7d3ff57039e73ba1a9f17102
-LIBDMDUTIL_SHA=5c916d53f5ff6535a1403f6734218550ca2a7e87
+# Bumped from 5c916d53 to pull in libvni (unencrypted PIN2DMD .pal/.vni colorization).
+# This is the SHA vpinball master pins, i.e. the version the bundled vni plugin
+# is built against. Moves libserum/libzedmd/libpupdmd too — re-test Serum + ext DMD.
+LIBDMDUTIL_SHA=5879c321e75c2ca3c5dd9cde5d7c49f0075d1f16
 LIBALTSOUND_SHA=0656fc2eb39a6f4fdd557043c28cd8dfdc7e762f
 LIBDOF_SHA=2711a23f7ec1085448f944145e0d63b7ab792033
 FFMPEG_SHA=db69d06eeeab4f46da15030a80d539efb4503ca8

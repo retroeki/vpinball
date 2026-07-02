@@ -25,6 +25,10 @@
 
 // Implemented in lib/src/VPinballLib.cpp (statically linked into libvpinball.so).
 extern "C" void SetScoreViewSourceSize(int width, int height);
+// Reports whether the ScoreView is currently showing the live reel/char-display image
+// (chosen layout is reel-only) vs a real PinMAME DMD/segment display, so the host only
+// skips the ScoreView window's black fill when the translucent reel panel is on screen.
+extern "C" void SetScoreViewReelActive(bool active);
 // Reel-image channel: ReelDmd (logic thread) composites the active EM table's
 // score reels into a tightly-packed w*h*3 sRGB image; this returns a copy of the
 // current image (true) or false when no reel image is active.
@@ -486,7 +490,13 @@ void ScoreView::Select(const float scoreW, const float scoreH)
 
    // Evaluate output aspect ratio
    const float rtAR = scoreW / scoreH;
-   // LOGI("ScoreView::Select: output=%.0fx%.0f AR=%.2f, %d layouts", scoreW, scoreH, rtAR, (int)m_layouts.size());
+   // [SEG-DIAG] One-shot bounded dump (Alien Poker seg-vs-reel investigation): shows how
+   // each layout matches the live PinMAME sources, so we can see whether a real segment
+   // display is advertised for this ROM and whether any layout fully matches it. Bounded
+   // so a long session does not flood logcat. Remove once the investigation is closed.
+   static int s_selDbg = 60;
+   const bool selDbg = (s_selDbg > 0);
+   if (selDbg) { --s_selDbg; LOGI("ScoreView::Select: output=%.0fx%.0f AR=%.2f layouts=%d", scoreW, scoreH, rtAR, (int)m_layouts.size()); }
 
    // Evaluate layouts against current context
    ResURIResolver::SegDisplayState segDisplay;
@@ -505,6 +515,9 @@ void ScoreView::Select(const float scoreW, const float scoreH)
          case VisualType::DMD:
             layout.reelOnly = false;
             display = m_resURIResolver.GetDisplayState(visual.srcUri);
+            if (selDbg) LOGI("ScoreView::Select:   [%.0fx%.0f] DMD '%s' want %dx%d -> %s", // [SEG-DIAG]
+               layout.width, layout.height, visual.srcUri.c_str(), visual.dmdSize.x, visual.dmdSize.y,
+               display.source == nullptr ? "no source" : "source present");
             if (display.source == nullptr
                // Synthetic seg-to-DMD sources (AlphaDMD, published for external
                // DMD mirroring) must never satisfy an in-app DMD visual: the
@@ -537,9 +550,19 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             layout.reelOnly = false;
             segDisplay = m_resURIResolver.GetSegDisplayState(visual.srcUri);
             if ((segDisplay.source == nullptr) || (segDisplay.source->nElements != visual.nElements))
+            {
                layout.unmatchedVisuals++;
+               if (selDbg) LOGI("ScoreView::Select:   [%.0fx%.0f] SEG '%s' want nEl=%d -> UNMATCHED (%s, src nEl=%d)", // [SEG-DIAG]
+                  layout.width, layout.height, visual.srcUri.c_str(), visual.nElements,
+                  segDisplay.source == nullptr ? "no source" : "count mismatch",
+                  segDisplay.source == nullptr ? -1 : (int)segDisplay.source->nElements);
+            }
             else
+            {
                layout.matchedVisuals++;
+               if (selDbg) LOGI("ScoreView::Select:   [%.0fx%.0f] SEG '%s' want nEl=%d -> MATCH (src nEl=%d)", // [SEG-DIAG]
+                  layout.width, layout.height, visual.srcUri.c_str(), visual.nElements, (int)segDisplay.source->nElements);
+            }
             break;
          case VisualType::Image:
             // The only Image source today is the live EM score-reel channel.
@@ -561,8 +584,9 @@ void ScoreView::Select(const float scoreW, const float scoreH)
             break;
          }
       }
-      // LOGI("ScoreView::Select: layout %.0fx%.0f -> matched=%d unmatched=%d unfitted=%.3f",
-      //    layout.width, layout.height, layout.matchedVisuals, layout.unmatchedVisuals, layout.unfittedPixels);
+      if (selDbg) LOGI("ScoreView::Select: layout %.0fx%.0f visuals=%d matched=%d unmatched=%d reelOnly=%d unfitted=%.3f", // [SEG-DIAG]
+         layout.width, layout.height, (int)layout.visuals.size(), layout.matchedVisuals, layout.unmatchedVisuals,
+         layout.reelOnly ? 1 : 0, layout.unfittedPixels);
    }
 
    // Select the best matching layout:
@@ -588,6 +612,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
    // hijacked by its decorative per-character DispReels, which ReelDmd now also
    // composites into the reel channel. If the winner is reel-only but a fully
    // matched real display exists, prefer that.
+   bool reelDemotionFired = false; // [SEG-DIAG]
    if (m_bestLayout->reelOnly)
    {
       Layout* real = nullptr;
@@ -597,8 +622,14 @@ void ScoreView::Select(const float scoreW, const float scoreH)
                  || (l.matchedVisuals == real->matchedVisuals && l.unfittedPixels < real->unfittedPixels)))
             real = &l;
       if (real != nullptr)
+      {
          m_bestLayout = real;
+         reelDemotionFired = true; // [SEG-DIAG]
+      }
    }
+   if (selDbg) LOGI("ScoreView::Select: CHOSEN %.0fx%.0f matched=%d unmatched=%d reelOnly=%d reelDemotion=%s", // [SEG-DIAG]
+      m_bestLayout->width, m_bestLayout->height, m_bestLayout->matchedVisuals, m_bestLayout->unmatchedVisuals,
+      m_bestLayout->reelOnly ? 1 : 0, reelDemotionFired ? "fired" : "no");
 
    if (m_bestLayout->unmatchedVisuals > 0)
    {
@@ -637,10 +668,14 @@ bool ScoreView::Render(VPXRenderContext2D* ctx)
    if (m_bestLayout == nullptr)
    {
       SetScoreViewSourceSize(0, 0);
+      SetScoreViewReelActive(false);
       return false;
    }
 
    SetScoreViewSourceSize((int)m_bestLayout->width, (int)m_bestLayout->height);
+   // Tell the host whether the panel it is about to composite is the translucent
+   // reel image (skip black fill) or a real DMD/segment display (keep black fill).
+   SetScoreViewReelActive(m_bestLayout->reelOnly);
 
    // Fit the layout inside the output
    const float outAR = ctx->outWidth / ctx->outHeight;

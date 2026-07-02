@@ -496,6 +496,10 @@ cp libdmdutil/libdmdutil/third-party/include/serum.h ../../../third-party/includ
 cp libdmdutil/libdmdutil/third-party/include/serum-decode.h ../../../third-party/include
 cp libdmdutil/libdmdutil/third-party/runtime-libs/android/arm64-v8a/libpupdmd.so ../../../third-party/runtime-libs/android-arm64-v8a
 cp libdmdutil/libdmdutil/third-party/include/pupdmd.h ../../../third-party/include
+# libvni: unencrypted PIN2DMD (.pal/.vni) decoder, bundled by newer libdmdutil.
+# Verify these names if the build can't find them (newer libdmdutil could rename).
+cp libdmdutil/libdmdutil/third-party/runtime-libs/android/arm64-v8a/libvni.so ../../../third-party/runtime-libs/android-arm64-v8a
+cp libdmdutil/libdmdutil/third-party/include/vni.h ../../../third-party/include
 cp libdmdutil/libdmdutil/third-party/runtime-libs/android/arm64-v8a/libsockpp.so ../../../third-party/runtime-libs/android-arm64-v8a
 
 cp libaltsound/libaltsound/build/libaltsound.so ../../../third-party/runtime-libs/android-arm64-v8a

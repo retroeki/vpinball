@@ -3313,6 +3313,10 @@ RenderTarget* Renderer::SetupAncillaryRenderTarget(VPXWindowId window, VPX::Rend
 // is pushing a live EM score-reel composite (EM tables only; never for DMD/segment
 // score views). Lets the score-view surround be transparent over the scene.
 extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::vector<uint8_t>* out);
+// True only when the ScoreView's chosen layout IS the live reel/char-display image
+// (translucent panel). It is false when the ScoreView picked a real DMD/segment
+// display even if ReelDmd is also compositing a (here unused) reel image.
+extern "C" bool IsScoreViewReelActive();
 
 void Renderer::ClearEmbeddedAncillaryWindow(VPXWindowId window, VPX::RenderOutput& output, RenderTarget* embedRT)
 {
@@ -3321,10 +3325,12 @@ void Renderer::ClearEmbeddedAncillaryWindow(VPXWindowId window, VPX::RenderOutpu
 
    // EM score-reel view: skip the opaque black fill so the cabinet shows through
    // the semi-transparent reel surround (the reel composite is RGBA: opaque digits
-   // + chrome, translucent field). Scoped to the ScoreView window AND only when a
-   // reel image is active, so DMD/segment score views keep their black backing and
-   // the backglass/topper outputs are untouched.
-   if (window == VPXWindowId::VPXWINDOW_ScoreView && GetReelImage(nullptr, nullptr, nullptr, nullptr))
+   // + chrome, translucent field). Scoped to the ScoreView window AND only when the
+   // ScoreView is ACTUALLY rendering that reel panel (its chosen layout is reel-only),
+   // so DMD/segment score views keep their black backing - including solid-state
+   // tables (Alien Poker, Ali) whose decorative DispReels make ReelDmd composite an
+   // (unused) reel image while the ScoreView shows the real PinMAME segment display.
+   if (window == VPXWindowId::VPXWINDOW_ScoreView && IsScoreViewReelActive())
       return;
 
    bool isOutputLinear;
