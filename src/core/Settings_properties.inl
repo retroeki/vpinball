@@ -1369,6 +1369,7 @@ PropBoolDyn(PluginWMP, Enable, "Enable"s, "Enable WMP plugin"s, g_isStandalone);
 PropEnumWithMin(Standalone, RenderingModeOverride, "Override rendering mode"s, ""s, int, -1, g_isMobile ? 0 : -1, "Default"s, "2D"s, "Stereo 3D"s, "VR"s); // Mobile defaults to 2D (was VR)
 PropBool(Standalone, Haptics, "Haptics"s, ""s, g_isMobile);
 PropBool(Standalone, TouchZonesForced, "Force Touch Zones"s, "Always use hardcoded touch zones, ignoring table overrides"s, false);
+PropBool(Standalone, EmCreditDualSend, "EM Credit Dual-Send"s, "Also deliver the legacy '5' coin key on Add Credit, for EM/original tables that hard-code the '5' credit key instead of '3'. Host sets this for non-PinMAME tables only."s, false);
 PropBool(Standalone, ResetLogOnPlay, "Reset Log on Play"s, ""s, g_isMobile);
 PropString(Standalone, VPRegPath, "VPRegPath"s, ""s, ""s);
 

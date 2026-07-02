@@ -632,14 +632,32 @@ void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float 
    point.y = (int)((float)g_pplayer->m_playfieldWnd->GetHeight() * relativeY);
    PLOGD << "PushTouchEvent: finger=" << fingerId << " rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
 
+   // EM/original start-key compat (mirrors the Credit1 path in CreateInputActions, same
+   // Standalone/EmCreditDualSend gate). EM tables that hard-code the legacy "1" start key
+   // (DirectInput DIK_1) ignore the Start zone's 0x10000|actionId value, so touch-start
+   // never registers (e.g. Band Wagon, Star Knights). When flagged non-PinMAME, deliver
+   // the DInput "1" scancode on the touch-start edges. TOUCH-ONLY: controller/keyboard "1"
+   // already reaches the script via the raw-keyboard DIK path (PushButtonEvent), so doing
+   // this in the Start action handler instead would double-fire and consume two credits.
+   auto fireEmStartDIK = [](bool isPressed) {
+      if (!g_pvp->m_settings.GetStandalone_EmCreditDualSend() || g_pplayer->m_liveUI->IsInGameUIOpened())
+         return;
+      const unsigned char dik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_1);
+      CComVariant rgvar[1] = { CComVariant(dik) };
+      DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+      g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+   };
+
    // Decrement a region's hold count and release the zone once no finger is holding it.
-   auto releaseRegion = [this](size_t i) {
+   auto releaseRegion = [this, &fireEmStartDIK](size_t i) {
       if (i >= m_touchRegionMap.size() || m_touchRegionHold[i] <= 0)
          return;
       if (--m_touchRegionHold[i] == 0)
       {
          const auto& region = m_touchRegionMap[i];
          m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, false);
+         if (region.actionId == GetStartActionId())
+            fireEmStartDIK(false);
       }
    };
 
@@ -662,7 +680,11 @@ void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float 
             continue;
          held.push_back(i);
          if (++m_touchRegionHold[i] == 1)
+         {
             m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, true);
+            if (region.actionId == GetStartActionId())
+               fireEmStartDIK(true);
+         }
       }
    }
    else
@@ -733,7 +755,33 @@ void InputManager::CreateInputActions()
    m_rightNudgeActionId = addKeyAction("RightNudge"s, "Right Nudge"s, SDL_SCANCODE_SLASH);
    m_centerNudgeActionId = addKeyAction("CenterNudge"s, "Center Nudge"s, SDL_SCANCODE_SPACE);
    m_tiltActionId = addKeyAction("Tilt"s, "Tilt"s, SDL_SCANCODE_T);
-   m_addCreditActionId[0] = addKeyAction("Credit1"s, "Credit (1)"s, SDL_SCANCODE_3);
+   // Credit1 ("3"): standard add-credit action, with an EM/original-table compat path.
+   // Touch's credit zone and the host's "3"-based Add Credit button both fire THIS action,
+   // delivering the modern 0x10000|actionId named-key value (and, for the keyboard route,
+   // DIK_3). EM tables that hard-code the legacy "5" coin key (DirectInput DIK_5) for credit
+   // ignore both, so credit never registers and the game can't start (e.g. Band Wagon,
+   // Star Knights). When the host flags the table as non-PinMAME via Standalone/EmCreditDualSend,
+   // additionally deliver the DInput "5" scancode so the legacy KeyDown handler fires. Gated so
+   // PinMAME tables (which treat "5" as coin slot 3) never get a second coin. Physical "5"
+   // presses are unaffected — they reach the script via the raw-keyboard DIK path, not this action.
+   m_addCreditActionId[0] = AddAction(std::make_unique<InputAction>(this, "Credit1"s, "Credit (1)"s, keyMapping(SDL_SCANCODE_3),
+      [](const InputAction& action, bool, bool isPressed)
+      {
+         if (g_pplayer->m_liveUI->IsInGameUIOpened())
+            return;
+         CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
+         DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+         g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+         if (g_pvp->m_settings.GetStandalone_EmCreditDualSend())
+         {
+            // Mirror the raw-keyboard DIK delivery exactly (see PushButtonEvent): same
+            // unsigned-char DInput scancode the script sees from a physical "5" press.
+            const unsigned char emdik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_5);
+            CComVariant emvar[1] = { CComVariant(emdik) };
+            DISPPARAMS emparams = { emvar, nullptr, 1, 0 };
+            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &emparams);
+         }
+      }))->GetActionId();
    m_addCreditActionId[1] = addKeyAction("Credit2"s, "Credit (2)"s, SDL_SCANCODE_4);
    m_addCreditActionId[2] = addKeyAction("Credit3"s, "Credit (3)"s, SDL_SCANCODE_5);
    m_addCreditActionId[3] = addKeyAction("Credit4"s, "Credit (4)"s, SDL_SCANCODE_6);
