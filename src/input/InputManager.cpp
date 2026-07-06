@@ -59,11 +59,13 @@ InputManager::InputManager()
       // When forced, clear any existing touch zones to ensure hardcoded layout
       if (touchZonesForced)
          m_touchRegionMap.clear();
-      PLOGI << "Registering " << 12 << " touch zones (forced=" << touchZonesForced << ")";
-      addTouchRegion(RECT { 0, 0, 50, 10 }, GetAddCreditActionId(0));
+      PLOGI << "Registering " << 13 << " touch zones (forced=" << touchZonesForced << ")";
+      addTouchRegion(RECT { 0, 0, 33, 10 }, GetAddCreditActionId(0));
+      // Top-middle zone: EB Buyin (buy extra ball / front-door button, keyFront "2").
+      addTouchRegion(RECT { 33, 0, 67, 10 }, GetExtraBallBuyInActionId());
       // Top-right zone opens the Android app settings dialog (fires VPINBALL_EVENT_MENU_PRESSED via InGameUI action).
       // Coin-door toggle is now available as an action inside the settings dialog itself.
-      addTouchRegion(RECT { 50, 0, 100, 10 }, GetInGameUIActionId());
+      addTouchRegion(RECT { 67, 0, 100, 10 }, GetInGameUIActionId());
       addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
       addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
       addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
@@ -787,6 +789,23 @@ void InputManager::CreateInputActions()
    m_addCreditActionId[3] = addKeyAction("Credit4"s, "Credit (4)"s, SDL_SCANCODE_6);
    m_startActionId = addKeyAction("Start"s, "Start"s, SDL_SCANCODE_1);
    m_extraBallActionId = addKeyAction("ExtraBall"s, "Extra Ball"s, SDL_SCANCODE_B);
+   // EB Buyin: tables read the buy-extra-ball / front-door button from keyFront, which is the
+   // raw DirectInput "2" scancode (VPMKeys.vbs: Const keyFront = 3 '(2)), NOT any engine action's
+   // 0x10000|actionId named-key value. So this action delivers the raw DIK "2" directly, matching
+   // the host's controller EB Buyin binding (PinballAction.EXTRA_CREDIT -> "2"). It is bound to no
+   // key on purpose: a physical/controller "2" already reaches the script via the raw-keyboard DIK
+   // path (PushButtonEvent), so binding "2" here too would double-fire. The action is driven only by
+   // its top-middle touch region's direct state (see the touch zone registration above).
+   m_extraBallBuyInActionId = AddAction(std::make_unique<InputAction>(this, "BuyIn"s, "Buy-In"s, ""s,
+      [](const InputAction&, bool, bool isPressed)
+      {
+         if (g_pplayer->m_liveUI->IsInGameUIOpened())
+            return;
+         const unsigned char dik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_2);
+         CComVariant rgvar[1] = { CComVariant(dik) };
+         DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+         g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+      }))->GetActionId();
    m_lockbarActionId = addKeyAction("Lockbar"s, "Lockbar"s, SDL_SCANCODE_LALT);
 
    auto pause = AddAction(std::make_unique<InputAction>(this, "Pause"s, "Pause Game"s, keyMapping(SDL_SCANCODE_P),

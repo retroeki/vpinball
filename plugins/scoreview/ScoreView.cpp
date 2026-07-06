@@ -494,7 +494,7 @@ void ScoreView::Select(const float scoreW, const float scoreH)
    // each layout matches the live PinMAME sources, so we can see whether a real segment
    // display is advertised for this ROM and whether any layout fully matches it. Bounded
    // so a long session does not flood logcat. Remove once the investigation is closed.
-   static int s_selDbg = 60;
+   static int s_selDbg = 0; // [SEG-DIAG] DISABLED for this session (set back to 60 to re-enable the dump)
    const bool selDbg = (s_selDbg > 0);
    if (selDbg) { --s_selDbg; LOGI("ScoreView::Select: output=%.0fx%.0f AR=%.2f layouts=%d", scoreW, scoreH, rtAR, (int)m_layouts.size()); }
 

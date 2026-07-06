@@ -40,6 +40,7 @@ public:
    unsigned int GetVolumeDownActionId() const { return m_volumeDownActionId; }
    unsigned int GetVolumeUpActionId() const { return m_volumeUpActionId; }
    unsigned int GetExtraBallActionId() const { return m_extraBallActionId; }
+   unsigned int GetExtraBallBuyInActionId() const { return m_extraBallBuyInActionId; }
    unsigned int GetSlamTiltActionId() const { return m_slamTiltActionId; }
    unsigned int GetCoinDoorActionId() const { return m_coinDoorActionId; }
    unsigned int GetResetActionId() const { return m_resetActionId; }
@@ -220,6 +221,7 @@ private:
    unsigned int m_volumeDownActionId;
    unsigned int m_volumeUpActionId;
    unsigned int m_extraBallActionId;
+   unsigned int m_extraBallBuyInActionId;
    unsigned int m_slamTiltActionId;
    unsigned int m_coinDoorActionId;
    unsigned int m_resetActionId;
