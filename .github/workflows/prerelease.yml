@@ -1,0 +1,65 @@
+name: prerelease
+on: 
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "SHA (leave blank for HEAD)"
+        required: false
+
+env:
+  ACTIONS_API_URL: https://api.github.com/repos/${GITHUB_REPOSITORY}/actions
+  VERSION_START_SHA: ea558e7417f6f06fe567d34f0e33792a141b8e64
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: sha
+        run: |
+           SHA=$(if [[ "${{ github.event.inputs.sha }}" ]]; then echo "${{ github.event.inputs.sha }}"; else echo "${GITHUB_SHA}"; fi)
+           echo "sha=${SHA}" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 0
+      - id: version
+        run: |
+          VERSION_MAJOR=$(grep -Eo "VP_VERSION_MAJOR\s+[0-9]+" src/core/vpversion.h | grep -Eo "[0-9]+")
+          VERSION_MINOR=$(grep -Eo "VP_VERSION_MINOR\s+[0-9]+" src/core/vpversion.h | grep -Eo "[0-9]+")
+          VERSION_REV=$(grep -Eo "VP_VERSION_REV\s+[0-9]+" src/core/vpversion.h | grep -Eo "[0-9]+")
+          REVISION=$(git rev-list ${{ env.VERSION_START_SHA }}..${{ steps.sha.outputs.sha }} --count)
+          SHA_SHORT=$(git rev-parse --short "${{ steps.sha.outputs.sha }}")
+          TAG="${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_REV}-${REVISION}-${SHA_SHORT}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+  prerelease:
+    runs-on: ubuntu-24.04
+    needs: [ version ]
+    steps:
+      - name: Find build run
+        id: find-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID=$(gh run list --repo ${{ github.repository }} --workflow=vpinball.yml --status=success --commit=${{ needs.version.outputs.sha }} --limit=1 --json databaseId -q '.[0].databaseId')
+          echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          pattern: VPinballX_*
+          run-id: ${{ steps.find-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+          skip-decompress: true
+      - id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          prerelease: true
+          name: "v${{ needs.version.outputs.tag }}"
+          tag: "v${{ needs.version.outputs.tag }}"
+          commit: ${{ needs.version.outputs.sha }}
+          token:  ${{ secrets.GITHUB_TOKEN }}
+          artifacts: "artifacts/**/*"
