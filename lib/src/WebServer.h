@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <thread>
 #include <mutex>
 #include <vector>
@@ -36,6 +37,7 @@ private:
    void Upload(struct mg_connection *c, struct mg_http_message* hm);
    void Delete(struct mg_connection *c, struct mg_http_message* hm);
    void Rename(struct mg_connection *c, struct mg_http_message* hm);
+   void Move(struct mg_connection *c, struct mg_http_message* hm);
    void SetRoot(struct mg_connection *c, struct mg_http_message* hm);
    void GetRoot(struct mg_connection *c, struct mg_http_message* hm);
    void Folder(struct mg_connection *c, struct mg_http_message* hm);
@@ -48,16 +50,16 @@ private:
 
    string GetIPAddress();
    bool ValidatePathParameter(struct mg_connection *c, struct mg_http_message* hm, const char* paramName, string& outValue);
-   std::filesystem::path BuildPrefPath(const char* relativePath);
+   std::filesystem::path BuildTablePath(const char* relativePath);
    bool Unzip(const char* pSource);
 
    struct mg_mgr m_mgr;
-   bool m_run;
+   std::atomic<bool> m_run;
    std::unique_ptr<std::thread> m_pThread;
    string m_url;
    static std::mutex s_logMutex;
-   static vector<struct mg_connection*> s_logConnections;
-   static vector<struct mg_connection*> s_statusConnections;
+   static vector<unsigned long> s_logConnections;
+   static vector<unsigned long> s_statusConnections;
    static std::deque<string> s_recentLogs;
    static const size_t MAX_RECENT_LOGS = 1000;
    static WebServer* s_instance;

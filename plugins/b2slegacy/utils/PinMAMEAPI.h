@@ -8,7 +8,7 @@ class Server;
 
 class PinMAMEAPI {
 public:
-   PinMAMEAPI(Server* server, ScriptClassDef* pinmameClassDef);
+   PinMAMEAPI(const MsgPluginAPI* msgApi, uint32_t endpointId, Server* server, ScriptClassDef* serverClassDef);
    ~PinMAMEAPI();
 
    ScriptArray* GetChangedLamps();
@@ -17,18 +17,19 @@ public:
    ScriptArray* GetChangedLEDs();
    void SetSwitch(int switchId, bool value);
 
-   void HandleCall(int memberIndex, int memberStartIndex, ScriptVariant* pArgs, ScriptVariant* pRet);
+   void HandleCall(int memberIndex, ScriptVariant* pArgs, ScriptVariant* pRet);
 
 private:
-   Server* m_server;
-   ScriptClassDef* m_pinmameClassDef;
-   void* m_pinmameInstance;
+   Server* m_server = nullptr;
+   ScriptClassDef* m_serverClassDef = nullptr;
+   PinballPlugin::Scriptable::ScriptClassProxy m_controllerClassProxy;
+   PinballPlugin::Scriptable::ScriptObjectProxy m_controllerProxy;
 
-   int m_changedLampsIndex;
-   int m_changedSolenoidsIndex;
-   int m_changedGIStringsIndex;
-   int m_changedLEDsIndex;
-   int m_setSwitchIndex;
+   int m_changedLampsIndex = -1;
+   int m_changedSolenoidsIndex = -1;
+   int m_changedGIStringsIndex = -1;
+   int m_changedLEDsIndex = -1;
+   int m_setSwitchIndex = -1;
 };
 
 }

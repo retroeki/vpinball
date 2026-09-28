@@ -302,7 +302,7 @@ vec3 AgXToneMapping(vec3 color)
     #else
 
     // AgX transformation constants taken from https://iolite-engine.com/blog_posts/minimal_agx_implementation (also used in Godot)
-    // It is supposed that they are ok for rec709 input values.
+    // It is assumed that they are ok for rec709 input values.
     // (note that out transform is the inverse of in transform)
     const mat3 AgXInsetMatrix = mtxFromRows3
     (
@@ -533,13 +533,14 @@ void main()
    BRANCH if (do_bloom)
       result += texStereoNoLod(tex_bloom, v_texcoord0).rgb; //!! offset?
 
+   result *= exposure;
+
    if (isHDR2020) // scale by 1/hdr_headroom (so everything that is within the displays range is now mapped to 0..1)
       result *= sceneLum_x_invDisplayMaxLum; // scale by scene luminance to get nits, then divide by display max luminance (in nits) to get a display-matching 0..1 range before tonemapping
 
    const float depth0 = texStereoNoLod(tex_depth, v_texcoord0).x;
    BRANCH if ((depth0 != 1.0) && (depth0 != 0.0)) //!! early out if depth too large (=BG) or too small (=DMD)
    {
-      result *= exposure;
       #ifdef REINHARD
          result = ReinhardToneMap(result);       // linear sRGB -> linear sRGB
       #elif defined(FILMIC)

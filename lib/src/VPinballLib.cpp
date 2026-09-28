@@ -1,11 +1,16 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
-#include "core/TableDB.h"
-#include "core/VPXPluginAPIImpl.h"
-#include "core/extern.h"
 #include "VPinballLib.h"
+
+#include "core/extern.h"
+#include "core/AppCommands.h"
+#include "core/TableDB.h"
+#include "core/VPApp.h"
+#include "core/VPXPluginAPIImpl.h"
+#include "parts/pintable.h"
+#include "renderer/Renderer.h"
+#include "ui/LoadProgress.h"
 #include "VPXProgress.h"
 #include "WebServer.h"
 
@@ -32,6 +37,8 @@
 
 MSGPI_EXPORT void MSGPIAPI AlphaDMDPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI AlphaDMDPluginUnload();
+MSGPI_EXPORT void MSGPIAPI AltSoundPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
+MSGPI_EXPORT void MSGPIAPI AltSoundPluginUnload();
 MSGPI_EXPORT void MSGPIAPI B2SPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI B2SPluginUnload();
 MSGPI_EXPORT void MSGPIAPI B2SLegacyPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
@@ -42,6 +49,8 @@ MSGPI_EXPORT void MSGPIAPI DMDUtilPluginLoad(const uint32_t sessionId, const Msg
 MSGPI_EXPORT void MSGPIAPI DMDUtilPluginUnload();
 MSGPI_EXPORT void MSGPIAPI FlexDMDPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI FlexDMDPluginUnload();
+MSGPI_EXPORT void MSGPIAPI InspectorPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
+MSGPI_EXPORT void MSGPIAPI InspectorPluginUnload();
 MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI PinMAMEPluginUnload();
 MSGPI_EXPORT void MSGPIAPI PUPPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
@@ -52,12 +61,12 @@ MSGPI_EXPORT void MSGPIAPI ScoreViewPluginLoad(const uint32_t sessionId, const M
 MSGPI_EXPORT void MSGPIAPI ScoreViewPluginUnload();
 MSGPI_EXPORT void MSGPIAPI SerumPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI SerumPluginUnload();
-MSGPI_EXPORT void MSGPIAPI VNIPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
-MSGPI_EXPORT void MSGPIAPI VNIPluginUnload();
-MSGPI_EXPORT void MSGPIAPI WMPPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
-MSGPI_EXPORT void MSGPIAPI WMPPluginUnload();
 MSGPI_EXPORT void MSGPIAPI UpscaleDMDPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
 MSGPI_EXPORT void MSGPIAPI UpscaleDMDPluginUnload();
+MSGPI_EXPORT void MSGPIAPI WMPPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
+MSGPI_EXPORT void MSGPIAPI WMPPluginUnload();
+MSGPI_EXPORT void MSGPIAPI VNIPluginLoad(const uint32_t sessionId, const MsgPluginAPI* api);
+MSGPI_EXPORT void MSGPIAPI VNIPluginUnload();
 
 // Global storage for PUP video source dimensions (updated by PUP plugin during render)
 static std::atomic<int> g_pupVideoSourceWidth{0};
@@ -196,13 +205,9 @@ extern "C" const char* VPinballGetInternalPath()
 // music/, pupvideos/) and the advanced/internal path (bundled assets/, scripts/,
 // plugins/, VPinballX.ini, logs).
 //
-// VPinball::GetPrefPath defaults to the library path; the WebServer can flip
+// The web file-browser root defaults to the library path; the WebServer can flip
 // the active root at runtime by calling VPinballSetActiveWebRoot, which the
-// /setroot?type=library|advanced endpoint in WebServer.cpp invokes.
-//
-// Pre-init: GetDefaultPrefPath() reads g_libraryPath via VPinballGetWebLibraryPath
-// so the constructor seeds m_myPrefPath correctly.
-// Post-init: VPinballSetActiveWebRoot calls g_pvp->SetPrefPath() so subsequent
+// /setroot?type=library|advanced endpoint in WebServer.cpp invokes. Subsequent
 // file-browser requests use the new root immediately.
 static std::string g_libraryPath;
 static std::string g_advancedPath;
@@ -234,11 +239,9 @@ extern "C" const char* VPinballGetWebAdvancedPath()
    return g_advancedPath.empty() ? nullptr : g_advancedPath.c_str();
 }
 
-// Active web-server browse root, kept SEPARATE from g_pvp->m_myPrefPath. The
-// previous design called g_pvp->SetPrefPath() so the WebServer's BuildPrefPath
-// would route file ops at the user library — but m_myPrefPath is also where
-// VPinballX.ini, vpinball.log, and user/ get written, so the side effect was
-// those files leaking into the user's tables folder. WebServer now reads
+// Active web-server browse root, kept SEPARATE from the application's
+// preference folder (where VPinballX.ini, vpinball.log, and user/ get written)
+// so those files never leak into the user's tables folder. WebServer reads
 // g_activeWebRoot directly via VPinballGetActiveWebRoot.
 static std::string g_activeWebRoot;
 
@@ -294,9 +297,6 @@ int VPinballLib::AppInit(int argc, char** argv)
       #endif
    }
 
-   if (g_isAndroid)
-      MsgPI::MsgPluginManager::GetInstance().UpdateAPIThread();
-
    return 1;
 }
 
@@ -344,32 +344,31 @@ void VPinballLib::AppIterate()
          || g_pplayer->GetCloseState() == Player::CS_USER_INPUT))
          return;
 
-      CComObject<PinTable>* pActiveTable = g_pvp->GetActiveTable();
-
       if (g_pplayer->GetCloseState() == Player::CS_CLOSE_CAPTURE_SCREENSHOT) {
          if (m_captureInProgress)
             return;
 
-         std::filesystem::path tablePath(pActiveTable->m_filename);
+         std::filesystem::path tablePath(m_pTable->m_filename);
          string imageFilename = tablePath.stem().string() + ".jpg";
-         string imagePath = tablePath.parent_path().string() + PATH_SEPARATOR_CHAR + imageFilename;
+         std::filesystem::path imagePath = tablePath.parent_path() / imageFilename;
 
-         if (std::filesystem::exists(imagePath)) {
+         std::error_code ec;
+         if (std::filesystem::exists(imagePath, ec)) {
             g_pplayer->SetCloseState(Player::CS_CLOSE_APP);
             return;
          }
 
          m_captureInProgress = true;
 
-         g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot(imagePath,
+         g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot({ g_pplayer->m_playfieldWnd }, { imagePath },
             [this, imagePath](bool success) {
                m_captureInProgress = false;
 
                if (success) {
-                  PLOGI.printf("Screenshot saved: %s", imagePath.c_str());
+                  PLOGI.printf("Screenshot saved: %s", imagePath.string().c_str());
                }
                else {
-                  PLOGE.printf("Failed to save screenshot: %s", imagePath.c_str());
+                  PLOGE.printf("Failed to save screenshot: %s", imagePath.string().c_str());
                }
 
                g_pplayer->SetCloseState(Player::CS_CLOSE_APP);
@@ -382,21 +381,39 @@ void VPinballLib::AppIterate()
 
       m_gameLoop = nullptr;
 
-      // The table settings may have been edited during play (camera, rendering, ...), so copy them back to the editor table's settings
-      pActiveTable->m_settings.Load(g_pplayer->m_ptable->m_settings);
-      pActiveTable->m_settings.SetModified(g_pplayer->m_ptable->m_settings.IsModified());
+      // If the session was ended by a table switch request to a different base table, take it over and
+      // restart a new player on the requested table (all played tables are CComObject<PinTable> instances)
+      Player::PlayMode nextMode = Player::PlayMode::Play;
+      PinTable* const nextTable = g_pplayer->TakeTableSwitch(nextMode);
 
       delete g_pplayer;
       g_pplayer = nullptr;
 
-      PLOGI.printf("AppIterate: Closing table after player exit: %s", pActiveTable->m_filename.c_str());
-      g_pvp->CloseTable(pActiveTable);
+      PLOGI.printf("AppIterate: Closing table after player exit: %s", m_pTable->m_filename.string().c_str());
+      m_pTable->Release();
+      m_pTable = nullptr;
       PLOGI.printf("AppIterate: Table closed successfully");
+
+      if (nextTable != nullptr)
+      {
+         m_pTable = static_cast<CComObject<PinTable>*>(nextTable);
+         static LoadProgress loadProgress;
+         new Player(m_pTable, nextMode, loadProgress);
+         if (g_pplayer)
+            g_pplayer->GameLoop();
+      }
    }
 }
 
 void VPinballLib::AppEvent(SDL_Event* event)
 {
+#ifdef __APPLE__
+   if (event->type == SDL_EVENT_DROP_FILE && event->drop.data) {
+      VPinball_CallIOSOpenURLHandler(event->drop.data);
+      return;
+   }
+#endif
+
    std::lock_guard<std::mutex> lock(m_eventMutex);
    if (m_gameLoop)
       m_eventQueue.push(*event);
@@ -417,70 +434,21 @@ bool VPinballLib::PollAppEvent(SDL_Event& event)
    return true;
 }
 
-void VPinballLib::Init(VPinballEventCallback callback)
+void VPinballLib::Init(VPinballEventCallback eventCallback, VPinballRumbleCallback rumbleCallback)
 {
-   SetEventCallback(callback);
+   SetEventCallback(eventCallback);
+   SetRumbleCallback(rumbleCallback);
 
    SDL_RunOnMainThread([](void* userdata) {
       auto* lib = static_cast<VPinballLib*>(userdata);
 
-      g_pvp = new ::VPinball();
-      g_pvp->SetLogicalNumberOfProcessors(SDL_GetNumLogicalCPUCores());
-      g_pvp->m_settings.SetIniPath(g_pvp->GetPrefPath() + "VPinballX.ini");
-      g_pvp->m_settings.Load(true);
-      g_pvp->m_settings.SetVersion_VPinball(string(VP_VERSION_STRING_DIGITS), false);
-      g_pvp->m_settings.Save();
-
-      Logger::GetInstance()->Init();
-      Logger::GetInstance()->SetupLogger(true);
-
-      PLOGI << "VPX - " << VP_VERSION_STRING_FULL_LITERAL;
-      PLOGI << "m_logicalNumberOfProcessors=" << g_pvp->GetLogicalNumberOfProcessors();
-      PLOGI << "m_myPath=" << g_pvp->m_myPath;
-      PLOGI << "m_myPrefPath=" << g_pvp->GetPrefPath();
-
-      if (!DirExists(PATH_USER)) {
-         std::error_code ec;
-         if (std::filesystem::create_directory(PATH_USER, ec)) {
-            PLOGI.printf("User path created: %s", PATH_USER.c_str());
-         }
-         else {
-            PLOGE.printf("Unable to create user path: %s", PATH_USER.c_str());
-         }
-      }
-
-      EditableRegistry::RegisterEditable<Ball>();
-      EditableRegistry::RegisterEditable<Bumper>();
-      EditableRegistry::RegisterEditable<Decal>();
-      EditableRegistry::RegisterEditable<DispReel>();
-      EditableRegistry::RegisterEditable<Flasher>();
-      EditableRegistry::RegisterEditable<Flipper>();
-      EditableRegistry::RegisterEditable<Gate>();
-      EditableRegistry::RegisterEditable<Kicker>();
-      EditableRegistry::RegisterEditable<Light>();
-      EditableRegistry::RegisterEditable<LightSeq>();
-      EditableRegistry::RegisterEditable<Plunger>();
-      EditableRegistry::RegisterEditable<Primitive>();
-      EditableRegistry::RegisterEditable<Ramp>();
-      EditableRegistry::RegisterEditable<Rubber>();
-      EditableRegistry::RegisterEditable<Spinner>();
-      EditableRegistry::RegisterEditable<Surface>();
-      EditableRegistry::RegisterEditable<Textbox>();
-      EditableRegistry::RegisterEditable<Timer>();
-      EditableRegistry::RegisterEditable<Trigger>();
-      EditableRegistry::RegisterEditable<HitTarget>();
-      EditableRegistry::RegisterEditable<PartGroup>();
-
-      VPXPluginAPIImpl::GetInstance();
-
-      RegisterStaticPlugins();
-
-      for (const auto& plugin : MsgPI::MsgPluginManager::GetInstance().GetPlugins()) {
-         if (lib->LoadValueBool("Plugin."s + plugin->m_id, "Enable", false))
-            plugin->Load(&MsgPI::MsgPluginManager::GetInstance().GetMsgAPI());
-      }
+      g_app = new ::VPApp();
+      g_app->SetCommandLineCustomSettingsFileName((g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Preferences) / "VPinballX.ini"sv));
+      g_app->InitInstance();
 
       lib->UpdateWebServer();
+
+      SendEvent(VPINBALL_EVENT_INIT_COMPLETE, nullptr);
    }, this, true);
 }
 
@@ -491,64 +459,14 @@ void VPinballLib::InitHeadless(VPinballEventCallback callback)
    // Same initialization as Init() but runs directly without SDL_RunOnMainThread
    // Used when called from a Service context where SDL event loop isn't running
 
-   g_pvp = new ::VPinball();
-   g_pvp->SetLogicalNumberOfProcessors(SDL_GetNumLogicalCPUCores());
-   g_pvp->m_settings.SetIniPath(g_pvp->GetPrefPath() + "VPinballX.ini");
-   g_pvp->m_settings.Load(true);
-   g_pvp->m_settings.SetVersion_VPinball(string(VP_VERSION_STRING_DIGITS), false);
-   g_pvp->m_settings.Save();
-
-   Logger::GetInstance()->Init();
-   Logger::GetInstance()->SetupLogger(true);
-
-   PLOGI << "VPX Headless - " << VP_VERSION_STRING_FULL_LITERAL;
-   PLOGI << "m_logicalNumberOfProcessors=" << g_pvp->GetLogicalNumberOfProcessors();
-   PLOGI << "m_myPath=" << g_pvp->m_myPath;
-   PLOGI << "m_myPrefPath=" << g_pvp->GetPrefPath();
-
-   if (!DirExists(PATH_USER)) {
-      std::error_code ec;
-      if (std::filesystem::create_directory(PATH_USER, ec)) {
-         PLOGI.printf("User path created: %s", PATH_USER.c_str());
-      }
-      else {
-         PLOGE.printf("Unable to create user path: %s", PATH_USER.c_str());
-      }
-   }
-
-   EditableRegistry::RegisterEditable<Ball>();
-   EditableRegistry::RegisterEditable<Bumper>();
-   EditableRegistry::RegisterEditable<Decal>();
-   EditableRegistry::RegisterEditable<DispReel>();
-   EditableRegistry::RegisterEditable<Flasher>();
-   EditableRegistry::RegisterEditable<Flipper>();
-   EditableRegistry::RegisterEditable<Gate>();
-   EditableRegistry::RegisterEditable<Kicker>();
-   EditableRegistry::RegisterEditable<Light>();
-   EditableRegistry::RegisterEditable<LightSeq>();
-   EditableRegistry::RegisterEditable<Plunger>();
-   EditableRegistry::RegisterEditable<Primitive>();
-   EditableRegistry::RegisterEditable<Ramp>();
-   EditableRegistry::RegisterEditable<Rubber>();
-   EditableRegistry::RegisterEditable<Spinner>();
-   EditableRegistry::RegisterEditable<Surface>();
-   EditableRegistry::RegisterEditable<Textbox>();
-   EditableRegistry::RegisterEditable<Timer>();
-   EditableRegistry::RegisterEditable<Trigger>();
-   EditableRegistry::RegisterEditable<HitTarget>();
-   EditableRegistry::RegisterEditable<PartGroup>();
-
-   VPXPluginAPIImpl::GetInstance();
-
-   RegisterStaticPlugins();
-
-   for (const auto& plugin : MsgPI::MsgPluginManager::GetInstance().GetPlugins()) {
-      if (LoadValueBool("Plugin."s + plugin->m_id, "Enable", false))
-         plugin->Load(&MsgPI::MsgPluginManager::GetInstance().GetMsgAPI());
-   }
+   g_app = new ::VPApp();
+   g_app->SetCommandLineCustomSettingsFileName((g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Preferences) / "VPinballX.ini"sv));
+   g_app->InitInstance();
 
    UpdateWebServer();
    m_initialized = true;
+
+   SendEvent(VPINBALL_EVENT_INIT_COMPLETE, nullptr);
 }
 
 void VPinballLib::UpdateEventCallback(VPinballEventCallback callback)
@@ -561,40 +479,30 @@ void VPinballLib::Shutdown()
 {
    PLOGI.printf("Shutdown called - cleaning up all state");
 
-   // Stop player FIRST if running (player references table)
+   // Stop player FIRST if running (player references table, and owns the plugins)
    if (g_pplayer) {
       PLOGI.printf("Stopping player");
       delete g_pplayer;
       g_pplayer = nullptr;
    }
 
-   // Close any active table AFTER player is stopped
-   if (g_pvp) {
-      CComObject<PinTable>* pActiveTable = g_pvp->GetActiveTable();
-      if (pActiveTable) {
-         PLOGI.printf("Closing active table: %s", pActiveTable->m_filename.c_str());
-         g_pvp->CloseTable(pActiveTable);
-      }
+   // Release the loaded table AFTER player is stopped
+   if (m_pTable) {
+      PLOGI.printf("Closing active table: %s", m_pTable->m_filename.string().c_str());
+      m_pTable->Release();
+      m_pTable = nullptr;
    }
 
-   // Unload all loaded plugins (only unload if actually loaded)
-   PLOGI.printf("Unloading plugins");
-   for (const auto& plugin : MsgPI::MsgPluginManager::GetInstance().GetPlugins()) {
-      if (plugin->IsLoaded()) {
-         PLOGI.printf("Unloading plugin: %s", plugin->m_id.c_str());
-         plugin->Unload();
-      }
-   }
-
-   // Delete VPinball instance
-   if (g_pvp) {
-      PLOGI.printf("Deleting VPinball instance");
-      delete g_pvp;
-      g_pvp = nullptr;
+   // Delete application instance
+   if (g_app) {
+      PLOGI.printf("Deleting VPApp instance");
+      delete g_app;
+      g_app = nullptr;
    }
 
    // Clear callback and state
    m_eventCallback = nullptr;
+   m_rumbleCallback = nullptr;
    m_gameLoop = nullptr;
    m_initialized = false;
 
@@ -606,33 +514,19 @@ void VPinballLib::SetEventCallback(VPinballEventCallback callback)
    m_eventCallback = [callback](VPINBALL_EVENT event, void* data) -> void* {
       thread_local string jsonString;
       const char* jsonData = nullptr;
+      nlohmann::json j;
 
       if (data != nullptr) {
-         nlohmann::json j;
-
          switch(event) {
-            case VPINBALL_EVENT_LOADING_ITEMS:
-            case VPINBALL_EVENT_LOADING_SOUNDS:
-            case VPINBALL_EVENT_LOADING_IMAGES:
-            case VPINBALL_EVENT_LOADING_FONTS:
-            case VPINBALL_EVENT_LOADING_COLLECTIONS:
-            case VPINBALL_EVENT_PRERENDERING: {
+            case VPINBALL_EVENT_LOADING:
+            case VPINBALL_EVENT_PRERENDERING:
+            case VPINBALL_EVENT_EXTRACT_SCRIPT: {
                ProgressData* progressData = (ProgressData*)data;
                j["progress"] = progressData->progress;
                jsonString = j.dump();
                jsonData = jsonString.c_str();
                break;
             }
-            case VPINBALL_EVENT_RUMBLE: {
-               RumbleData* rumbleData = (RumbleData*)data;
-               j["lowFrequencyRumble"] = rumbleData->lowFrequencyRumble;
-               j["highFrequencyRumble"] = rumbleData->highFrequencyRumble;
-               j["durationMs"] = rumbleData->durationMs;
-               jsonString = j.dump();
-               jsonData = jsonString.c_str();
-               break;
-            }
-            case VPINBALL_EVENT_SCRIPT_ERROR:
             case VPINBALL_EVENT_FATAL_ERROR: {
                ScriptErrorData* scriptErrorData = (ScriptErrorData*)data;
                j["error"] = (int)scriptErrorData->error;
@@ -682,6 +576,13 @@ void VPinballLib::SetEventCallback(VPinballEventCallback callback)
    };
 }
 
+void VPinballLib::PlayRumble(float lowFrequencySpeed, float highFrequencySpeed, unsigned int durationMs)
+{
+   auto callback = Instance().m_rumbleCallback;
+   if (callback)
+      callback(lowFrequencySpeed, highFrequencySpeed, durationMs);
+}
+
 void VPinballLib::SendEvent(VPINBALL_EVENT event, void* data)
 {
    auto callback = Instance().m_eventCallback;
@@ -692,33 +593,36 @@ void VPinballLib::SendEvent(VPINBALL_EVENT event, void* data)
       WebServer::BroadcastStatus();
 }
 
-void VPinballLib::RegisterStaticPlugins()
+void VPinballLib::SetupStaticPlugins(MsgPI::MsgPluginManager& manager)
 {
    static constexpr struct {
       const char* id;
       void (*load)(uint32_t, const MsgPluginAPI*);
       void (*unload)();
    } plugins[] = {
-      { "ScoreView",     &ScoreViewPluginLoad,     &ScoreViewPluginUnload     },
-      { "PinMAME",       &PinMAMEPluginLoad,       &PinMAMEPluginUnload       },
       { "AlphaDMD",      &AlphaDMDPluginLoad,      &AlphaDMDPluginUnload      },
+      { "AltSound",      &AltSoundPluginLoad,      &AltSoundPluginUnload      },
       { "B2S",           &B2SPluginLoad,           &B2SPluginUnload           },
       { "B2SLegacy",     &B2SLegacyPluginLoad,     &B2SLegacyPluginUnload     },
       { "DOF",           &DOFPluginLoad,           &DOFPluginUnload           },
       { "DMDUtil",       &DMDUtilPluginLoad,       &DMDUtilPluginUnload       },
       { "FlexDMD",       &FlexDMDPluginLoad,       &FlexDMDPluginUnload       },
+      { "Inspector",     &InspectorPluginLoad,     &InspectorPluginUnload     },
+      { "PinMAME",       &PinMAMEPluginLoad,       &PinMAMEPluginUnload       },
       { "PUP",           &PUPPluginLoad,           &PUPPluginUnload           },
       { "RemoteControl", &RemoteControlPluginLoad, &RemoteControlPluginUnload },
+      { "ScoreView",     &ScoreViewPluginLoad,     &ScoreViewPluginUnload     },
       { "Serum",         &SerumPluginLoad,         &SerumPluginUnload         },
-      { "VNI",           &VNIPluginLoad,           &VNIPluginUnload           },
       { "WMP",           &WMPPluginLoad,           &WMPPluginUnload           },
-      { "UpscaleDMD",    &UpscaleDMDPluginLoad,    &UpscaleDMDPluginUnload    }
+      { "UpscaleDMD",    &UpscaleDMDPluginLoad,    &UpscaleDMDPluginUnload    },
+      { "VNI",           &VNIPluginLoad,           &VNIPluginUnload           }
    };
 
    for (size_t i = 0; i < std::size(plugins); ++i) {
       auto& p = plugins[i];
-      MsgPI::MsgPluginManager::GetInstance().RegisterPlugin(p.id, p.id, p.id, "", "", "", p.load, p.unload);
+      manager.RegisterPlugin(p.id, p.id, p.id, "", "", "", p.load, p.unload);
    }
+
 }
 
 void VPinballLib::Log(VPINBALL_LOG_LEVEL level, const string& message)
@@ -739,15 +643,10 @@ void VPinballLib::Log(VPINBALL_LOG_LEVEL level, const string& message)
    }
 }
 
-void VPinballLib::ResetLog()
-{
-   Logger::GetInstance()->Truncate();
-}
-
 int VPinballLib::LoadValueInt(const string& sectionName, const string& key, int defaultValue)
 {
    // Use table settings when a table is loaded, otherwise use global settings
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
@@ -768,7 +667,7 @@ int VPinballLib::LoadValueInt(const string& sectionName, const string& key, int 
 void VPinballLib::SaveValueInt(const string& sectionName, const string& key, int value)
 {
    // Use table settings when a table is loaded, otherwise use global settings
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
    const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
@@ -783,7 +682,7 @@ float VPinballLib::LoadValueFloat(const string& sectionName, const string& key, 
    // Use table settings when a table is loaded, otherwise use global settings.
    // Save writes per-table overrides while a player is active, so Load must read
    // through the table settings too or per-table values never round-trip.
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
@@ -795,27 +694,27 @@ float VPinballLib::LoadValueFloat(const string& sectionName, const string& key, 
       return defaultValue;
    }
 
-   const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, FLT_MIN, FLT_MAX, 0.f, defaultValue));
+   const auto propId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, -FLT_MAX, FLT_MAX, 0.f, defaultValue));
    return settings.GetFloat(propId);
 }
 
 void VPinballLib::SaveValueFloat(const string& sectionName, const string& key, float value)
 {
    // Use table settings when a table is loaded, otherwise use global settings
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
    const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
       settings.Set(existingId.value(), value, asTableOverride);
    else
-      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, FLT_MIN, FLT_MAX, 0.f, value)), value, asTableOverride);
+      settings.Set(Settings::GetRegistry().Register(std::make_unique<VPX::Properties::FloatPropertyDef>(sectionName, key, ""s, ""s, true, -FLT_MAX, FLT_MAX, 0.f, value)), value, asTableOverride);
    settings.Save();
 }
 
 string VPinballLib::LoadValueString(const string& sectionName, const string& key, const string& defaultValue)
 {
    // Use table settings when a table is loaded, otherwise use global settings (see LoadValueFloat)
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
@@ -834,7 +733,7 @@ string VPinballLib::LoadValueString(const string& sectionName, const string& key
 void VPinballLib::SaveValueString(const string& sectionName, const string& key, const string& value)
 {
    // Use table settings when a table is loaded, otherwise use global settings
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
    const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
@@ -847,7 +746,7 @@ void VPinballLib::SaveValueString(const string& sectionName, const string& key, 
 bool VPinballLib::LoadValueBool(const string& sectionName, const string& key, bool defaultValue)
 {
    // Use table settings when a table is loaded, otherwise use global settings (see LoadValueFloat)
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
    {
@@ -866,7 +765,7 @@ bool VPinballLib::LoadValueBool(const string& sectionName, const string& key, bo
 void VPinballLib::SaveValueBool(const string& sectionName, const string& key, bool value)
 {
    // Use table settings when a table is loaded, otherwise use global settings
-   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->m_settings : g_pvp->m_settings;
+   Settings& settings = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable->GetSettings() : g_settingsService.GetAppSettings();
    const bool asTableOverride = (g_pplayer && g_pplayer->m_ptable);
 
    if (const auto existingId = Settings::GetRegistry().GetPropertyId(sectionName, key); existingId.has_value())
@@ -878,13 +777,16 @@ void VPinballLib::SaveValueBool(const string& sectionName, const string& key, bo
 
 VPINBALL_STATUS VPinballLib::ResetIni()
 {
-   string iniFilePath = g_pvp->GetPrefPath() + "VPinballX.ini";
-   if (!std::filesystem::remove(iniFilePath))
-    return VPINBALL_STATUS_FAILURE;
+   std::filesystem::path iniFilePath = g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Preferences, "VPinballX.ini");
+   std::error_code ec;
+   if (!std::filesystem::remove(iniFilePath, ec)) {
+      PLOGE.printf("Failed to reset ini: path=%s, error=%s", iniFilePath.string().c_str(), ec.message().c_str());
+      return VPINBALL_STATUS_FAILURE;
+   }
 
-   g_pvp->m_settings.SetIniPath(iniFilePath);
-   g_pvp->m_settings.Load(true);
-   g_pvp->m_settings.Save();
+   g_settingsService.GetAppSettings().SetIniPath(iniFilePath.string());
+   g_settingsService.GetAppSettings().Load(true);
+   g_settingsService.GetAppSettings().Save();
    return VPINBALL_STATUS_SUCCESS;
 }
 
@@ -894,13 +796,15 @@ VPINBALL_STATUS VPinballLib::ResetTableIni()
       return VPINBALL_STATUS_FAILURE;
 
    // Get the table INI file path and delete it
-   const string iniFilePath = g_pplayer->m_ptable->GetSettingsFileName();
-   if (!iniFilePath.empty())
-      std::filesystem::remove(iniFilePath);
+   const std::filesystem::path iniFilePath = g_pplayer->m_ptable->GetSettingsFileName();
+   if (!iniFilePath.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(iniFilePath, ec);
+   }
 
    // Reset in-memory table settings (clears all overrides, falls back to global defaults)
-   g_pplayer->m_ptable->m_settings.Reset();
-   g_pplayer->m_ptable->m_settings.Load(false);
+   g_pplayer->m_ptable->GetSettings().Reset();
+   g_pplayer->m_ptable->GetSettings().Load(false);
 
    // Reset scene lighting back to Table mode (SetEmissionScale forces User mode)
    if (g_pplayer->m_renderer)
@@ -923,50 +827,61 @@ void VPinballLib::RefreshWebServer()
    m_webServer.RefreshUrl();
 }
 
+std::filesystem::path VPinballLib::GetPath(VPINBALL_PATH pathType)
+{
+   switch (pathType) {
+      case VPINBALL_PATH_ROOT:
+         return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Root);
+      case VPINBALL_PATH_TABLES:
+         return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Tables);
+      case VPINBALL_PATH_PREFERENCES:
+         return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Preferences);
+      case VPINBALL_PATH_ASSETS:
+         return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Assets);
+      default:
+         return {};
+   }
+}
+
 VPINBALL_STATUS VPinballLib::LoadTable(const string& tablePath)
 {
    PLOGI.printf("LoadTable called with path: %s", tablePath.c_str());
 
-   // Close any existing table before loading a new one
-   // This prevents the race condition where a previous table is still active
-   CComObject<PinTable>* existingTable = g_pvp->GetActiveTable();
-   if (existingTable)
-   {
-      PLOGI.printf("Closing existing table before loading new one: %s", existingTable->m_filename.c_str());
-      g_pvp->CloseTable(existingTable);
+   // Release any existing table before loading a new one
+   if (m_pTable) {
+      PLOGI.printf("Closing existing table before loading new one: %s", m_pTable->m_filename.string().c_str());
+      m_pTable->Release();
+      m_pTable = nullptr;
    }
+
+   if (g_settingsService.GetAppSettings().GetGlobal_ResetLogOnPlay())
+      Logger::Truncate();
 
    // Reset cancellation flag before starting
    VPXProgress::Reset();
 
+   CComObject<PinTable>::CreateInstance(&m_pTable);
+   m_pTable->AddRef();
+
    VPXProgress progress;
-   g_pvp->LoadFileName(tablePath, true, &progress);
+   const HRESULT hr = m_pTable->LoadGameFromFilename(tablePath, progress);
 
    // Check if loading was cancelled
-   if (progress.IsCancelled())
-   {
+   if (progress.IsCancelled()) {
       PLOGI.printf("Table loading was cancelled");
+      m_pTable->Release();
+      m_pTable = nullptr;
       return VPINBALL_STATUS_FAILURE;
    }
 
-   // Verify the correct table was loaded (not just any table being active)
-   CComObject<PinTable>* loadedTable = g_pvp->GetActiveTable();
-   if (!loadedTable)
-   {
-      PLOGE.printf("Table load failed - no active table");
+   if (!SUCCEEDED(hr)) {
+      PLOGE.printf("Table load failed: %s", tablePath.c_str());
+      m_pTable->Release();
+      m_pTable = nullptr;
       return VPINBALL_STATUS_FAILURE;
    }
 
-   // Check that the loaded table matches the requested path
-   if (loadedTable->m_filename != tablePath)
-   {
-      PLOGE.printf("Table load mismatch! Requested: %s, Got: %s", tablePath.c_str(), loadedTable->m_filename.c_str());
-      // Close the wrong table
-      g_pvp->CloseTable(loadedTable);
-      return VPINBALL_STATUS_FAILURE;
-   }
-
-   PLOGI.printf("Table loaded successfully: %s", loadedTable->m_filename.c_str());
+   PLOGI.printf("Table loaded successfully: %s", m_pTable->m_filename.string().c_str());
    return VPINBALL_STATUS_SUCCESS;
 }
 
@@ -976,33 +891,21 @@ void VPinballLib::CancelLoading()
    VPXProgress::SetCancelled(true);
 }
 
-VPINBALL_STATUS VPinballLib::ExtractTableScript()
+VPINBALL_STATUS VPinballLib::ExtractTableScript(const string& tablePath)
 {
-   CComObject<PinTable>* const pActiveTable = g_pvp->GetActiveTable();
-   if (!pActiveTable)
+   ProgressData progressData = { 50u };
+   SendEvent(VPINBALL_EVENT_EXTRACT_SCRIPT, &progressData);
+
+   ExportVBSCommand cmd(tablePath);
+   cmd.Execute();
+
+   std::filesystem::path scriptFilename(tablePath);
+   scriptFilename.replace_extension(".vbs");
+   if (!FileExists(scriptFilename))
       return VPINBALL_STATUS_FAILURE;
 
-   string tempPath = g_pvp->GetPrefPath() + "temp_script.vbs";
-   pActiveTable->m_pcv->SaveToFile(tempPath);
-
-   std::filesystem::path tablePath(pActiveTable->m_filename);
-   string vbsFilename = tablePath.stem().string() + ".vbs";
-
-   string destPath = tablePath.parent_path().string() + PATH_SEPARATOR_CHAR + vbsFilename;
-
-   try {
-      std::filesystem::copy_file(tempPath, destPath, std::filesystem::copy_options::overwrite_existing);
-      std::filesystem::remove(tempPath);
-   }
-   
-   catch (const std::exception& e) {
-      PLOGE.printf("Failed to save script file: %s", e.what());
-      std::filesystem::remove(tempPath);
-      g_pvp->CloseTable(pActiveTable);
-      return VPINBALL_STATUS_FAILURE;
-   }
-
-   g_pvp->CloseTable(pActiveTable);
+   progressData.progress = 100u;
+   SendEvent(VPINBALL_EVENT_EXTRACT_SCRIPT, &progressData);
 
    return VPINBALL_STATUS_SUCCESS;
 }
@@ -1012,21 +915,31 @@ VPINBALL_STATUS VPinballLib::Play()
    if (m_gameLoop)
       return VPINBALL_STATUS_FAILURE;
 
-   CComObject<PinTable>* const pActiveTable = g_pvp->GetActiveTable();
-   if (!pActiveTable)
+   if (!m_pTable)
       return VPINBALL_STATUS_FAILURE;
 
-   return SDL_RunOnMainThread([](void*) { g_pvp->DoPlay(0); }, nullptr, true)
-       ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+   return SDL_RunOnMainThread([](void*) {
+      auto& lib = VPinballLib::Instance();
+      // The player outlives this lambda, being stepped from AppIterate and deleted there
+      static LoadProgress loadProgress;
+      new Player(lib.m_pTable, Player::PlayMode::Play, loadProgress);
+      if (g_pplayer)
+         g_pplayer->GameLoop();
+      else
+      {
+         // Send PLAYER_CLOSED event so the app knows initialization failed
+         PLOGE << "Play initialization failed - sending PLAYER_CLOSED event";
+         SendEvent(VPINBALL_EVENT_PLAYER_CLOSED, nullptr);
+      }
+   }, nullptr, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
 }
 
 VPINBALL_STATUS VPinballLib::Stop()
 {
-   CComObject<PinTable>* const pActiveTable = g_pvp->GetActiveTable();
-   if (!pActiveTable)
+   if (!m_pTable)
       return VPINBALL_STATUS_FAILURE;
 
-   pActiveTable->QuitPlayer(Player::CS_CLOSE_APP);
+   m_pTable->QuitPlayer(Player::CS_CLOSE_APP);
 
    return VPINBALL_STATUS_SUCCESS;
 }
@@ -1431,8 +1344,8 @@ string VPinballLib::GetTableVersion()
 
 VPINBALL_VIEW_MODE VPinballLib::GetViewMode()
 {
-   // Use player's table if playing, otherwise use editor's table
-   PinTable* pTable = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable : (g_pvp ? g_pvp->GetActiveTable() : nullptr);
+   // Use player's table if playing, otherwise use the loaded table
+   PinTable* pTable = (g_pplayer && g_pplayer->m_ptable) ? g_pplayer->m_ptable : m_pTable;
    if (!pTable)
       return VPINBALL_VIEW_MODE_DESKTOP;
 
@@ -1534,7 +1447,7 @@ VPINBALL_STATUS VPinballLib::ToggleScoreView(bool enable, int x, int y, int widt
       if (p->enable)
       {
          // Enable ScoreView in embedded mode
-         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_EMBEDDED);
+         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->GetSettings(), VPX::RenderOutput::OM_EMBEDDED);
          g_pplayer->m_scoreViewOutput.SetPos(p->x, p->y);
          g_pplayer->m_scoreViewOutput.SetWidth(p->width);
          g_pplayer->m_scoreViewOutput.SetHeight(p->height);
@@ -1542,7 +1455,7 @@ VPINBALL_STATUS VPinballLib::ToggleScoreView(bool enable, int x, int y, int widt
       else
       {
          // Disable ScoreView
-         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_DISABLED);
+         g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->GetSettings(), VPX::RenderOutput::OM_DISABLED);
       }
    }, &params, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
 }
@@ -1626,7 +1539,7 @@ VPINBALL_STATUS VPinballLib::CaptureScoreView()
          self->m_scoreViewCapture.needsRestore = false;
       }
 
-      g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot("__scoreview_capture__",
+      g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot({ g_pplayer->m_playfieldWnd }, { std::filesystem::path("__scoreview_capture__") },
          [](bool success) {
             if (!success) {
                PLOGE << "[DMDCapture] screenshot request failed";
@@ -1737,7 +1650,7 @@ void VPinballLib::DeliverScoreViewCapture(const uint32_t* framePixels, uint32_t 
          auto* rp = static_cast<RestoreParams*>(userdata);
          if (g_pplayer && g_pplayer->m_ptable) {
             if (rp->disabled) {
-               g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->m_settings, VPX::RenderOutput::OM_DISABLED);
+               g_pplayer->m_scoreViewOutput.SetMode(g_pplayer->m_ptable->GetSettings(), VPX::RenderOutput::OM_DISABLED);
             } else {
                g_pplayer->m_scoreViewOutput.SetPos(rp->x, rp->y);
                g_pplayer->m_scoreViewOutput.SetWidth(rp->w);

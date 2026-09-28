@@ -2,16 +2,140 @@
 
 #pragma once
 
-#ifdef ENABLE_VR
-   #include <openvr.h>
-#elif defined(ENABLE_XR)
+#if defined(ENABLE_XR)
+   #include "bx/platform.h"
+
+   #if defined(__ANDROID__) && BX_PLATFORM_WINDOWS
+      // Our setup may lead to this incorrect double definition, so fix it
+      #undef BX_PLATFORM_WINDOWS
+      #define BX_PLATFORM_WINDOWS 0
+      #undef BX_PLATFORM_ANDROID
+      #define BX_PLATFORM_ANDROID 1
+   #endif
+
+   #if BX_PLATFORM_WINDOWS
+      #define XR_USE_PLATFORM_WIN32
+      #define XR_USE_GRAPHICS_API_VULKAN
+      #define XR_USE_GRAPHICS_API_OPENGL
+      #define XR_USE_GRAPHICS_API_OPENGL_ES
+      #define XR_USE_GRAPHICS_API_D3D11
+      #define XR_USE_GRAPHICS_API_D3D12
+      #define VK_USE_PLATFORM_WIN32_KHR
+   #elif BX_PLATFORM_ANDROID
+      #define XR_USE_TIMESPEC
+      #define XR_USE_PLATFORM_ANDROID
+      #define XR_USE_GRAPHICS_API_VULKAN
+      //#define XR_USE_GRAPHICS_API_OPENGL_ES
+   #endif
+
+
+   // OpenXR Dependencies
+
+   #ifdef XR_USE_PLATFORM_ANDROID
+   #include <android/native_window.h>
+   #include <android/window.h>
+   #include <android/native_window_jni.h>
+   #endif  // XR_USE_PLATFORM_ANDROID
+
+   #ifdef XR_USE_PLATFORM_WIN32
+
+   #include <winapifamily.h>
+   #if !(WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_SYSTEM))
+   // Enable desktop partition APIs, such as RegOpenKeyEx, LoadLibraryEx, PathFileExists etc.
+   #undef WINAPI_PARTITION_DESKTOP
+   #define WINAPI_PARTITION_DESKTOP 1
+   #endif
+
+   #ifndef NOMINMAX
+   #define NOMINMAX
+   #endif  // !NOMINMAX
+
+   #ifndef WIN32_LEAN_AND_MEAN
+   #define WIN32_LEAN_AND_MEAN
+   #endif  // !WIN32_LEAN_AND_MEAN
+
+   #include <windows.h>
+   #include <unknwn.h>
+
+   #endif  // XR_USE_PLATFORM_WIN32
+
+   #ifdef XR_USE_GRAPHICS_API_D3D11
+   #include <d3d11.h>
+   #endif  // XR_USE_GRAPHICS_API_D3D11
+
+   #ifdef XR_USE_GRAPHICS_API_D3D12
+   #include <d3d12.h>
+   #endif  // XR_USE_GRAPHICS_API_D3D12
+
+   #ifdef XR_USE_PLATFORM_XLIB
+   #include <X11/Xlib.h>
+   #include <X11/Xutil.h>
+   #endif  // XR_USE_PLATFORM_XLIB
+
+   #ifdef XR_USE_PLATFORM_XCB
+   #include <xcb/xcb.h>
+   #endif  // XR_USE_PLATFORM_XCB
+
+   #ifdef XR_USE_GRAPHICS_API_OPENGL
+   #if defined(XR_USE_PLATFORM_XLIB) || defined(XR_USE_PLATFORM_XCB)
+   #include <GL/glx.h>
+   #endif  // (XR_USE_PLATFORM_XLIB || XR_USE_PLATFORM_XCB)
+   #ifdef XR_USE_PLATFORM_XCB
+   #include <xcb/glx.h>
+   #endif  // XR_USE_PLATFORM_XCB
+   #ifdef XR_USE_PLATFORM_MACOS
+   #include <OpenCL/cl_gl_ext.h>
+   #endif  // XR_USE_PLATFORM_MACOS
+   #endif  // XR_USE_GRAPHICS_API_OPENGL
+
+   #ifdef XR_USE_GRAPHICS_API_OPENGL_ES
+   #include <SDL3/SDL_egl.h>
+   #endif  // XR_USE_GRAPHICS_API_OPENGL_ES
+
+   #ifdef XR_USE_GRAPHICS_API_VULKAN
+   #include <vulkan/vulkan.h>
+   #ifdef XR_USE_PLATFORM_ANDROID
+   #include <vulkan/vulkan_android.h>
+   #endif  // XR_USE_PLATFORM_ANDROID
+   #endif  // XR_USE_GRAPHICS_API_VULKAN
+
+   #ifdef XR_USE_PLATFORM_WAYLAND
+   #include "wayland-client.h"
+   #endif  // XR_USE_PLATFORM_WAYLAND
+
+   #ifdef XR_USE_PLATFORM_EGL
+   #include <EGL/egl.h>
+   #endif  // XR_USE_PLATFORM_EGL
+
+   #if defined(XR_USE_PLATFORM_XLIB) || defined(XR_USE_PLATFORM_XCB)
+   #ifdef Success
+   #undef Success
+   #endif  // Success
+
+   #ifdef Always
+   #undef Always
+   #endif  // Always
+
+   #ifdef None
+   #undef None
+   #endif  // None
+   #endif // defined(XR_USE_PLATFORM_XLIB) || defined(XR_USE_PLATFORM_XCB)
+
    #include <openxr/openxr.h>
+   #include <openxr/openxr_platform.h>
+
+   #include "input/XRInputHandler.h"
 #endif
+
+#include "math/matrix.h"
+#include "parts/PartGroup.h"
+
+class MeshBuffer;
 
 class VRDevice final
 {
 public:
-   VRDevice();
+   VRDevice(const Settings& settings);
    ~VRDevice();
 
    unsigned int GetEyeWidth() const { return m_eyeWidth; }
@@ -19,6 +143,10 @@ public:
    
    float GetLockbarWidth() const { return m_lockbarWidth; }
    void SetLockbarWidth(float width) { m_lockbarWidth = width; m_worldDirty = true; }
+   float GetLockbarHeight() const { return m_lockbarHeight; }
+   void SetLockbarHeight(float height) { m_lockbarHeight = height; m_worldDirty = true; }
+   bool IsLockFeetToGround() const { return m_lockFeetToGround; }
+   void SetLockFeetToGround(bool lock) { m_lockFeetToGround = lock; m_worldDirty = true; }
 
    void OffsetTable(float dx, float dy, float dz);
    void RecenterTable();
@@ -30,9 +158,7 @@ public:
 
    void UpdateVRPosition(PartGroupData::SpaceReference spaceRef, ModelViewProj& mvp);
 
-#ifndef ENABLE_XR
-   float GetPredictedDisplayDelayInS() const { return 0.f; } // Unsupported as OpenVR is planned for deprecation and removal
-#endif
+   float GetPredictedDisplayTimestamp() const { return m_predictedDisplayTimestamp; }
 
 private:
    unsigned int m_eyeWidth = 1080;
@@ -40,42 +166,31 @@ private:
 
    float m_scale = 1.0f;
    float m_lockbarWidth = 57.0f; // Real world width of the lockbar in cm
-#ifdef ENABLE_BGFX
    float m_lockbarHeight = 85.0f; // Real world height (from ground) of the lockbar in cm
-#endif
+   bool m_lockFeetToGround = true;
    float m_orientation = 0.0f;
    Vertex3Ds m_tablePos;
    float m_slope = 0.0f;
 
+   float m_predictedDisplayTimestamp = 0.f;
+
    bool m_worldDirty = true;
-   Matrix3D m_pfWorld;
-   Matrix3D m_pfMatView;
-   Matrix3D m_pfMatProj[2];
-   Matrix3D m_cabWorld;
-   Matrix3D m_cabMatView;
-   Matrix3D m_cabMatProj[2];
-   Matrix3D m_feetWorld;
-   Matrix3D m_feetMatView;
-   Matrix3D m_feetMatProj[2];
-   Matrix3D m_roomWorld;
-   Matrix3D m_roomMatView;
-   Matrix3D m_roomMatProj[2];
-
-#ifdef ENABLE_VR
-public:
-   static bool IsVRinstalled();
-   static bool IsVRturnedOn();
-   bool IsVRReady() const;
-   void SubmitFrame(const std::shared_ptr<Sampler>& leftEye, const std::shared_ptr<Sampler>& rightEye);
-
-private:
-   static vr::IVRSystem* m_pHMD;
-   vr::TrackedDevicePose_t m_hmdPosition;
-   vr::TrackedDevicePose_t* m_rTrackedDevicePose = nullptr;
-#endif
+   struct Viewpoint
+   {
+      Matrix3D m_toWorld; // Matrix to transform from this viewpoint to world coordinates
+      Matrix3D m_view[2];
+   };
+   Viewpoint m_pfWorld;
+   Viewpoint m_cabWorld;
+   Viewpoint m_feetWorld;
+   Viewpoint m_roomWorld;
+   Matrix3D m_roomProj[2];
+   Matrix3D m_sceneProj[2];
 
 #ifdef ENABLE_XR
 public:
+   int GetDisplayRefreshRateMode() const { return m_displayRefreshRateMode; }
+   void SetDisplayRefreshRateMode(int mode);
    bool IsOpenXRReady() const { return m_xrInstance != XR_NULL_HANDLE; }
    void SetupHMD();
    bool IsOpenXRHMDReady() const { return m_systemID != XR_NULL_SYSTEM_ID; }
@@ -84,7 +199,7 @@ public:
    void* GetGraphicContext() const;
    bgfx::RendererType::Enum GetGraphicContextType() const;
    void PollEvents();
-   void RenderFrame(class RenderDevice* rd, std::function<void(RenderTarget* vrRenderTarget)> submitFrame);
+   void RenderFrame(class RenderDevice* rd, const std::function<void(RenderTarget* vrRenderTarget)>& submitFrame);
    void UpdateVisibilityMask(class RenderDevice* rd);
    bool UseDepthBuffer() const { return m_depthExtensionSupported; }
    bgfx::TextureFormat::Enum GetDepthFormat() const { return m_depthSwapchainInfo.format; }
@@ -92,9 +207,10 @@ public:
    void DiscardVisibilityMask() { m_visibilityMask = nullptr; }
    std::shared_ptr<MeshBuffer> GetVisibilityMask() const { return m_visibilityMask; }
 
-   float GetPredictedDisplayDelayInS() const { return m_predictedDisplayDelayInS; }
-
    Matrix3D* GetVisibilityMaskProjs() { return &m_nextProj[0]; }
+
+   void EnableControllerViewCentering(bool enable) { m_controllerViewCentering = enable; }
+   bool IsControllerViewCenteringEnabled() const { return m_controllerViewCentering; }
 
    enum class SwapchainType : uint8_t
    {
@@ -136,12 +252,18 @@ private:
 
    SwapchainInfo m_colorSwapchainInfo = {};
    SwapchainInfo m_depthSwapchainInfo = {};
-   std::vector<RenderTarget*> m_swapchainRenderTargets = {};
+   std::vector<std::unique_ptr<RenderTarget>> m_swapchainRenderTargets;
    std::vector<XrEnvironmentBlendMode> m_applicationEnvironmentBlendModes = { XR_ENVIRONMENT_BLEND_MODE_OPAQUE, XR_ENVIRONMENT_BLEND_MODE_ADDITIVE };
    std::vector<XrEnvironmentBlendMode> m_environmentBlendModes = {};
    XrEnvironmentBlendMode m_environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_MAX_ENUM;
 
    XrSpace m_referenceSpace = XR_NULL_HANDLE;
+   
+   bool m_headsetViewCentering = false;
+   bool m_controllerViewCentering = false;
+   XrSpace m_leftControllerSpace = XR_NULL_HANDLE;
+   XrSpace m_rightControllerSpace = XR_NULL_HANDLE;
+
    struct RenderLayerInfo
    {
       XrTime predictedDisplayTime = 0;
@@ -153,13 +275,20 @@ private:
    };
 
    bool m_depthExtensionSupported = false;
-
    bool m_colorSpaceExtensionSupported = false;
-
+   #if BX_PLATFORM_WINDOWS
    bool m_win32PerfCounterExtensionSupported = false;
-   float m_predictedDisplayDelayInS = 0.f;
-   Matrix3D m_nextMedianView;
-   Matrix3D m_nextView[2];
+   PFN_xrConvertTimeToWin32PerformanceCounterKHR m_xrConvertTimeToWin32PerformanceCounterKHR = nullptr;
+   #elif BX_PLATFORM_ANDROID
+   bool m_convertTimespecTimeExtensionSupported = false;
+   PFN_xrConvertTimeToTimespecTimeKHR m_xrConvertTimeToTimespecTimeKHR = nullptr;
+   #endif
+   bool m_displayRefreshRateExtensionSupported = false;
+   PFN_xrGetDisplayRefreshRateFB m_xrGetDisplayRefreshRateFB = nullptr;
+   PFN_xrRequestDisplayRefreshRateFB m_xrRequestDisplayRefreshRateFB = nullptr;
+   int m_displayRefreshRateMode = 0;
+   void ApplyDisplayRefreshRate();
+
    Matrix3D m_nextProj[2];
 
    bool m_debugUtilsExtensionSupported = false;
@@ -167,7 +296,7 @@ private:
    static XrBool32 OpenXRMessageCallbackFunction(XrDebugUtilsMessageSeverityFlagsEXT messageSeverity, XrDebugUtilsMessageTypeFlagsEXT messageType, const XrDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
 
    bool m_visibilityMaskExtensionSupported = false;
-   PFN_xrGetVisibilityMaskKHR xrGetVisibilityMaskKHR;
+   PFN_xrGetVisibilityMaskKHR xrGetVisibilityMaskKHR = nullptr;
    bool m_visibilityMaskDirty = true;
    std::shared_ptr<MeshBuffer> m_visibilityMask;
 
@@ -179,7 +308,8 @@ private:
    bgfx::RendererType::Enum m_rendererType;
    std::unique_ptr<class XRGraphicBackend> m_backend;
 
-   bool m_recenterTable = false;
    float m_sceneSize = 0.f;
+
+   XRInputHandler* m_xrInputHandler = nullptr;
 #endif
 };

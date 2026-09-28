@@ -3,8 +3,10 @@
 #pragma once
 
 #include <cassert>
-#include <cstdarg>
 #include <cstdio>
+#include <cstdarg>
+#include <filesystem>
+#include <format>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -25,6 +27,7 @@
 
 #include <string>
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 using std::string;
 
 #include <vector>
@@ -39,14 +42,6 @@ using std::vector;
 namespace ScoreView
 {
 
-LPI_USE();
-#ifndef LOGD
-#define LOGD LPI_LOGD
-#define LOGI LPI_LOGI
-#define LOGW LPI_LOGW
-#define LOGE LPI_LOGE
-#endif
-
 #ifdef _MSC_VER
 #define PATH_SEPARATOR_CHAR '\\'
 #else
@@ -54,13 +49,13 @@ LPI_USE();
 #endif
 
 template <typename T> constexpr __forceinline T clamp(const T x, const T mn, const T mx) { return std::max(std::min(x, mx), mn); }
+template <typename T> constexpr __forceinline T saturate(const T x) { return std::max(std::min(x, T { 1 }), T { 0 }); }
 
 string TrimLeading(const string& str, const string& whitespace);
 string TrimTrailing(const string& str, const string& whitespace);
 bool try_parse_float(const string& str, float& value);
 bool try_parse_int(const string& str, int& value);
-string find_case_insensitive_file_path(const string& szPath);
-string PathFromFilename(const string& filename);
-string GetPluginPath();
+std::filesystem::path lowerCase(std::filesystem::path input);
+std::filesystem::path GetPluginPath();
 
 }

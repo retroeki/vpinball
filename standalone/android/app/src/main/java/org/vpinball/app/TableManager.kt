@@ -4,10 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import java.io.File
-import java.io.FileOutputStream
 import java.util.UUID
-import java.util.zip.ZipFile
-import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,14 +15,17 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.vpinball.app.jni.VPinballLogLevel
+import org.vpinball.app.jni.VPinballPath
 import org.vpinball.app.jni.VPinballSettingsSection.STANDALONE
 import org.vpinball.app.jni.VPinballStatus
+import org.vpinball.app.jni.VPinballZipCallback
 import org.vpinball.app.ui.screens.landing.LandingScreenViewModel
 
 class TableManager(private val context: Context) {
     private val _tables = MutableStateFlow<List<Table>>(emptyList())
     val tables: StateFlow<List<Table>> = _tables.asStateFlow()
 
+    private var safPath: String = ""
     private var tablesPath: String = ""
     private var tablesJSONPath: String = ""
     private var requiresStaging: Boolean = false
@@ -34,12 +34,12 @@ class TableManager(private val context: Context) {
     private val fileOps = TableFileOperations { tablesPath }
 
     init {
-        loadTablesPath()
+        loadPaths()
     }
 
     suspend fun refresh(onProgress: ((Int, String) -> Unit)? = null) {
         withContext(Dispatchers.IO) {
-            loadTablesPath()
+            loadPaths()
             loadTables(onProgress)
         }
     }
@@ -64,7 +64,8 @@ class TableManager(private val context: Context) {
                     else -> table.image
                 }
 
-            if (updatedImage != table.image) {
+            val imageModifiedAt = if (updatedImage.isNotEmpty()) fileModifiedAt(buildPath(updatedImage)) else null
+            if (updatedImage != table.image || (imageModifiedAt != null && imageModifiedAt > table.modifiedAt)) {
                 val updatedTable = table.copy(image = updatedImage, modifiedAt = System.currentTimeMillis() / 1000)
                 _tables.value = _tables.value.map { if (it.uuid == table.uuid) updatedTable else it }
                 saveTables()
@@ -183,37 +184,43 @@ class TableManager(private val context: Context) {
     }
 
     fun resetTableIni(table: Table): Boolean {
-        loadTablesPath()
+        loadPaths()
         val iniRelativePath = table.path.substringBeforeLast('.') + ".ini"
         val iniFullPath = buildPath(iniRelativePath)
         return fileOps.delete(iniFullPath)
     }
 
-    private fun loadTablesPath() {
-        val customPath = VPinballManager.loadValue(STANDALONE, "TablesPath", "")
+    private fun loadPaths() {
+        safPath = VPinballManager.loadValue(STANDALONE, "SAFPath", "")
 
         tablesPath =
-            if (customPath.isNotEmpty()) {
-                customPath
+            if (safPath.isNotEmpty()) {
+                if (!safPath.endsWith("/")) "$safPath/" else safPath
             } else {
-                File(context.filesDir, "tables").absolutePath
+                val path = VPinballManager.getPath(VPinballPath.TABLES)
+                if (!path.endsWith("/")) "$path/" else path
             }
 
-        if (!tablesPath.endsWith("/")) {
-            tablesPath += "/"
-        }
-
-        requiresStaging = SAFFileSystem.isSAFPath(tablesPath)
+        requiresStaging = safPath.isNotEmpty()
 
         tablesJSONPath =
-            if (requiresStaging) {
-                "${tablesPath}tables.json"
+            if (safPath.isEmpty()) {
+                File(VPinballManager.getPath(VPinballPath.PREFERENCES), "tables.json").absolutePath
             } else {
-                File(tablesPath, "tables.json").absolutePath
+                "${tablesPath}tables.json"
             }
 
         if (!requiresStaging && !fileOps.exists(tablesPath)) {
             fileOps.createDirectory(tablesPath)
+        }
+    }
+
+    private fun fileModifiedAt(path: String): Long? {
+        return try {
+            val file = File(path)
+            if (file.exists()) file.lastModified() / 1000 else null
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -237,6 +244,17 @@ class TableManager(private val context: Context) {
             }
         }
 
+        onProgress?.invoke(20, "Normalizing paths...")
+
+        for (i in loadedTables.indices) {
+            val table = loadedTables[i]
+            val cleanPath = if (table.path.startsWith("/")) relativePath(table.path, tablesPath) else table.path
+            val cleanImage = if (table.image.startsWith("/")) relativePath(table.image, tablesPath) else table.image
+            if (cleanPath != table.path || cleanImage != table.image) {
+                loadedTables[i] = table.copy(path = cleanPath, image = cleanImage)
+            }
+        }
+
         onProgress?.invoke(30, "Validating tables...")
 
         val seen = mutableSetOf<String>()
@@ -252,6 +270,34 @@ class TableManager(private val context: Context) {
             }
 
             false
+        }
+
+        val seenPaths = mutableSetOf<String>()
+        loadedTables.removeAll { table ->
+            if (seenPaths.contains(table.path)) {
+                return@removeAll true
+            }
+            seenPaths.add(table.path)
+            false
+        }
+
+        onProgress?.invoke(40, "Updating timestamps...")
+
+        if (!requiresStaging) {
+            for (i in loadedTables.indices) {
+                val table = loadedTables[i]
+                var latestMod = table.modifiedAt
+
+                fileModifiedAt(buildPath(table.path))?.let { fileMod -> latestMod = maxOf(latestMod, fileMod) }
+
+                if (table.image.isNotEmpty()) {
+                    fileModifiedAt(buildPath(table.image))?.let { imageMod -> latestMod = maxOf(latestMod, imageMod) }
+                }
+
+                if (latestMod != table.modifiedAt) {
+                    loadedTables[i] = table.copy(modifiedAt = latestMod)
+                }
+            }
         }
 
         onProgress?.invoke(50, "Scanning for images...")
@@ -279,7 +325,12 @@ class TableManager(private val context: Context) {
                     }
 
                 if (updatedImage != table.image) {
-                    loadedTables[index] = table.copy(image = updatedImage)
+                    var updated = table.copy(image = updatedImage)
+                    if (!requiresStaging) {
+                        val imageFullPath = buildPath(updatedImage)
+                        fileModifiedAt(imageFullPath)?.let { imageMod -> updated = updated.copy(modifiedAt = maxOf(updated.modifiedAt, imageMod)) }
+                    }
+                    loadedTables[index] = updated
                 }
             }
         }
@@ -434,32 +485,22 @@ class TableManager(private val context: Context) {
         }
 
         try {
-            var processedEntries = 0
-            ZipFile(path).use { zipFile ->
-                val totalEntries = zipFile.size()
-
-                val entries = zipFile.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    val entryPath = File(tempDir, entry.name).absolutePath
-
-                    if (entry.isDirectory) {
-                        fileOps.createDirectory(entryPath)
-                    } else {
-                        val parentDir = File(entryPath).parent
-                        if (parentDir != null) {
-                            fileOps.createDirectory(parentDir)
+            val result =
+                VPinballManager.vpinballJNI.VPinballZipExtract(
+                    path,
+                    tempDir,
+                    VPinballZipCallback { current, total, _ ->
+                        if (total > 0) {
+                            val extractProgress = 60 + ((current.toDouble() / total) * 35).toInt()
+                            runBlocking(Dispatchers.Main) { onProgress?.invoke(extractProgress) }
                         }
+                    },
+                )
 
-                        zipFile.getInputStream(entry).use { input -> FileOutputStream(entryPath).use { output -> input.copyTo(output) } }
-                    }
-
-                    processedEntries++
-                    if (totalEntries > 0) {
-                        val extractProgress = 60 + ((processedEntries.toDouble() / totalEntries) * 35).toInt()
-                        onProgress?.invoke(extractProgress)
-                    }
-                }
+            if (result != VPinballStatus.SUCCESS.value) {
+                VPinballManager.log(VPinballLogLevel.ERROR, "Failed to extract archive")
+                fileOps.deleteDirectory(tempDir)
+                return emptyList()
             }
 
             val vpxFiles = fileOps.listFiles(tempDir, ".vpx")
@@ -602,7 +643,7 @@ class TableManager(private val context: Context) {
                 if (requiresStaging) {
                     withContext(Dispatchers.Main) { onProgress?.invoke(10, "Copying files") }
 
-                    val stagingBaseDir = File(context.cacheDir, "staged_export")
+                    val stagingBaseDir = File(VPinballManager.getPath(VPinballPath.PREFERENCES), "saf")
                     val stagingTableDir = File(stagingBaseDir, tableDir)
 
                     if (stagingTableDir.exists()) {
@@ -627,12 +668,20 @@ class TableManager(private val context: Context) {
 
             withContext(Dispatchers.Main) { onProgress?.invoke(60, "Compressing") }
 
-            delay(100) // Give UI time to render
+            delay(100)
 
-            ZipOutputStream(FileOutputStream(tempFile)).use { zip ->
-                fileOps.addDirectoryToZip(zip, tableDirToCompressFinal, tableDirToCompressFinal) { progress ->
-                    runBlocking(Dispatchers.Main) { onProgress?.invoke(60 + (progress * 39 / 100), "Compressing") }
-                }
+            val result =
+                VPinballManager.vpinballJNI.VPinballZipCreate(
+                    tableDirToCompressFinal,
+                    tempFile.absolutePath,
+                    VPinballZipCallback { current, total, _ ->
+                        runBlocking(Dispatchers.Main) { onProgress?.invoke(60 + (current * 39 / maxOf(total, 1)), "Compressing") }
+                    },
+                )
+
+            if (result != VPinballStatus.SUCCESS.value) {
+                VPinballManager.log(VPinballLogLevel.ERROR, "Failed to create zip")
+                return null
             }
 
             withContext(Dispatchers.Main) { onProgress?.invoke(100, "Complete") }
@@ -659,12 +708,24 @@ class TableManager(private val context: Context) {
         return fullPath
     }
 
+    private fun cleanupSafCache(maxCached: Int = 10) {
+        val safDir = File(VPinballManager.getPath(VPinballPath.PREFERENCES), "saf")
+        if (!safDir.exists()) return
+
+        val folders = safDir.listFiles()?.filter { it.isDirectory } ?: return
+        if (folders.size <= maxCached) return
+
+        folders.sortedBy { it.lastModified() }.take(folders.size - maxCached).forEach { fileOps.deleteDirectory(it.absolutePath) }
+    }
+
     private fun performStageToCache(table: Table, onProgress: ((Int, String) -> Unit)?): String? {
+        cleanupSafCache()
+
         val tableDir = File(table.path).parent ?: ""
         val fileName = File(table.path).name
 
         onProgress?.invoke(10, "Staging table...")
-        val cachePath = File(context.filesDir, "staging_cache/$tableDir").absolutePath
+        val cachePath = File(VPinballManager.getPath(VPinballPath.PREFERENCES), "saf/$tableDir").absolutePath
 
         if (fileOps.exists(cachePath)) {
             fileOps.deleteDirectory(cachePath)
@@ -695,8 +756,7 @@ class TableManager(private val context: Context) {
             val changedFileExtensions = listOf("txt", "ini", "cfg", "xml", "nv", "jpg", "png")
             val workingDirFile = File(loadedTableWorkingDir)
             val filesToCopy =
-                workingDirFile.listFiles()?.filter { file -> file.isFile && changedFileExtensions.contains(file.extension.lowercase()) }
-                    ?: emptyList()
+                workingDirFile.walkTopDown().filter { file -> file.isFile && changedFileExtensions.contains(file.extension.lowercase()) }.toList()
 
             if (filesToCopy.isNotEmpty()) {
                 onProgress?.invoke(30, "Copying ${filesToCopy.size} file(s)...")
@@ -704,7 +764,7 @@ class TableManager(private val context: Context) {
                 var failedCount = 0
 
                 filesToCopy.forEach { file ->
-                    val relativePath = file.name
+                    val relativePath = file.relativeTo(workingDirFile).path
                     val destPath = buildPath("$tableDir/$relativePath")
 
                     if (fileOps.copy(file.absolutePath, destPath)) {
@@ -713,7 +773,7 @@ class TableManager(private val context: Context) {
                         onProgress?.invoke(progress, "Copied $copiedCount/${filesToCopy.size}")
                     } else {
                         failedCount++
-                        VPinballManager.log(VPinballLogLevel.ERROR, "Failed to copy back: ${file.name}")
+                        VPinballManager.log(VPinballLogLevel.ERROR, "Failed to copy back: $relativePath")
                     }
                 }
 
@@ -745,7 +805,7 @@ class TableManager(private val context: Context) {
 
         if (requiresStaging) {
             onProgress?.invoke(10, "Staging table...")
-            cachePath = File(context.filesDir, "staging_cache/$tableDir").absolutePath
+            cachePath = File(VPinballManager.getPath(VPinballPath.PREFERENCES), "saf/$tableDir").absolutePath
 
             if (fileOps.exists(cachePath)) {
                 fileOps.deleteDirectory(cachePath)
@@ -753,29 +813,25 @@ class TableManager(private val context: Context) {
 
             fileOps.createDirectory(cachePath)
 
-            onProgress?.invoke(30, "Copying table files...")
-            val sourceTableDir = buildPath(tableDir)
-            if (!fileOps.copyDirectory(sourceTableDir, cachePath)) {
-                VPinballManager.log(VPinballLogLevel.ERROR, "Failed to copy to staging cache")
+            onProgress?.invoke(30, "Copying table...")
+            val tableFileName = File(table.path).name
+            val sourceTablePath = buildPath(table.path)
+            val stagedTablePath = File(cachePath, tableFileName).absolutePath
+            if (!fileOps.copy(sourceTablePath, stagedTablePath)) {
+                VPinballManager.log(VPinballLogLevel.ERROR, "Failed to copy table to staging cache")
                 return false
             }
 
             onProgress?.invoke(70, "Extracting script...")
-            fullPath = File(cachePath, File(table.path).name).absolutePath
+            fullPath = stagedTablePath
         } else {
             onProgress?.invoke(50, "Extracting script...")
             fullPath = buildPath(table.path)
             cachePath = null
         }
 
-        if (VPinballManager.vpinballJNI.VPinballLoadTable(fullPath) != VPinballStatus.SUCCESS.value) {
-            VPinballManager.log(VPinballLogLevel.ERROR, "Failed to load table for script extraction: $fullPath")
-            cachePath?.let { fileOps.deleteDirectory(it) }
-            return false
-        }
-
-        if (VPinballManager.vpinballJNI.VPinballExtractTableScript() != VPinballStatus.SUCCESS.value) {
-            VPinballManager.log(VPinballLogLevel.ERROR, "Failed to extract script from table")
+        if (VPinballManager.vpinballJNI.VPinballExtractTableScript(fullPath) != VPinballStatus.SUCCESS.value) {
+            VPinballManager.log(VPinballLogLevel.ERROR, "Failed to extract script from table: $fullPath")
             cachePath?.let { fileOps.deleteDirectory(it) }
             return false
         }

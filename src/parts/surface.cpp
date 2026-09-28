@@ -1,41 +1,38 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include "surface.h"
+
 //#include "forsyth.h"
-#include "utils/objloader.h"
-#include "renderer/Shader.h"
+#include "core/VPApp.h"
+#include "parts/Collection.h"
 #include "renderer/IndexBuffer.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/trace.h"
 #include "renderer/VertexBuffer.h"
+#include "utils/objloader.h"
 
-Surface::Surface()
-{
-   m_menuid = IDR_SURFACEMENU;
-
-   m_d.m_collidable = true;
-   m_d.m_slingshotAnimation = true;
-   m_d.m_inner = true;
-   m_d.m_isBottomSolid = false;
-}
 
 Surface::~Surface()
 {
-   assert(m_rd == nullptr); // RenderRelease must be explicitly called before deleting this object
+   assert(m_renderer == nullptr); // RenderRelease must be explicitly called before deleting this object
 }
 
-Surface *Surface::CopyForPlay(PinTable *live_table) const
+Surface *Surface::CopyForPlay() const
 {
-   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Surface, live_table, m_vdpoint)
+   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Surface, m_curve)
    dst->m_isWall = m_isWall;
    dst->m_isDropped = m_isDropped;
    return dst;
 }
 
 #define LinkProp(field, prop)                                                                                                                                                                \
-   field = m_isWall ? (fromMouseClick ? g_pvp->m_settings.GetDefaultPropsWall_##prop() : Settings::GetDefaultPropsWall_##prop##_Default()) \
-                    : (fromMouseClick ? g_pvp->m_settings.GetDefaultPropsTarget_##prop() : Settings::GetDefaultPropsTarget_##prop##_Default())
-HRESULT Surface::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+   field = m_isWall ? (fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsWall_##prop() : Settings::GetDefaultPropsWall_##prop##_Default()) \
+                    : (fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsTarget_##prop() : Settings::GetDefaultPropsTarget_##prop##_Default())
+HRESULT Surface::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    m_isWall = true;
    SetDefaults(fromMouseClick);
 
@@ -43,86 +40,37 @@ HRESULT Surface::Init(PinTable *const ptable, const float x, const float y, cons
    LinkProp(width, Width);
    LinkProp(length, Length);
 
-   CComObject<DragPoint> *pdp;
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x - width, y - length, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x - width, y + length, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x + width, y + length, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x + width, y - length, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x - width, y - length, 0.f, false));
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x - width, y + length, 0.f, false));
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x + width, y + length, 0.f, false));
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x + width, y - length, 0.f, false));
 
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
 #if 0
-HRESULT Surface::InitTarget(PinTable * const ptable, const float x, const float y, const bool fromMouseClick)
+HRESULT Surface::InitTarget(const float x, const float y, const bool fromMouseClick)
 {
-   m_ptable = ptable;
    m_isWall = false;
 
    float width, length;
    LinkProp(width, Width);
    LinkProp(length, Length);
 
-   CComObject<DragPoint> *pdp;
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x - width, y - length, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x - width, y + length, 0.f, false);
-      pdp->m_autoTexture = false;
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x + width, y + length, 0.f, false);
-      pdp->m_autoTexture = false;
-      pdp->m_texturecoord = 1.0f;
-      m_vdpoint.push_back(pdp);
-   }
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x + 30.0f, y - 6.0f, 0.f, false);
-      m_vdpoint.push_back(pdp);
-   }
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x - width, y - length, 0.f, false));
+   auto pdp = std::make_unique<DragPoint>(&m_curve, x - width, y + length, 0.f, false);
+   pdp->SetAutoTextureCoordinate(false);
+   m_curve.PushPoint(std::move(pdp));
+   pdp = std::make_unique<DragPoint>(&m_curve, x + width, y + length, 0.f, false);
+   pdp->SetAutoTextureCoordinate(false);
+   pdp->SetTextureCoordinateU(1.0f);
+   m_curve.PushPoint(std::move(pdp));
+   m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, x + 30.0f, y - 6.0f, 0.f, false));
 
    //SetDefaults();
-   //Set seperate defaults for targets (SetDefaults sets the Wall defaults)
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   //Set separate defaults for targets (SetDefaults sets the Wall defaults)
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    LinkProp(m_d.m_hitEvent, HitEvent);
    LinkProp(m_d.m_threshold, HitThreshold);
    LinkProp(m_d.m_slingshot_threshold, SlingshotThreshold);
@@ -144,13 +92,12 @@ HRESULT Surface::InitTarget(PinTable * const ptable, const float x, const float 
    LinkProp(m_d.m_topBottomVisible, Visible);
    LinkProp(m_d.m_sideVisible, SideVisible);
    LinkProp(m_d.m_collidable, Collidable);
-   return InitVBA(true, nullptr);
+   return S_OK;
 }
 #endif
 
 void Surface::SetDefaults(const bool fromMouseClick)
 {
-   m_d.m_inner = true; //!! Deprecated, do not use anymore
    LinkProp(m_d.m_hitEvent, HitEvent);
    LinkProp(m_d.m_threshold, HitThreshold);
    LinkProp(m_d.m_slingshot_threshold, SlingshotThreshold);
@@ -170,8 +117,8 @@ void Surface::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_disableLightingTop, DisableLighting);
    LinkProp(m_d.m_disableLightingBelow, DisableLightingBelow);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    SetDefaultPhysics(fromMouseClick);
 }
 
@@ -186,7 +133,7 @@ void Surface::SetDefaultPhysics(const bool fromMouseClick)
 
 void Surface::WriteRegDefaults()
 {
-#define LinkProp(field, prop) { if (m_isWall) g_pvp->m_settings.SetDefaultPropsWall_##prop(field, false); else g_pvp->m_settings.SetDefaultPropsTarget_##prop(field, false); }
+#define LinkProp(field, prop) { if (m_isWall) g_settingsService.GetAppSettings().SetDefaultPropsWall_##prop(field, false); else g_settingsService.GetAppSettings().SetDefaultPropsTarget_##prop(field, false); }
    LinkProp(m_d.m_hitEvent, HitEvent);
    LinkProp(m_d.m_threshold, HitThreshold);
    LinkProp(m_d.m_slingshot_threshold, SlingshotThreshold);
@@ -206,98 +153,9 @@ void Surface::WriteRegDefaults()
    LinkProp(m_d.m_disableLightingTop, DisableLighting);
    LinkProp(m_d.m_disableLightingBelow, DisableLightingBelow);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
-}
-
-void Surface::UIRenderPass1(Sur * const psur)
-{
-   psur->SetFillColor(m_ptable->RenderSolid() ? m_vpinball->m_fillColor : -1);
-   psur->SetObject(this);
-   // Don't want border color to be over-ridden when selected - that will be drawn later
-   psur->SetBorderColor(-1, false, 0);
-
-   vector<RenderVertex> vvertex;
-   GetRgVertex(vvertex);
-   if (!m_ptable->RenderSolid() || !m_d.m_displayTexture)
-      psur->Polygon(vvertex);
-   else if (const Texture *const ppi = m_ptable->GetImage(m_d.m_szImage); ppi && ppi->GetGDIBitmap())
-      psur->PolygonImage(vvertex, ppi->GetGDIBitmap(), m_ptable->m_left, m_ptable->m_top, m_ptable->m_right, m_ptable->m_bottom, ppi->m_width, ppi->m_height);
-   else
-      psur->Polygon(vvertex);
-}
-
-void Surface::UIRenderPass2(Sur * const psur)
-{
-   psur->SetFillColor(-1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this); // For selected formatting
-   psur->SetObject(nullptr);
-
-   {
-      vector<RenderVertex> vvertex; //!! check/reuse from prerender
-      GetRgVertex(vvertex);
-      psur->Polygon(vvertex);
-   }
-
-   // if the item is selected then draw the dragpoints (or if we are always to draw dragpoints)
-   bool drawDragpoints = ((m_selectstate != eNotSelected) || m_vpinball->m_alwaysDrawDragPoints);
-
-   if (!drawDragpoints)
-   {
-      // if any of the dragpoints of this object are selected then draw all the dragpoints
-      for (size_t i = 0; i < m_vdpoint.size(); i++)
-      {
-         const CComObject<DragPoint> * const pdp = m_vdpoint[i];
-         if (pdp->m_selectstate != eNotSelected)
-         {
-            drawDragpoints = true;
-            break;
-         }
-      }
-   }
-
-   for (size_t i = 0; i < m_vdpoint.size(); i++)
-   {
-      CComObject<DragPoint> * const pdp = m_vdpoint[i];
-      if (!(drawDragpoints || pdp->m_slingshot))
-         continue;
-      psur->SetFillColor(-1);
-      psur->SetBorderColor(pdp->m_dragging ? RGB(0, 255, 0) : RGB(255, 0, 0), false, 0);
-
-      if (drawDragpoints)
-      {
-         psur->SetObject(pdp);
-         psur->Ellipse2(pdp->m_v.x, pdp->m_v.y, 8);
-      }
-
-      if (pdp->m_slingshot)
-      {
-         psur->SetObject(nullptr);
-         const CComObject<DragPoint> * const pdp2 = m_vdpoint[(i < m_vdpoint.size() - 1) ? (i + 1) : 0];
-         psur->SetLineColor(RGB(0, 0, 0), false, 3);
-
-         psur->Line(pdp->m_v.x, pdp->m_v.y, pdp2->m_v.x, pdp2->m_v.y);
-      }
-   }
-}
-
-void Surface::RenderBlueprint(Sur *psur, const bool solid)
-{
-   // Don't render dragpoints for blueprint
-   if (solid)
-      psur->SetFillColor(BLUEPRINT_SOLID_COLOR);
-   else
-      psur->SetFillColor(-1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this); // For selected formatting
-   psur->SetObject(nullptr);
-
-   vector<RenderVertex> vvertex;
-   GetRgVertex(vvertex);
-
-   psur->Polygon(vvertex);
 }
 
 
@@ -309,7 +167,7 @@ void Surface::PhysicSetup(PhysicsEngine* physics, const bool isUI)
       return;
 
    vector<RenderVertex> vvertex;
-   GetRgVertex(vvertex);
+   m_curve.GetRgVertex(vvertex);
 
    const int count = (int)vvertex.size();
    Vertex3Ds * const rgv3Dt = new Vertex3Ds[count];
@@ -467,19 +325,8 @@ void Surface::GetBoundingVertices(vector<Vertex3Ds> &bounds, vector<Vertex3Ds> *
 
 void Surface::UpdateBounds()
 {
-   const Vertex2D center2D = GetPointCenter();
+   const Vertex2D& center2D = GetCenter();
    m_boundingSphereCenter.Set(center2D.x, center2D.y, m_d.m_heighttop);
-}
-
-void Surface::MoveOffset(const float dx, const float dy)
-{
-   for (size_t i = 0; i < m_vdpoint.size(); i++)
-   {
-      CComObject<DragPoint> * const pdp = m_vdpoint[i];
-
-      pdp->m_v.x += dx;
-      pdp->m_v.y += dy;
-   }
 }
 
 // Ported at: VisualPinball.Engine/VPT/Surface/SurfaceMeshGenerator.cs
@@ -487,12 +334,12 @@ void Surface::MoveOffset(const float dx, const float dy)
 void Surface::GenerateMesh(vector<Vertex3D_NoTex2> &topBuf, vector<Vertex3D_NoTex2> &sideBuf, vector<WORD> &topBottomIndices, vector<WORD> &sideIndices)
 {
    vector<RenderVertex> vvertex;
-   GetRgVertex(vvertex);
+   m_curve.GetRgVertex(vvertex);
    float *rgtexcoord = nullptr;
 
    Texture * const pinSide = m_ptable->GetImage(m_d.m_szSideImage);
    if (pinSide)
-      GetTextureCoords(vvertex, &rgtexcoord);
+      m_curve.GetTextureCoords(vvertex, &rgtexcoord);
 
    m_numVertices = (unsigned int)vvertex.size();
    Vertex2D * const rgnormal = new Vertex2D[m_numVertices];
@@ -701,7 +548,7 @@ void Surface::ExportMesh(ObjLoader& loader)
       const Material * const mat = m_ptable->GetMaterial(m_d.m_szTopMaterial);
       if (tex)
       {
-         loader.WriteMaterial(m_d.m_szImage, tex->GetFilePath(), mat);
+         loader.WriteMaterial(m_d.m_szImage, tex->GetFilePath().string(), mat);
          loader.UseTexture(m_d.m_szImage);
       }
       else
@@ -716,7 +563,7 @@ void Surface::ExportMesh(ObjLoader& loader)
    {
       Vertex3D_NoTex2 * const tmp = new Vertex3D_NoTex2[m_numVertices * 5];
       memcpy(tmp, sideBuf.data(), sizeof(Vertex3D_NoTex2) * m_numVertices * 4);
-      memcpy(&tmp[m_numVertices * 4], topBuf.data(), sizeof(Vertex3D_NoTex2)*m_numVertices);
+      memcpy(tmp + m_numVertices * 4, topBuf.data(), sizeof(Vertex3D_NoTex2)*m_numVertices);
       loader.WriteObjectName(name);
       loader.WriteVertexInfo(tmp, m_numVertices * 5);
       delete[] tmp;
@@ -724,7 +571,7 @@ void Surface::ExportMesh(ObjLoader& loader)
       const Material * const mat = m_ptable->GetMaterial(m_d.m_szTopMaterial);
       loader.WriteMaterial(m_d.m_szTopMaterial, string(), mat);
       loader.UseTexture(m_d.m_szTopMaterial);
-      WORD * const idx = new WORD[topBottomIndices.size() + sideIndices.size()];
+      WORD * const __restrict idx = new WORD[topBottomIndices.size() + sideIndices.size()];
       memcpy(idx, sideIndices.data(), sideIndices.size()*sizeof(WORD));
       for (size_t i = 0; i < topBottomIndices.size(); i++)
          idx[sideIndices.size() + i] = topBottomIndices[i] + m_numVertices * 4;
@@ -750,10 +597,10 @@ void Surface::UpdateAnimation(const float diff_time_msec)
       m_vlinesling[i]->Animate();
 }
 
-void Surface::RenderSetup(RenderDevice *device)
+void Surface::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
 
    const float oldBottomHeight = m_d.m_heightbottom;
    const float oldTopHeight = m_d.m_heighttop;
@@ -781,8 +628,8 @@ void Surface::RenderSetup(RenderDevice *device)
       const float slingtop = (m_d.m_heighttop - m_d.m_heightbottom) * 0.8f + m_d.m_heightbottom;
       const unsigned int n_lines = static_cast<const unsigned int>(m_vlinesling.size());
 
-      Vertex3D_NoTex2 *const rgv3D = new Vertex3D_NoTex2[n_lines * 9];
-      unsigned short *const rgIdx = new unsigned short[n_lines * 24];
+      Vertex3D_NoTex2 *const __restrict rgv3D = new Vertex3D_NoTex2[n_lines * 9];
+      unsigned short *const __restrict rgIdx = new unsigned short[n_lines * 24];
 
       unsigned int offset = 0, offsetIdx = 0;
       for (size_t i = 0; i < n_lines; i++, offset += 9, offsetIdx += 24)
@@ -822,14 +669,14 @@ void Surface::RenderSetup(RenderDevice *device)
          ComputeNormals(rgv3D + offset, 9, rgiSlingshot, 24);
       }
 
-      std::shared_ptr<VertexBuffer> slingshotVBuffer = std::make_shared<VertexBuffer>(m_rd, n_lines * 9);
+      std::shared_ptr<VertexBuffer> slingshotVBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, n_lines * 9);
       Vertex3D_NoTex2 *buf;
       slingshotVBuffer->Lock(buf);
       memcpy(buf, rgv3D, m_vlinesling.size() * 9 * sizeof(Vertex3D_NoTex2));
       slingshotVBuffer->Unlock();
       delete[] rgv3D;
 
-      std::shared_ptr<IndexBuffer> slingIBuffer = std::make_shared<IndexBuffer>(m_rd, n_lines * 24);
+      std::shared_ptr<IndexBuffer> slingIBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, n_lines * 24);
       unsigned short *ibuf;
       slingIBuffer->Lock(ibuf);
       memcpy(ibuf, rgIdx, m_vlinesling.size() * 24 * sizeof(unsigned short));
@@ -845,7 +692,7 @@ void Surface::RenderSetup(RenderDevice *device)
       vector<WORD> topBottomIndices, sideIndices;
       GenerateMesh(topBottomBuf, sideBuf, topBottomIndices, sideIndices);
 
-      std::shared_ptr<VertexBuffer> VBuffer = std::make_shared<VertexBuffer>(m_rd, static_cast<const unsigned int>(sideBuf.size() + topBottomBuf.size()));
+      std::shared_ptr<VertexBuffer> VBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, static_cast<const unsigned int>(sideBuf.size() + topBottomBuf.size()));
       Vertex3D_NoTex2 *verts;
       VBuffer->Lock(verts);
       memcpy(verts, sideBuf.data(), sizeof(Vertex3D_NoTex2) * sideBuf.size());
@@ -863,7 +710,7 @@ void Surface::RenderSetup(RenderDevice *device)
       for (unsigned int i = 0; i < m_numPolys * 3; i++)
          topBottomIndices.push_back(topBottomIndices[i] + m_numVertices * 2);
 
-      std::shared_ptr<IndexBuffer> IBuffer = std::make_shared<IndexBuffer>(m_rd, (unsigned int)topBottomIndices.size() + (unsigned int)sideIndices.size());
+      std::shared_ptr<IndexBuffer> IBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, (unsigned int)topBottomIndices.size() + (unsigned int)sideIndices.size());
       WORD* buf;
       IBuffer->Lock(buf);
       memcpy(buf, sideIndices.data(), sideIndices.size() * sizeof(WORD));
@@ -879,17 +726,17 @@ void Surface::RenderSetup(RenderDevice *device)
 
 void Surface::RenderRelease()
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    m_slingshotMeshBuffer = nullptr;
    m_meshBuffer = nullptr;
    m_meshEdgeBuffer = nullptr;
-   m_rd = nullptr;
+   m_renderer = nullptr;
 }
 
 void Surface::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
@@ -912,11 +759,11 @@ void Surface::Render(const unsigned int renderMask)
       if (renderMask & Renderer::UI_FILL)
       {
          if (m_d.m_sideVisible)
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numVertices * 6);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numVertices * 6);
          if (m_d.m_topBottomVisible)
          {
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + 0, m_numPolys * 3);
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (m_numPolys * 3 * 2), m_numPolys * 3);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + 0, m_numPolys * 3);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (m_numPolys * 3 * 2), m_numPolys * 3);
          }
       }
       if (renderMask & Renderer::UI_EDGES && (m_d.m_sideVisible || m_d.m_topBottomVisible))
@@ -935,9 +782,9 @@ void Surface::Render(const unsigned int renderMask)
                indices[i * 8 + 6] = i * 4 + 3;
                indices[i * 8 + 7] = i * 4;
             }
-            m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_rd, indices), true);
+            m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, indices), true);
          }
-         m_rd->DrawMesh(m_rd->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_numVertices * 8);
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_numVertices * 8);
       }
    }
    else if (!m_isDropped || StaticRendering())
@@ -989,10 +836,10 @@ void Surface::RenderSlingshots()
       }
    }
 
-   m_rd->ResetRenderState();
-   m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
-   m_rd->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szSlingShotMaterial), nullptr);
-   m_rd->DrawMesh(m_rd->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_slingshotMeshBuffer, RenderDevice::TRIANGLELIST, 0, static_cast<uint32_t>(m_vlinesling.size() * 24));
+   m_renderer->m_renderDevice->ResetRenderState();
+   m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+   m_renderer->m_renderDevice->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szSlingShotMaterial), nullptr);
+   m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_slingshotMeshBuffer, RenderDevice::TRIANGLELIST, 0, static_cast<uint32_t>(m_vlinesling.size() * 24));
 }
 
 void Surface::RenderWallsAtHeight(const bool drop, const bool isReflectionPass)
@@ -1000,50 +847,46 @@ void Surface::RenderWallsAtHeight(const bool drop, const bool isReflectionPass)
    if (isReflectionPass && (/*m_d.m_heightbottom < 0.0f ||*/ m_d.m_heighttop < 0.0f))
       return;
 
-   m_rd->m_basicShader->SetVector(SHADER_fDisableLighting_top_below, m_d.m_disableLightingTop, StaticRendering() ? 1.f : m_d.m_disableLightingBelow, 0.f, 0.f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::fDisableLighting_top_below, m_d.m_disableLightingTop, StaticRendering() ? 1.f : m_d.m_disableLightingBelow, 0.f, 0.f);
 
    // render side
    if (m_d.m_sideVisible && !drop && (m_numVertices > 0)) // Don't need to render walls if dropped
    {
       const Material *const mat = m_ptable->GetMaterial(m_d.m_szSideMaterial);
-      m_rd->ResetRenderState();
+      m_renderer->m_renderDevice->ResetRenderState();
       if ((mat->m_bOpacityActive || !m_isDynamic) || (m_d.m_topBottomVisible && m_isDynamic))
-         m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
-      m_rd->m_basicShader->SetBasic(mat, m_ptable->GetImage(m_d.m_szSideImage));
+         m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+      m_renderer->m_renderDevice->m_basicShader->SetBasic(mat, m_ptable->GetImage(m_d.m_szSideImage));
       // combine drawcalls into one (hopefully faster)
-      m_rd->DrawMesh(m_rd->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numVertices * 6);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numVertices * 6);
    }
 
    // render top&bottom
    if (m_d.m_topBottomVisible && (m_numPolys > 0))
    {
       const Material *const mat = m_ptable->GetMaterial(m_d.m_szTopMaterial);
-      m_rd->ResetRenderState();
+      m_renderer->m_renderDevice->ResetRenderState();
       if (mat->m_bOpacityActive || !m_isDynamic)
-         m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
-      m_rd->m_basicShader->SetBasic(mat, m_ptable->GetImage(m_d.m_szImage));
+         m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+      m_renderer->m_renderDevice->m_basicShader->SetBasic(mat, m_ptable->GetImage(m_d.m_szImage));
 
       // Top
-      m_rd->DrawMesh(
-         m_rd->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (drop ? m_numPolys * 3 : 0), m_numPolys * 3);
+      m_renderer->m_renderDevice->DrawMesh(
+         m_renderer->m_renderDevice->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (drop ? m_numPolys * 3 : 0), m_numPolys * 3);
 
       // Only render Bottom for Reflections
       if (isReflectionPass)
-         m_rd->DrawMesh(
-            m_rd->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (m_numPolys * 3 * 2), m_numPolys * 3);
+         m_renderer->m_renderDevice->DrawMesh(
+            m_renderer->m_renderDevice->m_basicShader, m_isDynamic, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, m_numVertices * 6 + (m_numPolys * 3 * 2), m_numPolys * 3);
    }
 
-   m_rd->m_basicShader->SetVector(SHADER_fDisableLighting_top_below, 0.f, 0.f, 0.f, 0.f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::fDisableLighting_top_below, 0.f, 0.f, 0.f, 0.f);
 }
 
-void Surface::AddPoint(int x, int y, const bool smooth)
+void Surface::AddPoint(const Vertex2D &v, const bool smooth)
 {
-   STARTUNDO
-
-   const Vertex2D v = m_ptable->TransformPoint(x, y);
-
    vector<RenderVertex> vvertex;
-   GetRgVertex(vvertex);
+   m_curve.GetRgVertex(vvertex);
 
    Vertex2D vOut(0.f, 0.f);
    int iSeg;
@@ -1055,278 +898,172 @@ void Surface::AddPoint(int x, int y, const bool smooth)
       if (vvertex[i].controlPoint)
          icp++;
 
-   CComObject<DragPoint> *pdp;
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, vOut.x, vOut.y, 0.f, smooth);
-      m_vdpoint.insert(m_vdpoint.begin() + icp, pdp); // push the second point forward, and replace it with this one.  Should work when index2 wraps.
-   }
-
-   STOPUNDO
-}
-
-void Surface::DoCommand(int icmd, int x, int y)
-{
-   ISelect::DoCommand(icmd, x, y);
-
-   switch (icmd)
-   {
-   case ID_WALLMENU_FLIP:
-      FlipPointY(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_MIRROR:
-      FlipPointX(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_ROTATE:
-      RotateDialog();
-      break;
-
-   case ID_WALLMENU_SCALE:
-      ScaleDialog();
-      break;
-
-   case ID_WALLMENU_TRANSLATE:
-      TranslateDialog();
-      break;
-
-   case ID_WALLMENU_ADDPOINT:
-   {
-      AddPoint(x, y, false);
-   }
-   break;
-   }
+   m_curve.InsertPoint(icp, std::make_unique<DragPoint>(&m_curve, vOut.x, vOut.y, 0.f, smooth)); // push the second point forward, and replace it with this one.  Should work when index2 wraps.
 }
 
 void Surface::FlipY(const Vertex2D& pvCenter)
 {
-   IHaveDragPoints::FlipPointY(pvCenter);
+   m_curve.FlipPointY(pvCenter);
 }
 
 void Surface::FlipX(const Vertex2D& pvCenter)
 {
-   IHaveDragPoints::FlipPointX(pvCenter);
+   m_curve.FlipPointX(pvCenter);
 }
 
-void Surface::Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter)
+void Surface::Rotate(const float ang, const Vertex2D &center, const bool useElementCenter) { m_curve.RotatePoints(ang, useElementCenter ? GetCenter() : center); }
+
+void Surface::Scale(const float scalex, const float scaley, const Vertex2D &center, const bool useElementCenter)
 {
-   IHaveDragPoints::RotatePoints(ang, pvCenter, useElementCenter);
+   m_curve.ScalePoints(scalex, scaley, useElementCenter ? GetCenter() : center);
 }
 
-void Surface::Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter)
+void Surface::Translate(const Vertex2D &offset) { m_curve.TranslatePoints(offset); }
+
+void Surface::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   IHaveDragPoints::ScalePoints(scalex, scaley, pvCenter, useElementCenter);
-}
-
-void Surface::Translate(const Vertex2D &pvOffset)
-{
-   IHaveDragPoints::TranslatePoints(pvOffset);
-}
-
-HRESULT Surface::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
-{
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteBool(FID(HTEV), m_d.m_hitEvent);
-   bw.WriteBool(FID(DROP), m_d.m_droppable);
-   bw.WriteBool(FID(FLIP), m_d.m_flipbook);
-   bw.WriteBool(FID(ISBS), m_d.m_isBottomSolid);
-   bw.WriteBool(FID(CLDW), m_d.m_collidable);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteFloat(FID(THRS), m_d.m_threshold);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteString(FID(SIMG), m_d.m_szSideImage);
-   bw.WriteString(FID(SIMA), m_d.m_szSideMaterial);
-   bw.WriteString(FID(TOMA), m_d.m_szTopMaterial);
-   bw.WriteString(FID(SLMA), m_d.m_szSlingShotMaterial);
-   bw.WriteFloat(FID(HTBT), m_d.m_heightbottom);
-   bw.WriteFloat(FID(HTTP), m_d.m_heighttop);
-   //bw.WriteBool(FID(INNR), m_d.m_inner); //!! Deprecated
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteBool(FID(DSPT), m_d.m_displayTexture);
-   bw.WriteFloat(FID(SLGF), m_d.m_slingshotforce);
-   bw.WriteFloat(FID(SLTH), m_d.m_slingshot_threshold);
-   bw.WriteFloat(FID(ELAS), m_d.m_elasticity);
-   bw.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
-   bw.WriteFloat(FID(WFCT), m_d.m_friction);
-   bw.WriteFloat(FID(WSCT), m_d.m_scatter);
-   bw.WriteBool(FID(VSBL), m_d.m_topBottomVisible);
-   bw.WriteBool(FID(SLGA), m_d.m_slingshotAnimation);
-   bw.WriteBool(FID(SVBL), m_d.m_sideVisible);
-   bw.WriteFloat(FID(DILT), m_d.m_disableLightingTop);
-   bw.WriteFloat(FID(DILB), m_d.m_disableLightingBelow);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-   bw.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
-   bw.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(PNTS));
-   HRESULT hr;
-   if (FAILED(hr = SavePointData(pstm, hcrypthash)))
-      return hr;
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
+   writer.WriteBool(FID(HTEV), m_d.m_hitEvent);
+   writer.WriteBool(FID(DROP), m_d.m_droppable);
+   writer.WriteBool(FID(FLIP), m_d.m_flipbook);
+   writer.WriteBool(FID(ISBS), m_d.m_isBottomSolid);
+   writer.WriteBool(FID(CLDW), m_d.m_collidable);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteFloat(FID(THRS), m_d.m_threshold);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteString(FID(SIMG), m_d.m_szSideImage);
+   writer.WriteString(FID(SIMA), m_d.m_szSideMaterial);
+   writer.WriteString(FID(TOMA), m_d.m_szTopMaterial);
+   writer.WriteString(FID(SLMA), m_d.m_szSlingShotMaterial);
+   writer.WriteFloat(FID(HTBT), m_d.m_heightbottom);
+   writer.WriteFloat(FID(HTTP), m_d.m_heighttop);
+   //writer.WriteBool(FID(INNR), m_d.m_inner); //!! Deprecated
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteBool(FID(DSPT), m_d.m_displayTexture);
+   writer.WriteFloat(FID(SLGF), m_d.m_slingshotforce);
+   writer.WriteFloat(FID(SLTH), m_d.m_slingshot_threshold);
+   writer.WriteFloat(FID(ELAS), m_d.m_elasticity);
+   writer.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
+   writer.WriteFloat(FID(WFCT), m_d.m_friction);
+   writer.WriteFloat(FID(WSCT), m_d.m_scatter);
+   writer.WriteBool(FID(VSBL), m_d.m_topBottomVisible);
+   writer.WriteBool(FID(SLGA), m_d.m_slingshotAnimation);
+   writer.WriteBool(FID(SVBL), m_d.m_sideVisible);
+   writer.WriteFloat(FID(DILT), m_d.m_disableLightingTop);
+   writer.WriteFloat(FID(DILB), m_d.m_disableLightingBelow);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+   writer.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
+   writer.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
+   SaveSharedEditableFields(writer);
+   m_curve.SavePoints(writer);
+   writer.EndObject();
 }
 
 void Surface::ClearForOverwrite()
 {
-   ClearPointsForOverwrite();
+   m_curve.ClearPoints();
 }
 
-HRESULT Surface::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Surface::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-
-   // Pure backwards-compatibility code:
-   // On some tables, the outer wall is still modelled/copy-pasted 'inside-out',
-   // this tries to compensate for that
-   if (!m_d.m_inner) {
-      const size_t cvertex = m_vdpoint.size();
-
-      float miny = FLT_MAX;
-      size_t minyindex = 0;
-
-      // Find smallest y point - use it to connect with surrounding border
-      for (size_t i = 0; i < cvertex; i++)
+   reader.AsObject(
+      [this](int tag, IObjectReader &reader)
       {
-         float y;
-         m_vdpoint[i]->get_Y(&y);
-         if (y < miny)
+         switch (tag)
          {
-            miny = y;
-            minyindex = i;
+         case FID(PIID): reader.AsInt(); break;
+         case FID(HTEV): m_d.m_hitEvent = reader.AsBool(); break;
+         case FID(DROP): m_d.m_droppable = reader.AsBool(); break;
+         case FID(FLIP): m_d.m_flipbook = reader.AsBool(); break;
+         case FID(ISBS): m_d.m_isBottomSolid = reader.AsBool(); break;
+         case FID(CLDW): m_d.m_collidable = reader.AsBool(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(THRS): m_d.m_threshold = reader.AsFloat(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(SIMG): m_d.m_szSideImage = reader.AsString(); break;
+         case FID(SIMA): m_d.m_szSideMaterial = reader.AsString(); break;
+         case FID(TOMA): m_d.m_szTopMaterial = reader.AsString(); break;
+         case FID(MAPH): m_d.m_szPhysicsMaterial = reader.AsString(); break;
+         case FID(SLMA): m_d.m_szSlingShotMaterial = reader.AsString(); break;
+         case FID(HTBT): m_d.m_heightbottom = reader.AsFloat(); break;
+         case FID(HTTP): m_d.m_heighttop = reader.AsFloat(); break;
+         // Deprecated and no longer written. An outer wall (not inner) needs the table
+         // bounds to be squared off, which are out of reach here, so InitPostLoad does it
+         case FID(INNR): m_onLoadInsideOutOuterWall = !reader.AsBool(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(DSPT): m_d.m_displayTexture = reader.AsBool(); break;
+         case FID(SLGF): m_d.m_slingshotforce = reader.AsFloat(); break;
+         case FID(SLTH): m_d.m_slingshot_threshold = reader.AsFloat(); break;
+         case FID(ELAS): m_d.m_elasticity = reader.AsFloat(); break;
+         case FID(ELFO): m_d.m_elasticityFalloff = reader.AsFloat(); break;
+         case FID(WFCT): m_d.m_friction = reader.AsFloat(); break;
+         case FID(WSCT): m_d.m_scatter = reader.AsFloat(); break;
+         case FID(VSBL): m_d.m_topBottomVisible = reader.AsBool(); break;
+         case FID(OVPH): m_d.m_overwritePhysics = reader.AsBool(); break;
+         case FID(SLGA): m_d.m_slingshotAnimation = reader.AsBool(); break;
+         case FID(DILI):
+         {
+            int tmp;
+            tmp = reader.AsInt();
+            m_d.m_disableLightingTop = (tmp == 1) ? 1.f : dequantizeUnsigned<8>(tmp);
+            break;
+         } // Pre 10.8 compatible hacky loading!
+         case FID(DILT): m_d.m_disableLightingTop = reader.AsFloat(); break;
+         case FID(DILB): m_d.m_disableLightingBelow = reader.AsFloat(); break;
+         case FID(SVBL): m_d.m_sideVisible = reader.AsBool(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         case FID(PNTS): break; // Empty tag placed before drag point data (unused)
+         case FID(DPNT): m_curve.LoadPointToken(reader); break;
+         default: LoadSharedEditableField(tag, reader); break;
          }
-      }
-
-      float tmpx;
-      m_vdpoint[minyindex]->get_X(&tmpx);
-      const float tmpy = miny /*- 1.0f*/; // put tiny gap in to avoid errors
-
-      // swap list around
-      std::ranges::reverse(m_vdpoint.begin(), m_vdpoint.end());
-
-      CComObject<DragPoint> *pdp;
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, m_ptable->m_left, m_ptable->m_top, 0.f, false);
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, m_ptable->m_right, m_ptable->m_top, 0.f, false);
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, m_ptable->m_right + 1.0f, m_ptable->m_bottom, 0.f, false); //!!! +1 needed for whatever reason (triangulation screwed up)
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, m_ptable->m_left, m_ptable->m_bottom, 0.f, false);
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, m_ptable->m_left - 1.0f, m_ptable->m_top, 0.f, false); //!!! -1 needed for whatever reason (triangulation screwed up)
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, tmpx, tmpy, 0.f, false);
-         m_vdpoint.insert(m_vdpoint.begin() + (cvertex - minyindex - 1), pdp);
-      }
-
-      m_d.m_inner = true;
-   }
-
-   return S_OK;
+         return true;
+      });
 }
 
-bool Surface::LoadToken(const int id, BiffReader * const pbr)
+// Pure backwards-compatibility code:
+// On some tables, the outer wall is still modelled/copy-pasted 'inside-out', this tries
+// to compensate for that by closing the shape over the table border. Runs from here
+// rather than from Load because it needs the table bounds, and a part only reaches its
+// table once PinTable::AddPart has taken it
+void Surface::InitPostLoad()
 {
-   switch(id)
+   if (!m_onLoadInsideOutOuterWall)
+      return;
+   m_onLoadInsideOutOuterWall = false; // one shot, the points are inserted for good
+   assert(m_ptable != nullptr);
+
+   const size_t cvertex = m_curve.GetPoints().size();
+
+   float miny = FLT_MAX;
+   size_t minyindex = 0;
+
+   // Find smallest y point - use it to connect with surrounding border
+   for (size_t i = 0; i < cvertex; i++)
    {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(HTEV): pbr->GetBool(m_d.m_hitEvent); break;
-   case FID(DROP): pbr->GetBool(m_d.m_droppable); break;
-   case FID(FLIP): pbr->GetBool(m_d.m_flipbook); break;
-   case FID(ISBS): pbr->GetBool(m_d.m_isBottomSolid); break;
-   case FID(CLDW): pbr->GetBool(m_d.m_collidable); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(THRS): pbr->GetFloat(m_d.m_threshold); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(SIMG): pbr->GetString(m_d.m_szSideImage); break;
-   case FID(SIMA): pbr->GetString(m_d.m_szSideMaterial); break;
-   case FID(TOMA): pbr->GetString(m_d.m_szTopMaterial); break;
-   case FID(MAPH): pbr->GetString(m_d.m_szPhysicsMaterial); break;
-   case FID(SLMA): pbr->GetString(m_d.m_szSlingShotMaterial); break;
-   case FID(HTBT): pbr->GetFloat(m_d.m_heightbottom); break;
-   case FID(HTTP): pbr->GetFloat(m_d.m_heighttop); break;
-   case FID(INNR): pbr->GetBool(m_d.m_inner); break; //!! Deprecated, do not use anymore
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(DSPT): pbr->GetBool(m_d.m_displayTexture); break;
-   case FID(SLGF): pbr->GetFloat(m_d.m_slingshotforce); break;
-   case FID(SLTH): pbr->GetFloat(m_d.m_slingshot_threshold); break;
-   case FID(ELAS): pbr->GetFloat(m_d.m_elasticity); break;
-   case FID(ELFO): pbr->GetFloat(m_d.m_elasticityFalloff); break;
-   case FID(WFCT): pbr->GetFloat(m_d.m_friction); break;
-   case FID(WSCT): pbr->GetFloat(m_d.m_scatter); break;
-   case FID(VSBL): pbr->GetBool(m_d.m_topBottomVisible); break;
-   case FID(OVPH): pbr->GetBool(m_d.m_overwritePhysics); break;
-   case FID(SLGA): pbr->GetBool(m_d.m_slingshotAnimation); break;
-   case FID(DILI): { int tmp; pbr->GetInt(tmp); m_d.m_disableLightingTop = (tmp == 1) ? 1.f : dequantizeUnsigned<8>(tmp); break; } // Pre 10.8 compatible hacky loading!
-   case FID(DILT): pbr->GetFloat(m_d.m_disableLightingTop); break;
-   case FID(DILB): pbr->GetFloat(m_d.m_disableLightingBelow); break;
-   case FID(SVBL): pbr->GetBool(m_d.m_sideVisible); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   default:
-   {
-      if (id == FID(DPNT))
-         LoadPointToken(pbr);
-      ISelect::LoadToken(id, pbr);
-      break;
+      const float y = m_curve.GetPoints()[i]->GetY();
+      if (y < miny)
+      {
+         miny = y;
+         minyindex = i;
+      }
    }
-   }
-   return true;
-}
 
-HRESULT Surface::InitPostLoad()
-{
-   return S_OK;
-}
+   const float tmpx = m_curve.GetPoints()[minyindex]->GetX();
+   const float tmpy = miny /*- 1.0f*/; // put tiny gap in to avoid errors
 
-void Surface::UpdateStatusBarInfo()
-{
-   char tbuf[128];
-   sprintf_s(tbuf, sizeof(tbuf), "TopHeight: %.03f | BottomHeight: %0.3f", m_vpinball->ConvertToUnit(m_d.m_heighttop), m_vpinball->ConvertToUnit(m_d.m_heightbottom));
-   m_vpinball->SetStatusBarUnitInfo(tbuf, true);
+   // swap list around
+   m_curve.ReverseOrder();
+
+   m_curve.InsertPoint(cvertex - minyindex - 1, std::make_unique<DragPoint>(&m_curve, m_ptable->m_left, m_ptable->m_top, 0.f, false));
+   m_curve.InsertPoint((cvertex - minyindex - 1), std::make_unique<DragPoint>(&m_curve, m_ptable->m_right, m_ptable->m_top, 0.f, false));
+   //!!! +1 needed for whatever reason (triangulation screwed up)
+   m_curve.InsertPoint(cvertex - minyindex - 1, std::make_unique<DragPoint>(&m_curve, m_ptable->m_right + 1.0f, m_ptable->m_bottom, 0.f, false));
+   m_curve.InsertPoint(cvertex - minyindex - 1, std::make_unique<DragPoint>(&m_curve, m_ptable->m_left, m_ptable->m_bottom, 0.f, false));
+   //!!! -1 needed for whatever reason (triangulation screwed up)
+   m_curve.InsertPoint(cvertex - minyindex - 1, std::make_unique<DragPoint>(&m_curve, m_ptable->m_left - 1.0f, m_ptable->m_top, 0.f, false));
+   m_curve.InsertPoint(cvertex - minyindex - 1, std::make_unique<DragPoint>(&m_curve, tmpx, tmpy, 0.f, false));
 }
 
 STDMETHODIMP Surface::get_HasHitEvent(VARIANT_BOOL *pVal)
@@ -1599,7 +1336,7 @@ STDMETHODIMP Surface::get_Friction(float *pVal)
 
 STDMETHODIMP Surface::put_Friction(float newVal)
 {
-   m_d.m_friction = clamp(newVal, 0.f, 1.f);
+   m_d.m_friction = saturate(newVal);
    for (size_t i = 0; i < m_vhoCollidable.size(); i++)
       m_vhoCollidable[i]->SetFriction(m_d.m_friction);
    return S_OK;

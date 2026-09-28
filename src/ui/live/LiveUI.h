@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include "core/def.h"
 #include "input/InputManager.h"
+#include "renderer/Renderer.h"
 
 #include "imgui/imgui.h"
 #include "imgui_markdown/imgui_markdown.h"
@@ -14,13 +16,16 @@
 #include "PlumbOverlay.h"
 #include "BallControl.h"
 
-constexpr const char * const ID_BAM_SETTINGS = "Headtracking Settings";
-
-class LiveUI final
+class LiveUI final : public UserMessageSink
 {
 public:
    LiveUI(RenderDevice* const rd);
    ~LiveUI();
+
+   // UserMessageSink interface: non fatal messages are routed to the in-game notification
+   // overlay, while fatal errors and confirmations use a (blocking) SDL message box.
+   void Notify(MsgSeverity severity, const string &title, const string &message) override;
+   bool Confirm(const string &title, const string &message, bool fallback) override;
 
    void Render3D(); // Called to contribute to 3D Scene
    void RenderUI(); // Called to render UI overlay
@@ -31,22 +36,23 @@ public:
    void OpenEditorUI() { m_editorUI.Open(); }
    bool IsEditorUIOpened() const { return m_editorUI.IsOpened(); }
    bool IsEditorViewMode() const { return m_editorUI.IsOpened() && !m_editorUI.IsPreview(); }
+   bool IsEditorBackdropViewMode() const { return m_editorUI.IsOpened() && m_editorUI.IsBackdropEditMode(); }
 
    void OpenInGameUI(const string& page = "homepage"s);
-   void OpenMainSplash() { OpenInGameUI("exit"); }
    bool IsInGameUIOpened() const { return m_inGameUI.IsOpened(); }
 
    void ToggleFPS() { m_perfUI.NextPerfMode(); }
    bool IsShowingFPSDetails() const { return m_perfUI.GetPerfMode() != PerfUI::PerfMode::PM_DISABLED; }
    
-   bool ProposeInputLayout(const string &deviceName, const std::function<void(bool, bool)> &handler);
-
    void ShowTouchOverlay(bool show) { m_showTouchOverlay = show; }
 
    unsigned int PushNotification(const string &message, const int lengthMs, const unsigned int reuseId = 0) { return m_notificationOverlay.PushNotification(message, lengthMs, reuseId); }
 
    // Ball Control
    BallControl m_ballControl;
+
+   // Editor UI
+   VPX::EditorUI::EditorUI m_editorUI;
 
    // In Game UI
    VPX::InGameUI::InGameUI m_inGameUI;
@@ -63,16 +69,16 @@ public:
    static ImGuiKey GetImGuiKeyFromSDLScancode(const SDL_Scancode sdlk);
    static void CenteredText(const string &text);
 
+   void HandleSDLEvent(SDL_Event &e) const;
+
 private:
    void SetupImGuiStyle(const bool isEditor) const;
    
    void NewFrame();
+   void AddMousePosEvent(bool isTouch, float x, float y) const;
    void UpdateScale();
 
    vector<std::shared_ptr<MeshBuffer>> m_meshBuffers;
-
-   // Editor UI
-   VPX::EditorUI::EditorUI m_editorUI;
 
    // Touch UI overlay
    void UpdateTouchUI();
@@ -85,12 +91,6 @@ private:
    // Notifications
    NotificationOverlay m_notificationOverlay;
 
-   // Autodetected Input Device popup
-   string m_deviceLayoutName;
-   bool m_deviceLayoutDontAskAgain;
-   std::function<void(bool, bool)> m_deviceLayoutHandler;
-   void UpdateDeviceLayoutPopup();
-
    // MarkDown support
    ImGuiID markdown_start_id;
    static ImGui::MarkdownConfig markdown_config;
@@ -99,10 +99,9 @@ private:
    static ImGui::MarkdownImageData MarkdownImageCallback(ImGui::MarkdownLinkCallbackData data);
 
    // UI Context
-   VPinball *m_app;
    Player   *m_player;
    InputManager *m_pininput;
-   Renderer *m_renderer;
+   std::unique_ptr<Renderer>& m_renderer;
 
    // Rendering
    RenderDevice* const m_rd;
@@ -112,3 +111,8 @@ private:
    ImFont *m_overlayBoldFont = nullptr;
    ImFont *m_overlayFont = nullptr;
 };
+
+namespace plog
+{
+Record &operator<<(Record &record, const ImVec2 &pt);
+}

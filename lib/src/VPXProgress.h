@@ -10,15 +10,16 @@
 class VPXProgress: public VPXFileFeedback
 {
 public:
-   void ItemHasBeenProcessed(int itemsCount, int totalItems) override;
-   void SoundHasBeenProcessed(int soundCount, int totalSounds) override;
-   void ImageHasBeenProcessed(int imageCount, int totalImages) override;
-   void FontHasBeenProcessed(int fontCount, int totalFonts) override;
-   void CollectionHasBeenProcessed(int collectionCount, int totalCollections) override;
+   void SetProgress(unsigned int progress) override;
+   void SetLength(unsigned int length) override;
    bool IsCancelled() override;
 
    // Static cancellation flag - can be set from any thread
    static std::atomic<bool> s_cancelled;
    static void SetCancelled(bool cancelled) { s_cancelled = cancelled; }
    static void Reset() { s_cancelled = false; }
+
+private:
+   unsigned int m_progress = 0;
+   unsigned int m_total = 1;
 };

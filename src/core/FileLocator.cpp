@@ -8,6 +8,11 @@
 
 #include "parts/pintable.h"
 
+// Pre-set internal path (for Android headless/service mode where the SDL Activity isn't available)
+#ifdef __ANDROID__
+extern "C" const char* VPinballGetInternalPath();
+#endif
+
 FileLocator::FileLocator()
    : m_appPath(EvaluateAppPath())
 {
@@ -21,7 +26,10 @@ std::filesystem::path FileLocator::EvaluateAppPath()
    std::filesystem::path appPath;
 #ifdef __ANDROID__
    // Android may not open files in the APK resources through fopen so we copy them outside of the apk in the internal storage
-   appPath = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / ""sv;
+   if (const char* internalPath = VPinballGetInternalPath(); internalPath && internalPath[0] != '\0')
+      appPath = std::filesystem::path(internalPath) / ""sv;
+   else
+      appPath = std::filesystem::path(SDL_GetAndroidInternalStoragePath()) / ""sv;
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS && !defined(__LIBVPINBALL__)
    // Pref path is hidden on iOS, so we use Documents to be able to access/drag'n drop through Finder via UIFileSharingEnabled info.plist key
    // FIXME still app path is for readonly files, so shouldn't it just be SDL_GetBasePath() ?
@@ -36,9 +44,16 @@ void FileLocator::SetupPrefPath()
 {
    std::filesystem::path basePrefPath;
 #if defined(__ANDROID__)
-   char* szPrefPath = SDL_GetPrefPath(NULL, "");
-   basePrefPath = szPrefPath;
-   SDL_free(szPrefPath);
+   // Strictly the internal app folder (ini, log, user/). The web-server browse root is a separate
+   // concept handled by the WebServer; never point this at the user library.
+   if (const char* internalPath = VPinballGetInternalPath(); internalPath && internalPath[0] != '\0')
+      basePrefPath = std::filesystem::path(internalPath) / ""sv;
+   else
+   {
+      char* szPrefPath = SDL_GetPrefPath(NULL, "");
+      basePrefPath = szPrefPath;
+      SDL_free(szPrefPath);
+   }
 #elif defined(__APPLE__) && defined(TARGET_OS_IOS) && TARGET_OS_IOS
    // Pref path is hidden on iOS, so we use Documents to be able to access/drag'n drop through Finder via UIFileSharingEnabled info.plist key
    basePrefPath = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
@@ -213,7 +228,13 @@ std::filesystem::path FileLocator::GetAppPath(AppSubFolder sub, const std::files
    // Readonly deployment files, always located along executable file
    case FileLocator::AppSubFolder::Root: path = m_appPath; break;
    case FileLocator::AppSubFolder::Assets: path = m_appPath / "assets"sv; break;
-   case FileLocator::AppSubFolder::Plugins: path = m_appPath / "plugins"sv; break;
+   case FileLocator::AppSubFolder::Plugins:
+#if defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
+      path = (m_appPath / ".."sv / "PlugIns"sv).lexically_normal();
+#else
+      path = m_appPath / "plugins"sv;
+#endif
+      break;
    case FileLocator::AppSubFolder::GLShaders: path = m_appPath / ("shaders-" + std::to_string(VP_VERSION_MAJOR) + '.' + std::to_string(VP_VERSION_MINOR) + '.' + std::to_string(VP_VERSION_REV)); break;
    case FileLocator::AppSubFolder::Docs:
       // A bit hacky as doc files have moved over time, so we check the various locations they may be in
@@ -291,9 +312,11 @@ std::filesystem::path FileLocator::GetTablePath(const PinTable* table, TableSubF
                string type;
                switch (sub)
                {
+               case TableSubFolder::Root: type = "Root"sv; break;
                case TableSubFolder::Music: type = "Music"sv; break;
                case TableSubFolder::Cache: type = "Cache"sv; break;
                case TableSubFolder::User: type = "User"sv; break;
+               case TableSubFolder::AutoSave: type = "Autosave"sv; break;
                }
                PLOGI << type << " folder was created for table '" << table->m_filename << "': " << path;
             }

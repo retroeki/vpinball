@@ -4,42 +4,11 @@ import SwiftUI
 struct MainView: View {
     @Environment(\.dismissSearch) var dismissSearch
 
-    @State var settingsSection: String?
-    @State var showSettings = false
+    @State private var activeTableImage: UIImage?
 
-    @State var confirmImportTableURL: URL?
-    @State var showConfirmImportTable = false
+    @ObservedObject var vpinballModel = VPinballModel.shared
+    @ObservedObject var mainViewModel = MainViewModel.shared
 
-    @State var importTableURL: URL?
-    @State var showImportTable = false
-
-    @State var tableViewMode: TableViewMode = .grid
-    @State var tableGridSize: TableGridSize = .medium
-    @State var tableListSortOrder: SortOrder = .forward
-    @State var tableListSearchText = ""
-    @State var tableListScrollToTable: Table?
-
-    @State var selectedTable: Table? = nil
-
-    @State var shareItems: [Any] = []
-    @State var showShare = false
-
-    @State var renameTableName = ""
-    @State var showRenameTable = false
-
-    @State var showTableImage = false
-    @State var tableImagePhotoItem: PhotosPickerItem?
-    @State var showTableImagePhotoPicker = false
-
-    @State var showScript = false
-
-    @State var errorMessage = ""
-    @State var showError = false
-
-    @ObservedObject var tableManager = TableManager.shared
-    @ObservedObject var vpinballViewModel = VPinballViewModel.shared
-
-    let vpinballManager = VPinballManager.shared
     let settingsModel = SettingsModel()
 
     var body: some View {
@@ -48,21 +17,22 @@ struct MainView: View {
                 ZStack {
                     Color.lightBlack.ignoresSafeArea()
 
-                    TableListView(viewMode: tableViewMode,
-                                  gridSize: tableGridSize,
-                                  sortOrder: tableListSortOrder,
-                                  searchText: tableListSearchText,
-                                  scrollToTable: $tableListScrollToTable)
-                        .searchable(text: $tableListSearchText)
-                        .disabled(tableManager.tables.isEmpty)
+                    TableGridView(tables: vpinballModel.tables,
+                                  viewMode: mainViewModel.tableViewMode,
+                                  gridSize: mainViewModel.tableGridSize,
+                                  sortOrder: mainViewModel.tableListSortOrder,
+                                  searchText: mainViewModel.tableListSearchText,
+                                  scrollToTable: $mainViewModel.scrollToTable)
+                        .searchable(text: $mainViewModel.tableListSearchText)
+                        .disabled(vpinballModel.tables.isEmpty)
 
-                    if tableManager.tables.isEmpty {
+                    if vpinballModel.tables.isEmpty {
                         GeometryReader { geometry in
                             VStack {
                                 Spacer()
 
                                 VStack(spacing: 40) {
-                                    TablePlaceholderImage()
+                                    TableImagePlaceholderView()
 
                                     VStack(spacing: 20) {
                                         Text("Insert Tables")
@@ -83,7 +53,7 @@ struct MainView: View {
                                         .padding(.horizontal, 40)
 
                                         Button(action: {
-                                            handleLearnMore(link: Link.docs)
+                                            Link.docs.open()
                                         }) {
                                             Text("Learn More...")
                                                 .foregroundStyle(Color.vpxDarkYellow)
@@ -102,7 +72,7 @@ struct MainView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button(action: {
-                            handleShowSettings()
+                            mainViewModel.showSettings = true
                         }) {
                             Image(systemName: "gearshape")
                                 .foregroundStyle(Color.vpxDarkYellow)
@@ -116,7 +86,7 @@ struct MainView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu(content: {
-                            Picker("View Mode", selection: $tableViewMode) {
+                            Picker("View Mode", selection: $mainViewModel.tableViewMode) {
                                 Label("Grid",
                                       systemImage: "square.grid.3x3")
                                     .tag(TableViewMode.grid)
@@ -125,8 +95,8 @@ struct MainView: View {
                                     .tag(TableViewMode.list)
                             }
 
-                            if tableViewMode == .grid {
-                                Picker("Grid Size", selection: $tableGridSize) {
+                            if mainViewModel.tableViewMode == .grid {
+                                Picker("Grid Size", selection: $mainViewModel.tableGridSize) {
                                     Label("Small",
                                           systemImage: "rectangle.split.3x1")
                                         .tag(TableGridSize.small)
@@ -139,7 +109,7 @@ struct MainView: View {
                                 }
                             }
 
-                            Picker("Sort Order", selection: $tableListSortOrder) {
+                            Picker("Sort Order", selection: $mainViewModel.tableListSortOrder) {
                                 Label("A-Z",
                                       systemImage: "arrow.up")
                                     .tag(SortOrder.forward)
@@ -156,7 +126,7 @@ struct MainView: View {
                         Menu(content: {
                             Section("Import From...") {
                                 Button(action: {
-                                    handleShowImportTable()
+                                    mainViewModel.showImportTable = true
                                 }) {
                                     Label("Files",
                                           systemImage: "doc")
@@ -165,13 +135,13 @@ struct MainView: View {
 
                             Section("Built in...") {
                                 Button(action: {
-                                    handleImportTableFromAssets("blankTable")
+                                    mainViewModel.handleShowConfirmImportTable(url: Bundle.main.url(forResource: "assets/blankTable", withExtension: "vpx"))
                                 }) {
                                     Text("blankTable.vpx")
                                 }
 
                                 Button(action: {
-                                    handleImportTableFromAssets("exampleTable")
+                                    mainViewModel.handleShowConfirmImportTable(url: Bundle.main.url(forResource: "assets/exampleTable", withExtension: "vpx"))
                                 }) {
                                     Text("exampleTable.vpx")
                                 }
@@ -188,40 +158,45 @@ struct MainView: View {
                                    for: .navigationBar)
             }
 
-            if let table = vpinballManager.activeTable {
-                Color.lightBlack
+            if let table = vpinballModel.activeTable {
+                Group {
+                    Color.lightBlack
 
-                if let uiImage = table.uiImage {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                } else {
-                    TablePlaceholderImage(contentMode: .fit)
+                    if let activeTableImage {
+                        Image(uiImage: activeTableImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        TableImagePlaceholderView(contentMode: .fit)
+                    }
+                }
+                .task(id: "\(table.uuid)_\(table.modifiedAt)") {
+                    activeTableImage = await table.uiImageAsync()
                 }
             }
 
-            if vpinballViewModel.showHUD {
+            if vpinballModel.showHUD {
                 HUDOverlayView()
             }
         }
         .ignoresSafeArea()
-        .sheet(isPresented: $showSettings,
+        .sheet(isPresented: $mainViewModel.showSettings,
                content: {
-                   SettingsView(settingsModel: settingsModel, focusSection: settingsSection)
+                   SettingsView(settingsModel: settingsModel)
                        .presentationDetents([.custom(CustomDetent.self)])
                        .presentationDragIndicator(.hidden)
                        .ignoresSafeArea()
                })
-        .sheet(isPresented: $showImportTable,
+        .sheet(isPresented: $mainViewModel.showImportTable,
                content: {
-                   DocumentPickerView(importFileURL: $importTableURL)
+                   DocumentPickerView(importFileURL: $mainViewModel.importTableURL)
                        .presentationDetents([.custom(CustomDetent.self)])
                        .presentationDragIndicator(.hidden)
                        .ignoresSafeArea()
                })
-        .sheet(isPresented: $showShare,
+        .sheet(isPresented: $mainViewModel.showShare,
                content: {
-                   ActivityViewControllerView(activityItems: $shareItems,
+                   ActivityViewControllerView(activityItems: $mainViewModel.shareItems,
                                               excludedActivityTypes: [.mail,
                                                                       .message,
                                                                       .postToFacebook])
@@ -230,355 +205,75 @@ struct MainView: View {
                        .ignoresSafeArea()
                })
         .confirmationDialog("",
-                            isPresented: $showTableImage,
+                            isPresented: $mainViewModel.showTableImage,
                             titleVisibility: .hidden)
         {
             Button("Photo Library") {
-                handleShowTableImagePhotoPicker()
+                mainViewModel.showTableImagePhotoPicker = true
             }
 
             Button("Reset",
                    role: .destructive)
             {
-                handleTableImageReset()
+                mainViewModel.handleTableImageReset()
             }
 
             Button("Cancel", role: .cancel) {}
         }
-        .photosPicker(isPresented: $showTableImagePhotoPicker,
-                      selection: $tableImagePhotoItem,
+        .photosPicker(isPresented: $mainViewModel.showTableImagePhotoPicker,
+                      selection: $mainViewModel.tableImagePhotoItem,
                       matching: .any(of: [.images,
                                           .screenshots,
                                           .livePhotos]))
-        .fullScreenCover(isPresented: $showScript, content: {
-            if let table = selectedTable {
+        .fullScreenCover(isPresented: $mainViewModel.showScript, content: {
+            if let table = mainViewModel.selectedTable {
                 CodeView(url: table.scriptURL,
                          language: .vbscript)
             }
         })
-        .alert("Confirm Import Table", isPresented: $showConfirmImportTable) {
+        .alert("Confirm Import Table", isPresented: $mainViewModel.showConfirmImportTable) {
             Button("OK") {
-                handleConfirmImportTable()
+                mainViewModel.handleConfirmImportTable()
             }
             Button("Cancel", role: .cancel) {
-                handleConfirmImportTableCancel()
+                mainViewModel.confirmImportTableURL = nil
             }
         }
         message: {
-            if let filename = confirmImportTableURL?.lastPathComponent.removingPercentEncoding {
+            if let filename = mainViewModel.confirmImportTableURL?.lastPathComponent.removingPercentEncoding {
                 Text("\nImport \"\(filename)\"?")
             }
         }
-        .alert("Rename Table", isPresented: $showRenameTable) {
-            TextField("", text: $renameTableName)
+        .alert("Rename Table", isPresented: $mainViewModel.showRenameTable) {
+            TextField("", text: $mainViewModel.renameTableName)
                 .textInputAutocapitalization(.never)
             Button("Rename") {
-                handleRenameTable()
+                mainViewModel.handleRenameTable()
             }
             Button("Cancel", role: .cancel) {}
         }
         .alert("TILT!",
-               isPresented: $showError)
+               isPresented: $mainViewModel.showError)
         {
             Button("Learn More") {
-                handleLearnMore(link: Link.troubleshooting)
+                Link.troubleshooting.open()
             }
             Button("OK") {}
         }
         message: {
-            Text("\n\(errorMessage)")
+            Text("\n\(mainViewModel.errorMessage)")
         }
         .onAppear {
-            handleAppear()
+            mainViewModel.handleAppear()
         }
-        // .onOpenURL { url in
-        //     if url.scheme == "file" {
-        //         handleShowConfirmImportFile(url: url)
-        //     }
-        // }
-        .onChange(of: tableViewMode) {
-            handleTableViewMode()
-        }
-        .onChange(of: tableGridSize) {
-            handleTableGridSize()
-        }
-        .onChange(of: tableListSortOrder) {
-            handleTableListSortOrder()
-        }
-        .onChange(of: importTableURL) {
-            handleShowConfirmImportTable(url: importTableURL)
-        }
-        .onChange(of: tableManager.tables) {
-            handleTables()
-        }
-        .onChange(of: vpinballViewModel.didSetAction) {
-            handleAction()
-        }
-        .onChange(of: vpinballViewModel.scrollToTable) {
-            tableListScrollToTable = vpinballViewModel.scrollToTable
-        }
-        .onChange(of: tableImagePhotoItem) {
-            handleTableImagePhotoItem()
-        }
-        .onChange(of: selectedTable) {}
-    }
-
-    func handleAppear() {
-        tableViewMode = TableViewMode(rawValue: vpinballManager.loadValue(.standalone,
-                                                                          "TableViewMode",
-                                                                          TableViewMode.grid.rawValue)) ?? .grid
-
-        tableGridSize = TableGridSize(rawValue: vpinballManager.loadValue(.standalone,
-                                                                          "TableGridSize",
-                                                                          TableGridSize.medium.rawValue)) ?? .medium
-
-        tableListSortOrder = vpinballManager.loadValue(.standalone,
-                                                       "TableListSort",
-                                                       1) == 1 ? .forward : .reverse
-
-        Task {
-            await tableManager.refresh()
-        }
-    }
-
-    func handleShowConfirmImportTable(url: URL?) {
-        if let url = url {
-            importTableURL = nil
-            confirmImportTableURL = url
-            showConfirmImportTable = true
-        }
-    }
-
-    func handleConfirmImportTable() {
-        if let url = confirmImportTableURL {
-            handleImportTable(url: url)
-        }
-        confirmImportTableURL = nil
-    }
-
-    func handleConfirmImportTableCancel() {
-        confirmImportTableURL = nil
-    }
-
-    func handleShowSettings(section: String? = nil) {
-        settingsSection = section
-
-        showSettings = true
-    }
-
-    func handleTableViewMode() {
-        vpinballManager.saveValue(.standalone, "TableViewMode", tableViewMode.rawValue)
-    }
-
-    func handleTableGridSize() {
-        vpinballManager.saveValue(.standalone, "TableGridSize", tableGridSize.rawValue)
-    }
-
-    func handleTableListSortOrder() {
-        vpinballManager.saveValue(.standalone, "TableListSort", tableListSortOrder == .forward ? 1 : 0)
-    }
-
-    func handleShowImportTable() {
-        showImportTable = true
-    }
-
-    func handleImportTableFromAssets(_ name: String) {
-        handleShowConfirmImportTable(url: Bundle.main.url(forResource: "assets/\(name)",
-                                                          withExtension: "vpx"))
-    }
-
-    func handleImportTable(url: URL?) {
-        if let url = url {
-            Task {
-                let scopedResource = url.startAccessingSecurityScopedResource()
-
-                _ = await tableManager.importTable(from: url)
-
-                if scopedResource {
-                    url.stopAccessingSecurityScopedResource()
-                }
+        .onChange(of: vpinballModel.tables) {
+            if vpinballModel.tables.isEmpty {
+                mainViewModel.tableListSearchText = ""
+                dismissSearch()
             }
         }
-    }
-
-    func handleLearnMore(link: Link) {
-        link.open()
-    }
-
-    func handleTables() {
-        if tableManager.tables.isEmpty {
-            tableListSearchText = ""
-            dismissSearch()
-        }
-    }
-
-    func handleAction() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                        to: nil,
-                                        from: nil,
-                                        for: nil)
-
-        selectedTable = vpinballViewModel.table
-
-        switch vpinballViewModel.action {
-        case .play:
-            handlePlayTable()
-        case .rename:
-            handleShowRenameTable()
-        case .tableImage:
-            handleShowTableImage()
-        case .viewScript:
-            handleViewTableScript()
-        case .share:
-            handleShareTable()
-        case .reset:
-            handleResetTable()
-        case .delete:
-            handleDeleteTable()
-        case .stopped:
-            handleTableStopped()
-        case .showError:
-            if let scriptError = vpinballViewModel.scriptError {
-                handleShowError(message: scriptError)
-            }
-        default:
-            break
-        }
-    }
-
-    func handleShowRenameTable() {
-        if let selectedTable = selectedTable {
-            renameTableName = selectedTable.name
-            showRenameTable = true
-            tableListScrollToTable = nil
-        }
-    }
-
-    func handleRenameTable() {
-        if let selectedTable = selectedTable {
-            Task {
-                _ = await tableManager.renameTable(table: selectedTable,
-                                                   newName: renameTableName)
-                tableListScrollToTable = selectedTable
-            }
-        }
-    }
-
-    func handleShowTableImage() {
-        tableImagePhotoItem = nil
-        showTableImage = true
-    }
-
-    func handleShowTableImagePhotoPicker() {
-        showTableImagePhotoPicker = true
-    }
-
-    func handleTableImagePhotoItem() {
-        if let selectedTable = selectedTable {
-            if let item = tableImagePhotoItem {
-                item.loadTransferable(type: Data.self) { result in
-                    switch result {
-                    case let .success(data?):
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            if let image = UIImage(data: data) {
-                                Task {
-                                    await tableManager.setTableImage(table: selectedTable,
-                                                                     image: image)
-                                }
-                            } else {
-                                Task {
-                                    await tableManager.setTableImage(table: selectedTable,
-                                                                     imagePath: "")
-                                }
-                            }
-                        }
-                    default:
-                        break
-                    }
-                }
-            }
-        }
-    }
-
-    func handleTableImageReset() {
-        if let selectedTable = selectedTable {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                Task {
-                    await tableManager.setTableImage(table: selectedTable,
-                                                     imagePath: "")
-                }
-            }
-        }
-    }
-
-    func handleViewTableScript() {
-        if let selectedTable = selectedTable {
-            if selectedTable.hasScriptFile() {
-                showScript = true
-            } else {
-                Task {
-                    if await tableManager.extractTableScript(table: selectedTable) {
-                        showScript = true
-                    } else {
-                        handleShowError(message: "Unable to extract script")
-                    }
-                }
-            }
-        }
-    }
-
-    func handleShareTable() {
-        if let selectedTable = selectedTable {
-            Task {
-                if let path = await tableManager.exportTable(table: selectedTable) {
-                    shareItems = [URL(fileURLWithPath: path)]
-                    showShare = true
-                }
-            }
-        }
-    }
-
-    func handleResetTable() {
-        if let selectedTable = selectedTable {
-            _ = tableManager.resetTableIni(table: selectedTable)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                tableListScrollToTable = selectedTable
-            }
-        }
-    }
-
-    func handleDeleteTable() {
-        if let selectedTable = selectedTable {
-            Task {
-                await tableManager.deleteTable(table: selectedTable)
-            }
-        }
-    }
-
-    func handlePlayTable() {
-        if vpinballManager.activeTable != nil {
-            return
-        }
-
-        if let selectedTable = selectedTable {
-            Task {
-                if await vpinballManager.play(table: selectedTable) != true {
-                    handleShowError(message: vpinballViewModel.scriptError ?? "Unable to load table")
-                }
-            }
-        }
-    }
-
-    func handleTableStopped() {
-        if let scriptError = vpinballViewModel.scriptError {
-            handleShowError(message: scriptError)
-        }
-    }
-
-    func handleShowError(message: String) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            errorMessage = message
-            showError = true
+        .onChange(of: mainViewModel.tableImagePhotoItem) {
+            mainViewModel.handleTableImagePhotoItem()
         }
     }
 }

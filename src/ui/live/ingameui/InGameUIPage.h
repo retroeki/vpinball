@@ -3,6 +3,9 @@
 #pragma once
 
 #include "InGameUIItem.h"
+#include "imgui/imgui.h"
+
+class Player;
 
 namespace VPX::InGameUI
 {
@@ -13,11 +16,11 @@ public:
    enum class SaveMode { None, Global, Table, Both };
 
    InGameUIPage(const string& title, const string& info, SaveMode saveMode);
+   virtual ~InGameUIPage() = default;
 
    Settings& GetSettings();
 
-   void ClearItems();
-   void AddItem(std::unique_ptr<InGameUIItem> item);
+   InGameUIItem& AddItem(std::unique_ptr<InGameUIItem> item);
 
    virtual void Open(bool isBackwardAnimation);
    virtual void Close(bool isBackwardAnimation);
@@ -38,6 +41,7 @@ public:
    bool IsAdjustable() const;
    virtual bool IsDefaults() const;
    virtual bool IsModified() const;
+   virtual bool IsFlipperNavNeeded() const { return false; }
 
    InGameUIItem* GetItem(const string& label) const;
 
@@ -50,10 +54,17 @@ public:
 
    Player* const m_player;
 
+   void RequestRebuild() { m_needsRebuild = true; }
+   virtual void BuildPage() = 0;
+
 private:
    const string m_title;
    const string m_info;
    const SaveMode m_saveMode;
+
+   bool m_needsRebuild = true;
+   bool m_isBuildingPage = false;
+   void ClearItems();
 
    // Open/Close animations
    // -1.f = closed, 0.f = opened, 1.f = appearing
@@ -70,6 +81,9 @@ private:
    uint32_t m_pressStartMs = 0;
    string m_pressedItemLabel;
    float m_pressedItemScroll = 0.f;
+   bool m_isDraggingScroll = false;
+   float m_dragScrollVelocity = 0.f; // px/s, positive = scroll down
+   ImVec2 m_dragScrollStartPos = ImVec2(0.f, 0.f);
    vector<std::unique_ptr<InGameUIItem>> m_items;
    int m_selectedItem = 0;
    unsigned int m_resetNotifId = 0;

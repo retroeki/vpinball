@@ -36,7 +36,7 @@
 //
 // To avoid message collision, each message is defined by a unique name in a 'namespace'
 // which is expected to be unique for each host/plugin. MsgId are allocated/retrieved
-// by using GetMsgID. If not needed anymore, host/plugin should call 'ReleaseMsgID' to
+// by using 'GetMsgID'. If not needed anymore, host/plugin must call 'ReleaseMsgID' to
 // avoid reaching the implementation dependent message limits.
 //
 // Plugins are instantiated on a thread selected by the host which may or may not be 
@@ -57,7 +57,21 @@
 // to the user as well as path for the native builds of the plugins for each supported platform.
 // Then, the plugin will be available for the end user to enable it from the host application.
 // 
+// When plugins are unloaded, they must clean up after them:
+// - ensure 'UnsubscribeMsg' has been called for each 'SubscribeMsg'
+// - stop submitting runnables to 'RunOnMainThread', then call 'FlushPendingCallbacks'
+//   which will ensure all previously submitted callback are ran in an order corresponding 
+//   to their submission timing parameters.
+// - ensure 'ReleaseMsgID' has been called for each 'GetMsgID'
+//
 // This header is a common header to be used both by host and plugins.
+//
+// Two conventions are used to avoid discrepancies between provider & consumer message formats:
+// - Messages ends by a version marker 'xxx:1', a new version with a new behavior/message format /...
+//   must change its version marker to avoid old plugins to wrongly interpret & likely crash.
+// - Messages that provide a structure that may be expanded, like an API dispatch table
+//   that may be extended with new API entry point, should include a version number and
+//   increase it accordingly.
 
 
 #if defined(_MSC_VER)
@@ -95,8 +109,8 @@
 #endif
 
 // Callbacks
-typedef void (*msgpi_msg_callback)(const unsigned int msgId, void* context, void* msgData);
-typedef void (*msgpi_timer_callback)(void* userData);
+typedef void(MSGPIAPI* msgpi_msg_callback)(const unsigned int msgId, void* context, void* msgData);
+typedef void(MSGPIAPI* msgpi_timer_callback)(void* userData);
 
 typedef struct MsgEndpointInfo
 {
@@ -170,7 +184,7 @@ typedef struct MsgSettingDef
    static float varName##_Val; \
    static float varName##_Get() { return varName##_Val; } \
    static void varName##_Set(float v) { varName##_Val = v; } \
-   static MsgSettingDef varName { .propId = id, .name = propName, .description = propDescription, .isUserEditable = propEditable ? 1 : 0, .type = MSGPI_SETTING_TYPE_FLOAT, .intDef = { minValue, maxValue, stepVal, defValue, &varName##_Get, &varName##_Set } }
+   static MsgSettingDef varName { .propId = id, .name = propName, .description = propDescription, .isUserEditable = propEditable ? 1 : 0, .type = MSGPI_SETTING_TYPE_FLOAT, .floatDef = { minValue, maxValue, stepVal, defValue, &varName##_Get, &varName##_Set } }
 #define MSGPI_INT_VAL_SETTING(varName, id, propName, propDescription, propEditable, minValue, maxValue, defValue) \
    static int varName##_Val; \
    static int varName##_Get() { return varName##_Val; } \
@@ -187,30 +201,36 @@ typedef struct MsgSettingDef
    static void varName##_Set(int v) { varName##_Val = v; } \
    static MsgSettingDef varName { .propId=id, .name=propName, .description=propDescription, .isUserEditable=propEditable?1:0, .type=MSGPI_SETTING_TYPE_BOOL, .boolDef = { defValue?1:0, &varName##_Get, &varName##_Set } }
 #define MSGPI_STRING_VAL_SETTING(varName, id, propName, propDescription, propEditable, defValue, bufferSize) \
-   static char* varName##_Val = new char[bufferSize]; \
+   static char varName##_Val[bufferSize]; \
    static const char* varName##_Get() { return varName##_Val; } \
    static void varName##_Set(const char* v) { snprintf(varName##_Val, bufferSize, "%s", v); } \
    static MsgSettingDef varName { .propId=id, .name=propName, .description=propDescription, .isUserEditable=propEditable?1:0, .type=MSGPI_SETTING_TYPE_STRING, .stringDef = { defValue, &varName##_Get, &varName##_Set } }
 
 #define MSGPI_NAMESPACE                  "MsgPlugin"
-#define MSGPI_EVT_ON_PLUGIN_LOADED       "OnPluginLoaded"       // Broadcasted when a plugin is loaded
-#define MSGPI_EVT_ON_PLUGIN_UNLOADED     "OnPluginUnloaded"     // Broadcasted when a plugin is unloaded
+#define MSGPI_EVT_ON_PLUGIN_LOADED       "OnPluginLoaded:1"       // Broadcasted when a plugin is loaded
+#define MSGPI_EVT_ON_PLUGIN_UNLOADED     "OnPluginUnloaded:1"     // Broadcasted when a plugin is unloaded
 
 
 typedef struct MsgPluginAPI
 {
+   int version; // Must be 1. Included to allow extending the API with new functions at a later point in time
+   
    // Messaging
    unsigned int(MSGPIAPI* GetPluginEndpoint)(const char* id);
    void(MSGPIAPI* GetEndpointInfo)(const uint32_t endpointId, MsgEndpointInfo* info);
    unsigned int (MSGPIAPI* GetMsgID)(const char* name_space, const char* name);
    void (MSGPIAPI *SubscribeMsg)(const uint32_t endpointId, const unsigned int msgId, const msgpi_msg_callback callback, void* userData);
-   void (MSGPIAPI *UnsubscribeMsg)(const unsigned int msgId, const msgpi_msg_callback callback);
+   void (MSGPIAPI *UnsubscribeMsg)(const unsigned int msgId, const msgpi_msg_callback callback, void* userData);
    void (MSGPIAPI* BroadcastMsg)(const uint32_t endpointId, const unsigned int msgId, void* data);
    void (MSGPIAPI* SendMsg)(const uint32_t endpointId, const unsigned int msgId, const uint32_t targetEndpointId, void* data);
    void (MSGPIAPI* ReleaseMsgID)(const unsigned int msgId);
+   
    // Setting
    void(MSGPIAPI* RegisterSetting)(const uint32_t endpointId, MsgSettingDef* settingDef); // Register a setting that the host will initialize either from a previously persisted value or the default
    void(MSGPIAPI* SaveSetting)(const uint32_t endpointId, MsgSettingDef* settingDef); // Request the host to persist a setting
+   
    // Threading
-   void (MSGPIAPI *RunOnMainThread)(const double delayInS, const msgpi_timer_callback callback, void* userData);
+   void (MSGPIAPI *RunOnMainThread)(const uint32_t endpointId, const double delayInS, const msgpi_timer_callback callback, void* userData);
+   void (MSGPIAPI *FlushPendingCallbacks)(const uint32_t endpointId);
+   
 } MsgPluginAPI;

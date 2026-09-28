@@ -22,21 +22,32 @@ public:
    void Update();
    void Close();
 
-   void AddPage(const string &path, std::function<std::unique_ptr<InGameUIPage>()> pageFactory);
+   bool ProposeInputLayout(const string& deviceName, const std::function<void(bool, bool)>& handler);
+
+   void AddPage(const string &path, const std::function<std::unique_ptr<InGameUIPage>()>& pageFactory);
    void Navigate(const string &path, bool isBack = false);
    void NavigateBack();
 
    bool IsFlipperNav() const { return m_useFlipperNav; }
+   void OnUIUpAction();
+   void OnUIDownAction();
+   void OnUILeftAction();
+   void OnUIRightAction();
+   void OnUIResetToDefaults();
+   void OnUICancelChanges();
+   void OnUISaveChanges();
+   void OnUINavigateBack();
 
 private:
-   void HandlePageInput(const InputManager::ActionState &state);
-   void HandleLegacyFlyOver(const InputManager::ActionState &state);
+   void HandlePageInput();
+   void HandleLegacyFlyOver();
    InGameUIPage* GetActivePage() const { return m_activePages.empty() ? nullptr : m_activePages.back().get(); }
 
    Player *m_player;
    ImVec2 m_prevMousePos;
    bool m_useFlipperNav = false;
-   InputManager::ActionState m_prevActionState { };
+   int m_flipperNavRepeatCount = 0;
+   uint32_t m_flipperNavStart = 0;
    ankerl::unordered_dense::map<string, std::function<std::unique_ptr<InGameUIPage>()>> m_pages;
    vector<string> m_navigationHistory;
    vector<std::unique_ptr<InGameUIPage>> m_activePages;

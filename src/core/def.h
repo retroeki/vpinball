@@ -2,18 +2,24 @@
 
 #pragma once
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <cstdint>
 #include <algorithm>
 #include <charconv>
+#include <filesystem>
 
 #include <vector>
 using std::vector;
 
 #include <string>
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 using std::string;
 using std::wstring;
 
@@ -33,6 +39,20 @@ using std::wstring;
 #endif
 #ifdef max
 #undef max
+#endif
+
+// MinGW's filesystem::path validates UTF-8 and throws on invalid sequences.
+// VPX files may store paths as legacy ANSI. Try UTF-8 first, fall back to
+// Latin-1 (1:1 byte-to-wchar widening) which doesn't need codepage support.
+#ifdef __MINGW32__
+inline std::filesystem::path PathFromString(const std::string& s)
+{
+   int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.c_str(), -1, nullptr, 0);
+   if (len > 0) { std::wstring ws(len - 1, L'\0'); MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len); return ws; }
+   return std::wstring(s.begin(), s.end());
+}
+#else
+inline std::filesystem::path PathFromString(const std::string& s) { return s; }
 #endif
 
 #ifdef __STANDALONE__
@@ -169,19 +189,16 @@ constexpr __forceinline T smoothstep(const T edge0, const T edge1, T x)
 template <typename T>
 inline void RemoveFromVectorSingle(vector<T>& v, const T& val)
 {
-   typename vector<T>::const_iterator it = std::find(v.begin(), v.end(), val);
-   if (it != v.end())
+   if (auto it = std::ranges::find(v, val); it != v.end())
       v.erase(it);
 }
 
 template <typename T>
 inline int FindIndexOf(const vector<T>& v, const T& val)
 {
-   typename vector<T>::const_iterator it = std::find(v.begin(), v.end(), val);
-   if (it != v.end())
-      return (int)(it - v.begin());
-   else
-      return -1;
+   if (auto it = std::ranges::find(v, val); it != v.end())
+      return static_cast<int>(it - v.begin());
+   return -1;
 }
 
 #ifndef __STANDALONE__
@@ -193,14 +210,86 @@ inline int FindIndexOf(const vector<T>& v, const T& val)
 
 #define CCO(x) CComObject<x>
 
+void ShowError(const char* const sz);
+inline void ShowError(const string& sz) { ShowError(sz.c_str()); }
+
+enum class MsgSeverity
+{
+   Info,
+   Warning,
+   Error,
+   Fatal // Error reported while the application is terminating
+};
+
+// Interface implemented by the UI layer owning the current execution context to route
+// messages to the user (Win32 dialogs for the editor, in-game overlay for the player).
+// When no sink is installed (tests, command line tools, early initialization), messages are only logged.
+class UserMessageSink
+{
+public:
+   virtual ~UserMessageSink() = default;
+
+   virtual void Notify(MsgSeverity severity, const string& title, const string& message) = 0;
+   virtual bool Confirm(const string& title, const string& message, bool fallback) { return fallback; }
+};
+
+// Sets the sink receiving user messages, returning the previously installed one (nullptr = only log messages)
+UserMessageSink* SetUserMessageSink(UserMessageSink* sink);
+
+// RAII helper to temporarily install a message sink, restoring the previous one on destruction
+class ScopedUserMessageSink final
+{
+public:
+   explicit ScopedUserMessageSink(UserMessageSink* sink)
+      : m_previous(SetUserMessageSink(sink))
+   {
+   }
+   ~ScopedUserMessageSink() { SetUserMessageSink(m_previous); }
+   ScopedUserMessageSink(const ScopedUserMessageSink&) = delete;
+   ScopedUserMessageSink& operator=(const ScopedUserMessageSink&) = delete;
+
+private:
+   UserMessageSink* const m_previous;
+};
+
+void ShowMessage(MsgSeverity severity, const string& message, const string& title = string());
+void ShowFatalError(const string& message);
+
+// Asks the user a yes/no question through the installed message sink, returning 'fallback'
+// when no sink is installed (tests, command line tools, early initialization).
+bool AskUser(const string& question, const string& title = "Visual Pinball"s, bool fallback = false);
+
+#ifndef __STANDALONE__
+// Reports messages through a Win32 message box, optionally parented to the given window
+class Win32DialogSink final : public UserMessageSink
+{
+public:
+   explicit Win32DialogSink(HWND parent = nullptr)
+      : m_parent(parent)
+   {
+   }
+   void Notify(MsgSeverity severity, const string& title, const string& message) override;
+   bool Confirm(const string& title, const string& message, bool fallback) override;
+
+private:
+   const HWND m_parent;
+};
+#endif
+
 #define SAFE_VECTOR_DELETE(p)   { delete [] (p);  (p)=nullptr; }
 #define SAFE_DELETE(p)          { delete (p);     (p)=nullptr; }
 
 inline void ref_count_trigger(const ULONG r, const char *file, const int line) // helper for debugging
 {
 #ifdef DEBUG_REFCOUNT_TRIGGER
-   /*g_pvp->*/MessageBox(nullptr, ("Ref Count: "+std::to_string(r)+" at "+file+':'+std::to_string(line)).c_str(), "Error", MB_OK | MB_ICONEXCLAMATION);
+   ShowError("Ref Count: "+std::to_string(r)+" at "+file+':'+std::to_string(line));
 #endif
+}
+
+template <class T> inline ULONG GetRefCount(T& obj)
+{
+   assert(obj->AddRef() > 1); // Assert as the object is supposed to have at least one owner beside us (otherwise it will get deleted in the release call below)
+   return obj->Release();
 }
 
 #define SAFE_RELEASE(p)			{ if(p) { const ULONG rcc = (p)->Release(); if(rcc != 0) ref_count_trigger(rcc, __FILE__, __LINE__); (p)=nullptr; } }
@@ -208,8 +297,6 @@ inline void ref_count_trigger(const ULONG r, const char *file, const int line) /
 #define SAFE_RELEASE_NO_CHECK_NO_SET(p)	{ const ULONG rcc = (p)->Release(); if(rcc != 0) ref_count_trigger(rcc, __FILE__, __LINE__); }
 #define SAFE_RELEASE_NO_RCC(p)	{ if(p) { (p)->Release(); (p)=nullptr; } } // use for releasing things like surfaces gotten from GetSurfaceLevel (that seem to "share" the refcount with the underlying texture)
 #define FORCE_RELEASE(p)		{ if(p) { ULONG rcc = 1; while(rcc!=0) {rcc = (p)->Release();} (p)=nullptr; } } // release all references until it is 0
-
-#define hrNotImplemented ResultFromScode(E_NOTIMPL)
 
 enum SaveDirtyState
 {
@@ -271,7 +358,7 @@ class LocalStringW final
 public:
    LocalStringW(const int resid);
 
-   WCHAR m_szbuffer[256]; // max size would be 4096
+   wstring m_buffer;
 };
 
 #ifndef M_PI
@@ -307,7 +394,7 @@ static const string platform_cpu[2] = { "x86"s, "arm"s };
 #endif
 static const string platform_bits[2] = { "32"s, "64"s };
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__MINGW32__)
  #define GET_PLATFORM_OS_ENUM 0
  #define GET_PLATFORM_OS "windows"
 #elif defined(__ANDROID__) // leave here, as it also defines linux
@@ -341,11 +428,6 @@ static const string platform_os[6] = { "windows"s, "android"s, "linux"s, "ios"s,
  #define GET_PLATFORM_RENDERER "dx"
 #endif
 static const string platform_renderer[3] = { "dx"s, "gl"s, "bgfx"s };
-
-#if !defined(EXT_CAPTURE) && !defined(__STANDALONE__) && defined(ENABLE_OPENGL)
-// External captures for VR is a hack, only available for the full windows build using OpenGL
-#define EXT_CAPTURE
-#endif
 
 
 #ifdef ENABLE_SSE_OPTIMIZATIONS
@@ -395,6 +477,7 @@ __forceinline __m128 sseHorizontalMax(const __m128 &a)
 
 #ifndef __clang__
   #include <bit>
+  #define double_as_int64(x) std::bit_cast<int64_t>(x)
   #define float_as_int(x) std::bit_cast<int32_t>(x)
   #define float_as_uint(x) std::bit_cast<uint32_t>(x)
   #define half_as_short(x) std::bit_cast<int16_t>(x)
@@ -404,6 +487,7 @@ __forceinline __m128 sseHorizontalMax(const __m128 &a)
   #define short_as_half(x) std::bit_cast<_Float16>(x)
   #define ushort_as_half(x) std::bit_cast<_Float16>(x)
 #else // for whatever reason apple/clang is special again
+  #define double_as_int64(x) __builtin_bit_cast(int64_t, x)
   #define float_as_int(x) __builtin_bit_cast(int32_t, x)
   #define float_as_uint(x) __builtin_bit_cast(uint32_t, x)
   #define half_as_short(x) __builtin_bit_cast(int16_t, x)
@@ -417,6 +501,10 @@ __forceinline __m128 sseHorizontalMax(const __m128 &a)
 constexpr __forceinline bool infNaN(const float a)
 {
    return ((float_as_int(a) & 0x7F800000) == 0x7F800000);
+}
+constexpr __forceinline bool infNaN(const double a)
+{
+   return ((double_as_int64(a) & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL);
 }
 
 constexpr __forceinline bool inf(const float a)
@@ -464,6 +552,15 @@ __forceinline unsigned int swap_byteorder(unsigned int x)
 #endif
 }
 
+constexpr __forceinline float map_u32_to_unifloat(const unsigned int u) // places all the bits of an (equidistant) u32 number exactly into the matching f32 slots/ranges. For all fp numbers >=1/256 there will be duplicates, but there is no way around that, as not all 32bits can fit perfectly by design (23bit mantissa per exponent)
+{
+#if 0 // platforms that offer a single-op rounding towards 0 (or neginf) could use this:
+    return __uint2float_rz(u) * 2.3283064365386962890625e-10f; // 0x1p-32
+#else
+    return static_cast<float>(u & ~(u >> 24)) * 2.3283064365386962890625e-10f; // 0x1p-32
+#endif
+}
+
 #if 0
 //
 // TinyMT64 for random numbers (much better than rand())
@@ -498,7 +595,7 @@ inline uint64_t tinymtu(uint64_t state[2]) {
 
 extern uint64_t tinymt64state[2];
 
-__forceinline float rand_mt_01()  { return (float)(tinymtu(tinymt64state) >> (64-24)) * 0.000000059604644775390625f; } // [0..1)
+__forceinline float rand_mt_01()  { return map_u32_to_unifloat(tinymtu(tinymt64state) >> 32); } // [0..1)
 __forceinline float rand_mt_m11() { return (float)((int64_t)tinymtu(tinymt64state) >> (64-25)) * 0.000000059604644775390625f; } // [-1..1)
 
 #else
@@ -516,7 +613,7 @@ constexpr __forceinline unsigned int mwc64x(uint64_t& s)
    return x ^ c;
 }
 
-__forceinline float rand_mt_01()  { return (float)(mwc64x(mwc64x_state) >> (32-24)) * 0.000000059604644775390625f; } // [0..1)
+__forceinline float rand_mt_01()  { return map_u32_to_unifloat(mwc64x(mwc64x_state)); } // [0..1)
 __forceinline float rand_mt_m11() { return (float)((int)mwc64x(mwc64x_state) >> (32-25)) * 0.000000059604644775390625f; } // [-1..1)
 #endif
 
@@ -526,11 +623,11 @@ __forceinline float rand_mt_m11() { return (float)((int)mwc64x(mwc64x_state) >> 
 __forceinline float radical_inverse(unsigned int i)
 {
 #if (defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(_MSC_VER)
-   return (float)(__rbit(i) >> 8) * 0.000000059604644775390625f;
+   return map_u32_to_unifloat(__rbit(i));
 #elif (defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(__clang__) //!! gcc does not have an intrinsic yet
-   return (float)(__builtin_arm_rbit(i) >> 8) * 0.000000059604644775390625f;
+   return map_u32_to_unifloat(__builtin_arm_rbit(i));
 #elif defined(__clang__)
-   return (float)(__builtin_bitreverse32(i) >> 8) * 0.000000059604644775390625f;
+   return map_u32_to_unifloat(__builtin_bitreverse32(i));
 #else
    /*v = (v << 16) | (v >> 16);
    v = ((v & 0x55555555u) << 1) | ((v & 0xAAAAAAAAu) >> 1);
@@ -551,7 +648,7 @@ __forceinline float radical_inverse(unsigned int i)
    i = _rotr(i & 0x66666666u, 4) | (i & 0x99999999u);
    i = _rotr(i & 0x1e1e1e1eu, 8) | (i & 0xe1e1e1e1u);
    i = _rotl(i, 7);
-   return (float)(swap_byteorder(i) >> 8) * 0.000000059604644775390625f;
+   return map_u32_to_unifloat(swap_byteorder(i));
 #endif
 }
 
@@ -575,20 +672,29 @@ constexpr __forceinline float sobol(unsigned int i, unsigned int scramble = 0)
    for (unsigned int v = 1u << 31; (i != 0); i >>= 1, v ^= v >> 1) if (i & 1)
       scramble ^= v;
 
-   return (float)(scramble >> 8) * 0.000000059604644775390625f;
+   return map_u32_to_unifloat(scramble);
 }
 
 //
 
-// Conversions to/from VP units (50 VPU = 1.0625 inches which is 1"1/16, the default size of a ball, 1 inch is 2.54cm)
+// Conversions to/from VP length units (50 VPU = 1.0625 inches which is 1"1/16, the default size of a ball, 1 inch is 2.54cm)
 // These value are very slightly off from original values which used a VPU to MM of 0.540425 instead of 0.53975 (result of the following formula)
 // So it used to be 0.125% larger which is not noticeable but makes it difficult to have perfect matches when playing between apps
-#define MMTOVPU(x) ((x) * (float)(50. / (25.4 * 1.0625)))
-#define CMTOVPU(x) ((x) * (float)(50. / (2.54 * 1.0625)))
-#define VPUTOMM(x) ((x) * (float)(25.4 * 1.0625 / 50.))
-#define VPUTOCM(x) ((x) * (float)(2.54 * 1.0625 / 50.))
+#define MMTOVPU(x)     ((x) * (float)(50. / (25.4 * 1.0625)))
+#define CMTOVPU(x)     ((x) * (float)(50. / (2.54 * 1.0625)))
+#define MTOVPU(x)      ((x) * (float)(50. / (0.0254 * 1.0625)))
+#define VPUTOMM(x)     ((x) * (float)(25.4 * 1.0625 / 50.))
+#define VPUTOCM(x)     ((x) * (float)(2.54 * 1.0625 / 50.))
+#define VPUTOM(x)      ((x) * (float)(0.0254 * 1.0625 / 50.))
 #define INCHESTOVPU(x) ((x) * (float)(50. / 1.0625))
 #define VPUTOINCHES(x) ((x) * (float)(1.0625 / 50.))
+
+// Conversions to/from VP time units  (1 VPT = 10ms)
+#define STOVPT(x) ((x) * 0.01f)
+#define VPTTOS(x) ((x) / 0.01f)
+#define MS2TOVPUVPT2(x) (MTOVPU(x) * STOVPT(STOVPT(1.0f))) // m/s^2 to VPU/VPT^2
+#define VPUVPT2TOMS2(x) (VPUTOM(x) * VPTTOS(VPTTOS(1.0f))) // VPU/VPT^2 to m/s^2
+
 
 constexpr __forceinline float vpUnitsToInches(const float value) {
    return VPUTOINCHES(value);
@@ -617,94 +723,150 @@ string convert_decimal_point_and_trim(string sz, const bool use_locale);
 
 float sz2f(string sz, const bool force_convert_decimal_point = false);
 string f2sz(const float f, const bool can_convert_decimal_point = true);
-
-HRESULT OpenURL(const string& szURL);
+wstring f2wz(const float f, const bool can_convert_decimal_point = true);
 
 string SizeToReadable(const size_t bytes);
 
-WCHAR* MakeWide(const char* const sz);
 #ifndef MINIMAL_DEF_H
-BSTR MakeWideBSTR(const string& sz);
+BSTR MakeWideBSTR(const string& sz, const UINT codepage = CP_ACP);
+BSTR MakeWideBSTR(const wstring& wz);
 #endif
-WCHAR* MakeWide(const string& sz);
-char *MakeChar(const WCHAR* const wz);
-string MakeString(const wstring& wz);
-string MakeString(const WCHAR* const wz);
+WCHAR* MakeWide(const string& sz, const UINT codepage = CP_ACP);
+string MakeString(const wstring& wz, const UINT codepage = CP_ACP);
+string MakeString(const WCHAR* const wz, const UINT codepage = CP_ACP);
 #ifndef MINIMAL_DEF_H
-string MakeString(const BSTR wz);
+string MakeString(const BSTR wz, const UINT codepage = CP_ACP);
 #endif
-wstring MakeWString(const string& sz);
-wstring MakeWString(const char* const sz);
+wstring MakeWString(const string& sz, const UINT codepage = CP_ACP);
+wstring MakeWString(const char* const sz, const UINT codepage = CP_ACP);
 
 // in case the incoming string length is >= the maximum char length of the outgoing one, WideCharToMultiByte will not produce a zero terminated string
 // this variant always makes sure that the outgoing string is zero terminated
 inline int WideCharToMultiByteNull(
-    const uint32_t CodePage,
-    const uint32_t dwFlags,
-    LPCWSTR        lpWideCharStr,
-    const int      cchWideChar,
-    char*          lpMultiByteStr,
-    const int      cbMultiByte,
-    const char*    lpDefaultChar,
-    BOOL*          lpUsedDefaultChar)
+   const uint32_t CodePage,
+   const uint32_t dwFlags,
+   LPCWSTR        lpWideCharStr,
+   const int      cchWideChar,
+   char*          lpMultiByteStr,
+   const int      cbMultiByte,
+   const char*    lpDefaultChar,
+   BOOL*          lpUsedDefaultChar)
 {
-    const int res = WideCharToMultiByte(CodePage,dwFlags,lpWideCharStr,cchWideChar,lpMultiByteStr,cbMultiByte,lpDefaultChar,lpUsedDefaultChar);
-    if(cbMultiByte > 0 && lpMultiByteStr)
-        lpMultiByteStr[cbMultiByte-1] = '\0';
-    return res;
+   const int res = WideCharToMultiByte(CodePage,dwFlags,lpWideCharStr,cchWideChar,lpMultiByteStr,cbMultiByte,lpDefaultChar,lpUsedDefaultChar);
+   if(cbMultiByte > 0 && lpMultiByteStr)
+      lpMultiByteStr[min(res, cbMultiByte - 1)] = '\0';
+   return res;
 }
 
 
 // in case the incoming string length is >= the maximum wchar length of the outgoing one, MultiByteToWideChar will not produce a zero terminated string
 // this variant always makes sure that the outgoing string is zero terminated
 inline int MultiByteToWideCharNull(
-    const uint32_t CodePage,
-    const uint32_t dwFlags,
-    const char*    lpMultiByteStr,
-    const int      cbMultiByte,
-    LPWSTR         lpWideCharStr,
-    const int      cchWideChar)
+   const uint32_t CodePage,
+   const uint32_t dwFlags,
+   const char*    lpMultiByteStr,
+   const int      cbMultiByte,
+   LPWSTR         lpWideCharStr,
+   const int      cchWideChar)
 {
-    const int res = MultiByteToWideChar(CodePage,dwFlags,lpMultiByteStr,cbMultiByte,lpWideCharStr,cchWideChar);
-    if(cchWideChar > 0 && lpWideCharStr)
-        lpWideCharStr[cchWideChar-1] = L'\0';
-    return res;
+   const int res = MultiByteToWideChar(CodePage,dwFlags,lpMultiByteStr,cbMultiByte,lpWideCharStr,cchWideChar);
+   if(cchWideChar > 0 && lpWideCharStr)
+      lpWideCharStr[min(res, cchWideChar - 1)] = L'\0';
+   return res;
 }
+
+//
+
+// determine what the byte-size of wchar_t is (and so what a wstring contains)
+#if defined(_MSC_VER) || defined(__MINGW32__)
+#define WCHAR_T_SIZE 2
+static_assert(sizeof(WCHAR) == 2, "WCHAR must be 2 bytes, otherwise change WCHAR_T_SIZE define");
+static_assert(sizeof(wchar_t) == 2, "wchar_t must be 2 bytes, otherwise change WCHAR_T_SIZE define");
+#else
+#define WCHAR_T_SIZE __SIZEOF_WCHAR_T__ // should be 4 on gcc/clang/linux/macOS
+static_assert(__SIZEOF_WCHAR_T__ == 4, "__SIZEOF_WCHAR_T__ must be 4 bytes");
+static_assert(sizeof(WCHAR) == 4, "WCHAR must be 4 bytes");
+static_assert(sizeof(wchar_t) == 4, "wchar_t must be 4 bytes");
+static_assert(sizeof(char16_t) == 2, "char16_t must be 2 bytes, otherwise u16string<->wstring conversions must be adapted");
+#endif
+
+#if (WCHAR_T_SIZE == 4)
+inline std::u16string utf32_to_utf16(const std::wstring& input)
+{
+   std::u16string result;
+   result.reserve(input.size());
+   for (wchar_t wc : input)
+   {
+      char32_t code = static_cast<char32_t>(wc);
+      if (code <= 0xFFFF)
+         result.push_back(static_cast<char16_t>(code));
+      else
+      {
+         code -= 0x10000;
+         result.push_back(static_cast<char16_t>((code >> 10) + 0xD800));
+         result.push_back(static_cast<char16_t>((code & 0x3FF) + 0xDC00));
+      }
+   }
+   return result;
+}
+
+inline std::wstring utf16_to_utf32(const std::u16string& input)
+{
+   std::wstring result;
+   result.reserve(input.size()/2);
+   for (size_t i = 0; i < input.size(); ++i)
+   {
+      const char16_t w1 = input[i];
+      if (w1 >= 0xD800 && w1 <= 0xDBFF) // high surrogate
+      {
+         if (i+1 < input.size())
+         {
+            const char16_t w2 = input[++i];
+            const char32_t code = ((static_cast<char32_t>(w1) - 0xD800) << 10) + (static_cast<char32_t>(w2) - 0xDC00) + 0x10000;
+            result.push_back(code);
+         }
+      }
+      else
+         result.push_back(static_cast<char32_t>(w1));
+   }
+   return result;
+}
+#endif
 
 //
 
 constexpr inline char cLower(char c)
 {
-    if (c >= 'A' && c <= 'Z')
-        c ^= 32; //ASCII convention
-    return c;
+   if (c >= 'A' && c <= 'Z')
+      c ^= 32; //ASCII convention
+   return c;
 }
 
 constexpr inline void szLower(char* pC)
 {
-    while (*pC)
-    {
-        if (*pC >= 'A' && *pC <= 'Z')
-            *pC ^= 32; //ASCII convention
-        pC++;
-    }
+   while (*pC)
+   {
+      if (*pC >= 'A' && *pC <= 'Z')
+         *pC ^= 32; //ASCII convention
+      pC++;
+   }
 }
 
 constexpr inline char cUpper(char c)
 {
-    if (c >= 'a' && c <= 'z')
-        c ^= 32; //ASCII convention
-    return c;
+   if (c >= 'a' && c <= 'z')
+      c ^= 32; //ASCII convention
+   return c;
 }
 
 constexpr inline void szUpper(char* pC)
 {
-    while (*pC)
-    {
-        if (*pC >= 'a' && *pC <= 'z')
-            *pC ^= 32; //ASCII convention
-        pC++;
-    }
+   while (*pC)
+   {
+      if (*pC >= 'a' && *pC <= 'z')
+         *pC ^= 32; //ASCII convention
+      pC++;
+   }
 }
 
 CONSTEXPR inline void StrToLower(string& str)
@@ -716,6 +878,9 @@ CONSTEXPR inline void StrToUpper(string& str)
 {
    std::ranges::transform(str.begin(), str.end(), str.begin(), cUpper);
 }
+
+// Sentinel stored in image/sound/material droplist references to mean "no selection".
+inline constexpr char g_szNoneSelection[] = "<None>";
 
 inline bool StrCompareNoCase(const string& strA, const string& strB)
 {
@@ -734,6 +899,12 @@ inline bool StrCompareNoCase(const string& strA, const char* const strB)
 CONSTEXPR inline string lowerCase(string input)
 {
    StrToLower(input);
+   return input;
+}
+
+CONSTEXPR inline wstring lowerCase(wstring input)
+{
+   std::ranges::transform(input.begin(), input.end(), input.begin(), [](wchar_t c) -> wchar_t { return (c >= L'A' && c <= L'Z') ? (c ^ 32) : c; });
    return input;
 }
 
@@ -756,7 +927,7 @@ CONSTEXPR inline size_t StrFindNoCase(const string& strA, const string& strB)
          ++i;
          if (i > strA.length() - strB.length())
             return string::npos;
-         j = 0;
+         j = -1;
       }
    return i;
 }
@@ -799,11 +970,15 @@ template <class T> T GetModulePath(HMODULE hModule) // string or wstring
 #define GetExecutablePathW() GetModulePath<wstring>(nullptr)
 #endif
 
-vector<uint8_t> read_file(const string& filename, const bool binary = true);
+vector<uint8_t> read_file(const std::filesystem::path& filename, const bool binary = true);
 void write_file(const string& filename, const vector<uint8_t>& data, const bool binary = true);
+inline bool DirExists(const std::filesystem::path& dirPath) { return std::filesystem::exists(dirPath) && std::filesystem::is_directory(dirPath); }
+inline bool FileExists(const std::filesystem::path& filePath) { return std::filesystem::exists(filePath) && !std::filesystem::is_directory(filePath); }
+bool IsNetworkPath(const std::filesystem::path& path);
+inline string TitleFromFilename(const std::filesystem::path& filename) { return filename.stem().string(); }
+inline std::filesystem::path PathFromFilename(const std::filesystem::path& filename) { return filename.parent_path(); }
 string normalize_path_separators(const string& szPath);
-string find_case_insensitive_file_path(const string& szPath);
-string find_case_insensitive_directory_path(const string& szPath);
+std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path& searchedFile);
 string extension_from_path(const string& path);
 bool path_has_extension(const string& path, const string& extension);
 inline string trim_string(const string& str)
@@ -822,10 +997,6 @@ inline bool try_parse_int(const string& str, int& value)
    return (std::from_chars(tmp.c_str(), tmp.c_str() + tmp.length(), value).ec == std::errc{});
 }
 bool try_parse_float(const string& str, float& value);
-bool is_string_numeric(const string& str);
-int string_to_int(const string& str, int default_value = 0);
-float string_to_float(const string& str, float default_value = 0.0f);
-vector<string> parse_csv_line(const string& line);
 // copies all characters of src incl. the null-terminator, BUT never more than dest_size-1, always null-terminates
 inline void strncpy_s(char* const __restrict dest, const size_t dest_size, const char* const __restrict src)
 {
@@ -854,34 +1025,25 @@ inline void wcsncpy_s(WCHAR* const __restrict dest, const size_t dest_size, cons
    }
    dest[i] = L'\0';
 }
-bool string_contains_case_insensitive(const string& str1, const string& str2);
-bool string_starts_with_case_insensitive(const string& str, const string& prefix);
 string string_replace_all(const string& szStr, const string& szFrom, const string& szTo, const size_t offs = 0);
 string string_replace_all(const string& szStr, const string& szFrom, const char szTo, const size_t offs = 0);
 string string_replace_all(const string& szStr, const char szFrom, const string& szTo, const size_t offs = 0);
-string create_hex_dump(const uint8_t* buffer, size_t size);
-vector<unsigned char> base64_decode(string encoded_string);
+string string_from_utf8_or_iso8859_1(const char* src, size_t srcSize);
 #ifdef ENABLE_OPENGL
 const char* gl_to_string(GLuint value);
 #endif
 vector<string> add_line_numbers(const char* src);
 
-#ifndef MINIMAL_DEF_H
-bool try_parse_color(const string& str, OLE_COLOR& value);
-string color_to_hex(OLE_COLOR color);
+#if !defined(MINIMAL_DEF_H) && defined(__STANDALONE__)
+// Host-side fallback for CreateObject progids that libwinevbs can't instantiate itself
+// (to be registered as libwinevbs_callbacks_t::create_object)
+HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown** obj);
+#endif
 
-#ifdef __STANDALONE__
-extern "C" HRESULT external_open_storage(const OLECHAR* pwcsName, IStorage* pstgPriority, DWORD grfMode, SNB snbExclude, DWORD reserved, IStorage** ppstgOpen);
-extern "C" HRESULT external_create_object(const WCHAR *progid, IClassFactory* cf, IUnknown* obj);
-extern "C" void external_log_info(const char* format, ...);
-extern "C" void external_log_debug(const char* format, ...);
-extern "C" void external_log_error(const char* format, ...);
 // Script-diagnostic channel switch — enable with env VPX_SCRIPT_DIAG=1.
 // Macros use the `if (!cond) {} else` pattern so they're safe inside an outer
 // `if (X) PLOGI_DIAG << "msg";` — the `else` binds locally, no dangling-else.
-extern "C" int external_diag_enabled(void);
+int external_diag_enabled();
 #define PLOGI_DIAG if (!external_diag_enabled()) {} else PLOGI
 #define PLOGE_DIAG if (!external_diag_enabled()) {} else PLOGE
 #define PLOGW_DIAG if (!external_diag_enabled()) {} else PLOGW
-#endif
-#endif

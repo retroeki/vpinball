@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 #include <functional>
 #include <queue>
 #include <mutex>
@@ -18,13 +19,7 @@ using std::string;
 using std::vector;
 
 struct ProgressData {
-   int progress;
-};
-
-struct RumbleData {
-   uint16_t lowFrequencyRumble;
-   uint16_t highFrequencyRumble;
-   uint32_t durationMs;
+   unsigned int progress;
 };
 
 struct ScriptErrorData {
@@ -69,14 +64,14 @@ public:
    void SetMetalLayer(void* layer) { m_pMetalLayer = layer; }
 #endif
    string GetVersionStringFull() { return VP_VERSION_STRING_FULL_LITERAL; };
-   void Init(VPinballEventCallback callback);
+   void Init(VPinballEventCallback eventCallback, VPinballRumbleCallback rumbleCallback);
    void InitHeadless(VPinballEventCallback callback);  // Init without SDL main thread
    void UpdateEventCallback(VPinballEventCallback callback);  // Update callback without reinit
    void Shutdown();  // Clean up all state for fresh reinit
    bool IsInitialized() const { return m_initialized; }
    static void SendEvent(VPINBALL_EVENT event, void* data);
+   static void PlayRumble(float lowFrequencySpeed, float highFrequencySpeed, unsigned int durationMs);
    void Log(VPINBALL_LOG_LEVEL level, const string& message);
-   void ResetLog();
    int LoadValueInt(const string& sectionName, const string& key, int defaultValue);
    void SaveValueInt(const string& sectionName, const string& key, int value);
    float LoadValueFloat(const string& sectionName, const string& key, float defaultValue);
@@ -89,9 +84,10 @@ public:
    VPINBALL_STATUS ResetTableIni();
    void UpdateWebServer();
    void RefreshWebServer();
+   std::filesystem::path GetPath(VPINBALL_PATH pathType);
    VPINBALL_STATUS LoadTable(const string& tablePath);
    void CancelLoading();
-   VPINBALL_STATUS ExtractTableScript();
+   VPINBALL_STATUS ExtractTableScript(const string& tablePath);
    VPINBALL_STATUS Play();
    VPINBALL_STATUS Stop();
    VPINBALL_STATUS Pause();
@@ -159,13 +155,15 @@ public:
    VPINBALL_STATUS ResetTable();
    void SetGameLoop(std::function<void()> gameLoop) { m_gameLoop = gameLoop; }
 
+   static void SetupStaticPlugins(MsgPI::MsgPluginManager& manager);
+
 private:
    VPinballLib();
    ~VPinballLib();
    VPinballLib(const VPinballLib&) = delete;
    VPinballLib& operator=(const VPinballLib&) = delete;
    void SetEventCallback(VPinballEventCallback callback);
-   static void RegisterStaticPlugins();
+   void SetRumbleCallback(VPinballRumbleCallback callback) { m_rumbleCallback = callback; }
 
    SDL_Window* m_pWindow = nullptr;
 #ifdef __APPLE__
@@ -173,10 +171,12 @@ private:
 #endif
    WebServer m_webServer;
    std::function<void*(VPINBALL_EVENT, void*)> m_eventCallback = nullptr;
+   VPinballRumbleCallback m_rumbleCallback = nullptr;
    std::function<void()> m_gameLoop = nullptr;
    std::queue<SDL_Event> m_eventQueue;
    std::mutex m_eventMutex;
    bool m_captureInProgress = false;
+   CComObject<PinTable>* m_pTable = nullptr;
    bool m_initialized = false;
 
    // ScoreView capture state

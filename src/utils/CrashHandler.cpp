@@ -5,8 +5,7 @@
 #include "MemoryStatus.h"
 #include "StackTrace.h"
 #include <cstdio>
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#include <cstdlib>
 #include <windows.h>
 #include <dbghelp.h>
 #include <cassert>
@@ -272,16 +271,16 @@ namespace
       fprintf(f, "Call stack\n==========\n%s\n", callStack);
    }
 
-   volatile unsigned long s_inFilter = 0;
+   volatile bool s_inFilter = 0;
 
    LONG __stdcall MyExceptionFilter(EXCEPTION_POINTERS* exceptionPtrs)
    {
       constexpr LONG returnCode = EXCEPTION_CONTINUE_SEARCH;
 
       // Ignore multiple calls.
-      if (s_inFilter != 0)
+      if (s_inFilter)
          return EXCEPTION_CONTINUE_EXECUTION;
-      s_inFilter = 1;
+      s_inFilter = true;
 
       // Cannot really do much in case of stack overflow, it'll probably bomb soon 
       // anyway.
@@ -310,6 +309,34 @@ namespace
 
       return returnCode;
    }
+
+#if defined(CRASH_HANDLER) && defined(_MSC_VER)
+   void __cdecl PureCallHandler()
+   {
+      ShowError("Pure Virtual Function Call");
+
+      CONTEXT Context = {};
+#ifdef _WIN64
+      RtlCaptureContext(&Context);
+#else
+      Context.ContextFlags = CONTEXT_CONTROL;
+
+      __asm
+      {
+      Label:
+         mov[Context.Ebp], ebp;
+         mov[Context.Esp], esp;
+         mov eax, [Label];
+         mov[Context.Eip], eax;
+      }
+#endif
+
+      char callStack[2048] = {};
+      rde::StackTrace::GetCallStack(&Context, true, callStack, sizeof(callStack) - 1);
+
+      ShowError(callStack);
+   }
+#endif
 } // namespace
 
 namespace rde
@@ -317,6 +344,13 @@ namespace rde
    void CrashHandler::Init()
    {
       SetUnhandledExceptionFilter(MyExceptionFilter);
+#if defined(__MINGW32__)
+      // Pre-load symbols on the main thread; libbacktrace loads them lazily and that fails inside a crash on another thread.
+      rde::StackTrace::InitSymbols();
+#endif
+#if defined(CRASH_HANDLER) && defined(_MSC_VER)
+      _set_purecall_handler(PureCallHandler);
+#endif
    }
 
    void CrashHandler::SetMiniDumpFileName(const string& name)

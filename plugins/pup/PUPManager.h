@@ -4,7 +4,9 @@
 
 #include "common.h"
 
+#include "plugins/B2SPluginEventStream.h"
 #include "plugins/ControllerPlugin.h"
+#include "plugins/VPXPlugin.h"
 
 #pragma warning(push)
 #pragma warning(disable : 4251) // In PupDMD: std::map<uint16_t,PUPDMD::Hash,std::less<uint16_t>,std::allocator<std::pair<const uint16_t,PUPDMD::Hash>>> needs dll-interface
@@ -19,6 +21,8 @@
 #include <condition_variable>
 
 #include <SDL3_ttf/SDL_ttf.h>
+
+#include "PUPFont.h"
 
 #define PUP_SCREEN_TOPPER             0
 #define PUP_SETTINGS_TOPPERX          320
@@ -57,11 +61,21 @@
 
 namespace PUP {
 
-typedef struct {
-   char type;
-   int number;
-   int value;
-} PUPTriggerData;
+enum class PlayAction : int
+{
+   Normal,           // plays the file until it ends
+   Loop,             // plays the file in a Loop
+   SplashReset,      // meant to be used with a Looping file. If this is triggered while a Looping file is currently playing…then the SplashReset file will play to its end, and then the original Looping file will resume from its beginning (there may be a pause when the Looping file begins again). This can be handy, but you would be better using SetBG in most cases to do something similar.
+   SplashReturn,     // meant to be used with a Looping file. If this is triggered while a Looping file is currently playing…then the SplashReturn file will play to its end, and then the original Looping file will resume from where it left off (there may be a pause when the Looping file begins again). This can be handy, but you would be better using SetBG in most cases to do something similar.
+   StopPlayer,       // will stop whatever file is currently playing. Priority MUST be HIGHER than the file currently playing for this to work!
+   StopFile,         // will stop ONLY the file specified in PlayFile (if it's playing). This has no effect on other files that are playing.
+   SetBG,            // Set Background will set a new default looping "Background" file. When other files are done playing, then this new SetBG file will be played in a loop. Example: This can be handy for setting a new looping "mode" video, so that new other video events during the new mode will fall back to this SetBG video. Then you can change SetBG again to the main game mode video when the mode is completed.
+   PlaySSF,          // used to play WAV files for Surround Sound Feedback. (You don't want these sounds playing from your front / backbox speakers). The settings for the 3D position of the sound files are set in COUNTER. The format is in X,Z,Y. Example: "-2,1,-8". X values range from -10 (left), 0 (center), 10 (right). Z values don't ever change and stay at 1. Y values range from 0 (top), -5 (center), -10 (bottom). NOTE: This currently will only work with the DEFAULT sound card in Windows. Additional sound card / devices are not yet supported!
+   SkipSamePriority, // this will ignore the trigger if the file playing has the same Priority. This is nice for events such as Jackpot videos or others that will play very often, and you don't want to have them constantly interrupting each other. "Normal" PlayAction files with the same Priority will interrupt each other no matter the Rest Seconds. Using SkipSamePri will not play the new file (with the same Priority) if the current file is still playing and allows for smoother non-interruptive action for common events.
+   CustomFunction    // Call a custom function
+};
+
+const string& PlayActionToString(PlayAction value);
 
 class PUPScreen;
 class PUPPlaylist;
@@ -70,94 +84,99 @@ class PUPTrigger;
 class PUPManager final
 {
 public:
-   PUPManager(const MsgPluginAPI* msgApi, uint32_t endpointId, const string& rootPath);
+   PUPManager(const MsgPluginAPI* msgApi, uint32_t endpointId, const std::filesystem::path& rootPath);
    ~PUPManager();
 
    const MsgPluginAPI* GetMsgAPI() const { return m_msgApi; }
-   const string& GetRootPath() const { return m_szRootPath; }
+   const std::filesystem::path& GetRootPath() const { return m_szRootPath; }
 
-   // Lazy-resolve the pupvideos root path next to the current .vpx if it
-   // hasn't been resolved yet. Safe to call any time after the PUPManager
-   // has been created. Used by PUPPinDisplay::GetGetRoot when scripts call
-   // `PuPlayer.GetRoot` before `PuPlayer.B2SInit` (e.g. Terrifier v1.02
-   // which reads GetRoot to build a screens.pup path BEFORE invoking
-   // B2SInit on the next line).
-   void EnsureRootPath();
+   // Locate the 'pupvideos' folder next to the current table. Used by PUPPinDisplay::GetGetRoot
+   // when no pack is loaded and no global root is configured, for scripts that call
+   // `PuPlayer.GetRoot` before `PuPlayer.B2SInit` (e.g. Terrifier v1.02 which reads GetRoot
+   // to build a screens.pup path BEFORE invoking B2SInit on the next line).
+   std::filesystem::path FindTableRootPath() const;
 
+   // Locate the pupvideos folder for a game id (format: ns::rom), searching
+   // each base under an optional intermediate namespace folder first --
+   // base/ns/rom -- then directly -- base/rom.
+   std::filesystem::path FindGameDir(const std::string_view& gameNs, const std::string_view& gameId) const;
+   void SetGameDir(const ControllerDef& controller);
    void SetGameDir(const string& szRomName);
+   void LoadConfig(const ControllerDef& controller);
    void LoadConfig(const string& szRomName);
    void Unload();
-   const string& GetPath() const { return m_szPath; }
+   bool IsRunning() const { return m_B2SPluginEventStream != nullptr; }
+   const std::filesystem::path& GetPath() const { return m_szPath; }
    bool AddScreen(std::shared_ptr<PUPScreen> pScreen);
    bool AddScreen(int screenNum);
    std::shared_ptr<PUPScreen> GetScreen(int screenNum, bool logMissing = false) const;
-   bool AddFont(TTF_Font* pFont, const string& szFilename);
-   TTF_Font* GetFont(const string& szFont);
+   void SendScreenToBack(const PUPScreen* screen);
+   void SendScreenToFront(const PUPScreen* screen);
+   bool AddFont(std::unique_ptr<PUPFont> pFont, const string& szFilename);
+   PUPFont* GetFont(const string& szFont);
    void GetDMDSourceDimensions(int& width, int& height) const;
 
-   void QueueTriggerData(PUPTriggerData data);
+   void QueueDOFEvent(char c, int id, int value);
+
+   void DuckAllExcept(int masterScreenNum, float duckLevel);
+   void Unduck();
 
 private:
-   void ProcessQueue();
+   void ApplyGameDir(const std::filesystem::path& path, const std::string_view& gameId, const ControllerDef& controller);
+   ControllerDef SelectControllerForGame(const std::string_view& gameKey);
    void UnloadFonts();
    void LoadFonts();
    void LoadPlaylists();
    void DetermineScoreViewScreen();
+
    void Start();
    void Stop();
 
-   string m_szRootPath;
-   string m_szPath;
+   float m_mainVolume = 1.f;
+   std::filesystem::path m_szRootPath;
+   std::filesystem::path m_szPath;
+   string m_szRomName;
+   // Controller the event stream is bound to, m_controllerGameId backing its gameId pointer
+   ControllerDef m_controller {};
+   string m_controllerGameId;
+   vector<std::shared_ptr<PUPScreen>> m_screenOrder;
    ankerl::unordered_dense::map<int, std::shared_ptr<PUPScreen>> m_screenMap;
-   vector<TTF_Font*> m_fonts;
-   ankerl::unordered_dense::map<string, TTF_Font*> m_fontMap;
-   ankerl::unordered_dense::map<string, TTF_Font*> m_fontFilenameMap;
-   vector<PUPTriggerData> m_triggerDataQueue;
-   std::mutex m_queueMutex;
-   std::condition_variable m_queueCondVar;
-   bool m_isRunning = false;
-   std::thread m_thread;
+   vector<std::unique_ptr<PUPFont>> m_fonts;
+   ankerl::unordered_dense::map<string, PUPFont*> m_fontMap;
+   ankerl::unordered_dense::map<string, PUPFont*> m_fontFilenameMap;
    vector<PUPPlaylist*> m_playlists;
    int m_scoreViewScreenNum = -1;
 
-   const MsgPluginAPI* const m_msgApi;
    const uint32_t m_endpointId;
-   unsigned int m_getAuxRendererId = 0, m_onAuxRendererChgId = 0;
-   unsigned int m_onDmdSrcChangedId = 0, m_getDmdSrcId = 0;
-   unsigned int m_onDevSrcChangedId = 0, m_getDevSrcId = 0;
-   unsigned int m_onInputSrcChangedId = 0, m_getInputSrcId = 0;
-   unsigned int m_onSerumTriggerId = 0, m_onDmdTriggerId = 0;
-   DevSrcId m_pinmameDevSrc {};
-   unsigned int m_nPMSolenoids = 0;
-   int m_PMGIIndex = -1;
-   unsigned int m_nPMGIs = 0;
-   int m_PMLampIndex = -1;
-   unsigned int m_nPMLamps = 0;
-   InputSrcId m_pinmameInputSrc {};
-   InputSrcId m_b2sInputSrc {};
+   const MsgPluginAPI* const m_msgApi;
+   const VPXPluginAPI* m_vpxApi = nullptr;
 
-   struct PollDmdContext
-   {
-      PollDmdContext(PUPManager* mng) { manager = mng; }
-      bool valid = true;
-      PUPManager* manager;
-   };
-   PollDmdContext* m_pollDmdContext = nullptr;
-   unsigned int m_lastFrameId = 0;
-   DisplaySrcId m_dmdId {};
    std::unique_ptr<PUPDMD::DMD> m_dmd;
-   std::queue<uint8_t*> m_triggerDmdQueue;
-   uint8_t m_rgbFrame[128 * 32 * 3] {};
-   uint8_t m_palette4[4 * 3] {};
-   uint8_t m_palette16[16 * 3] {};
+   // Triggers in the loaded pack that only a DMD frame match can fire, and what
+   // is needed to report once that nothing can fire them.
+   unsigned int m_dmdTriggerCount = 0;
+   bool m_dmdTriggerDataLoaded = false;
+   bool m_reportedMissingIdentification = false;
+   std::array<uint8_t, 128 * 32> m_idFrame;
+   int ProcessDmdFrame(const DisplaySrcId& src, const uint8_t* frame);
    
+   const unsigned int m_getVpxApiId;
+
+   const unsigned int m_getAuxRendererId;
+   const unsigned int m_onAuxRendererChgId;
    static int Render(VPXRenderContext2D* const renderCtx, void* context);
    static void OnGetRenderer(const unsigned int eventId, void* context, void* msgData);
-   static void OnSerumTrigger(const unsigned int eventId, void* userData, void* eventData);
-   static void OnDMDSrcChanged(const unsigned int eventId, void* userData, void* eventData);
-   static void OnDevSrcChanged(const unsigned int eventId, void* userData, void* eventData);
-   static void OnInputSrcChanged(const unsigned int eventId, void* userData, void* eventData);
-   static void OnPollDmd(void* userData);
+
+   const unsigned int m_getAudioSrcId;
+   const unsigned int m_onAudioSrcChangedId;
+   const AudioSrcId m_audioSrcDef;
+   static void OnGetAudioSrc(const unsigned int msgId, void* userData, void* msgData);
+
+   std::mutex m_eventMutex;
+   std::unique_ptr<B2SPluginEventStream> m_B2SPluginEventStream;
+
+   int m_duckMasterScreen = -1;
+   ankerl::unordered_dense::map<int, float> m_preDuckVolumes;
 };
 
 }

@@ -2,14 +2,15 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "utils/eventproxy.h"
+#include "utils/fileio.h"
 #include "timer.h"
 
 class PartGroupData final
 {
 public:
    // Standard properties
-   TimerDataRoot m_tdr;
    Vertex2D m_v;
 
    // PartGroup properties
@@ -38,23 +39,20 @@ class PartGroup :
    public CComObjectRootEx<CComSingleThreadModel>,
    public IDispatchImpl<IPartGroup, &IID_IPartGroup, &LIBID_VPinballLib>,
    //public ISupportErrorInfo,
-   //public CComObjectRoot,
    public CComCoClass<PartGroup, &CLSID_PartGroup>,
    public EventProxy<PartGroup, &DIID_IPartGroupEvents>,
    public IConnectionPointContainerImpl<PartGroup>,
    public IProvideClassInfo2Impl<&CLSID_PartGroup, &DIID_IPartGroupEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
    public IScriptable,
    public IFireEvents,
-   public Hitable,
-   public IPerPropertyBrowsing     // Ability to fill in dropdown(s) in property browser
+   public IPerPropertyBrowsing // Ability to fill in dropdown(s) in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
    PartGroup() { }
@@ -73,16 +71,10 @@ public:
       CONNECTION_POINT_ENTRY(DIID_IPartGroupEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(PartGroup, eItemPartGroup, PARTGROUP, VIEW_PLAYFIELD | VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES_NO_RENDERABLE_NO_HITABLE(PartGroup, eItemPartGroup, PARTGROUP)
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D& offset) final;
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
-
-   void RenderBlueprint(Sur *psur, const bool solid) final;
-
-   ItemTypeEnum HitableGetItemType() const final { return eItemPartGroup; }
 
    void WriteRegDefaults() final;
 
@@ -97,7 +89,4 @@ public:
    PartGroupData::SpaceReference GetReferenceSpace() const;
 
    PartGroupData m_d;
-
-private:
-   PinTable *m_ptable = nullptr;
 };

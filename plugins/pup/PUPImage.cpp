@@ -3,36 +3,64 @@
 #include "PUPImage.h"
 
 #include <SDL3_image/SDL_image.h>
+#include <thread>
 
 namespace PUP {
 
 PUPImage::PUPImage()
    : m_pSurface(nullptr, SDL_DestroySurface)
+   , m_pendingSurface(nullptr, SDL_DestroySurface)
 {
 }
 
 PUPImage::~PUPImage()
 {
+   while (m_loading.load())
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
    if (m_pTexture)
       DeleteTexture(m_pTexture);
 }
 
-void PUPImage::Load(const string& szFile)
+void PUPImage::Clear()
+{
+   m_file.clear();
+   if (m_pTexture) {
+      DeleteTexture(m_pTexture);
+      m_pTexture = nullptr;
+   }
+   m_pSurface.reset();
+   std::lock_guard lock(m_loadMutex);
+   m_pendingSurface.reset();
+   m_transparentRegion.valid = false;
+}
+
+void PUPImage::Load(const std::filesystem::path& szFile)
 {
    m_file = szFile;
-   m_transparentRegion.valid = false;
 
    if (m_pTexture) {
       DeleteTexture(m_pTexture);
       m_pTexture = nullptr;
    }
+   m_pSurface.reset();
+   {
+      std::lock_guard lock(m_loadMutex);
+      m_transparentRegion.valid = false;
+   }
 
-   SDL_Surface* pRawSurface = IMG_Load(szFile.c_str());
-   m_pSurface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(pRawSurface, SDL_DestroySurface);
-   if (m_pSurface && m_pSurface->format != SDL_PIXELFORMAT_RGBA32)
-      m_pSurface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(SDL_ConvertSurface(m_pSurface.get(), SDL_PIXELFORMAT_RGBA32), SDL_DestroySurface);
-
-   AnalyzeTransparency();
+   m_loading.store(true);
+   std::thread([this, szFile]() {
+      auto surface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(IMG_Load(szFile.string().c_str()), SDL_DestroySurface);
+      if (surface && surface->format != SDL_PIXELFORMAT_RGBA32)
+         surface = std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)>(SDL_ConvertSurface(surface.get(), SDL_PIXELFORMAT_RGBA32), SDL_DestroySurface);
+      const TransparentRegion region = AnalyzeTransparency(surface.get(), szFile);
+      {
+         std::lock_guard lock(m_loadMutex);
+         m_pendingSurface = std::move(surface);
+         m_transparentRegion = region;
+      }
+      m_loading.store(false);
+   }).detach();
 }
 
 bool PUPImage::GetDimensions(int& width, int& height) const
@@ -48,20 +76,26 @@ bool PUPImage::GetDimensions(int& width, int& height) const
       height = m_pSurface->h;
       return true;
    }
+   std::lock_guard lock(m_loadMutex);
+   if (m_pendingSurface) {
+      width = m_pendingSurface->w;
+      height = m_pendingSurface->h;
+      return true;
+   }
    return false;
 }
 
-void PUPImage::AnalyzeTransparency()
+PUPImage::TransparentRegion PUPImage::AnalyzeTransparency(SDL_Surface* surface, const std::filesystem::path& file)
 {
-   m_transparentRegion.valid = false;
-   if (!m_pSurface || m_pSurface->format != SDL_PIXELFORMAT_RGBA32)
-      return;
+   TransparentRegion region;
+   if (!surface || surface->format != SDL_PIXELFORMAT_RGBA32)
+      return region;
 
-   SDL_LockSurface(m_pSurface.get());
-   const int w = m_pSurface->w;
-   const int h = m_pSurface->h;
-   const int pitch = m_pSurface->pitch / 4; // pitch in pixels (4 bytes per RGBA32 pixel)
-   const uint32_t* pixels = static_cast<const uint32_t*>(m_pSurface->pixels);
+   SDL_LockSurface(surface);
+   const int w = surface->w;
+   const int h = surface->h;
+   const int pitch = surface->pitch / 4; // pitch in pixels (4 bytes per RGBA32 pixel)
+   const uint32_t* pixels = static_cast<const uint32_t*>(surface->pixels);
 
    int minX = w, minY = h, maxX = -1, maxY = -1;
 
@@ -79,25 +113,27 @@ void PUPImage::AnalyzeTransparency()
          }
       }
    }
-   SDL_UnlockSurface(m_pSurface.get());
+   SDL_UnlockSurface(surface);
 
    if (maxX > minX && maxY > minY)
    {
-      m_transparentRegion.x = static_cast<float>(minX) / static_cast<float>(w);
-      m_transparentRegion.y = static_cast<float>(minY) / static_cast<float>(h);
-      m_transparentRegion.w = static_cast<float>(maxX - minX + 1) / static_cast<float>(w);
-      m_transparentRegion.h = static_cast<float>(maxY - minY + 1) / static_cast<float>(h);
-      m_transparentRegion.valid = true;
-      LOGD_DBG("PUP FRAME WINDOW: file='%s' transparent region=(%.1f%%, %.1f%%, %.1f%%, %.1f%%) imageSize=(%d,%d)",
-         m_file.c_str(),
-         m_transparentRegion.x * 100.f, m_transparentRegion.y * 100.f,
-         m_transparentRegion.w * 100.f, m_transparentRegion.h * 100.f,
-         w, h);
+      region.x = static_cast<float>(minX) / static_cast<float>(w);
+      region.y = static_cast<float>(minY) / static_cast<float>(h);
+      region.w = static_cast<float>(maxX - minX + 1) / static_cast<float>(w);
+      region.h = static_cast<float>(maxY - minY + 1) / static_cast<float>(h);
+      region.valid = true;
+      LOGD_DBG(std::format("PUP FRAME WINDOW: file='{}' transparent region=({:.1f}%, {:.1f}%, {:.1f}%, {:.1f}%) imageSize=({},{})",
+         file.string(),
+         region.x * 100.f, region.y * 100.f,
+         region.w * 100.f, region.h * 100.f,
+         w, h));
    }
+   return region;
 }
 
 bool PUPImage::GetTransparentRegion(float& x, float& y, float& w, float& h) const
 {
+   std::lock_guard lock(m_loadMutex);
    if (!m_transparentRegion.valid)
       return false;
    x = m_transparentRegion.x;
@@ -107,8 +143,20 @@ bool PUPImage::GetTransparentRegion(float& x, float& y, float& w, float& h) cons
    return true;
 }
 
-void PUPImage::Render(VPXRenderContext2D* const ctx, const SDL_Rect& rect)
+void PUPImage::Render(VPXRenderContext2D* const ctx, const SDL_Rect& rect, float alpha)
 {
+   // Pick up async-loaded surface
+   {
+      std::lock_guard lock(m_loadMutex);
+      if (m_pendingSurface) {
+         m_pSurface = std::move(m_pendingSurface);
+         if (m_pTexture) {
+            DeleteTexture(m_pTexture);
+            m_pTexture = nullptr;
+         }
+      }
+   }
+
    // Update texture
    if (m_pTexture == nullptr && m_pSurface) {
       m_pTexture = CreateTexture(m_pSurface.get());
@@ -116,7 +164,7 @@ void PUPImage::Render(VPXRenderContext2D* const ctx, const SDL_Rect& rect)
    }
 
    // Render image
-   if (m_pTexture)
+   if (m_pTexture && alpha > 0.f)
    {
       VPXTextureInfo* texInfo = GetTextureInfo(m_pTexture);
 
@@ -144,7 +192,7 @@ void PUPImage::Render(VPXRenderContext2D* const ctx, const SDL_Rect& rect)
       const float clippedTexW = (clipR - clipL) * invW * texW;
       const float clippedTexH = (clipB - clipT) * invH * texH;
 
-      ctx->DrawImage(ctx, m_pTexture, 1.f, 1.f, 1.f, 1.f,
+      ctx->DrawImage(ctx, m_pTexture, 1.f, 1.f, 1.f, alpha,
          clippedTexX, clippedTexY, clippedTexW, clippedTexH,
          0.f, 0.f, 0.f,
          clipL, clipT, clipR - clipL, clipB - clipT);

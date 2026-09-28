@@ -5,15 +5,12 @@
 #include "unordered_dense.h"
 
 typedef IEditable*(*CreateFuncType)();
-typedef IEditable*(*CreateAndInitFuncType)(PinTable *pt, float x, float y);
+typedef IEditable*(*CreateAndInitFuncType)(float x, float y);
 
 struct EditableInfo
 {
    ItemTypeEnum type;
    int typeNameID;
-   int toolID;
-   int cursorID;
-   unsigned int allowedViews;
    CreateFuncType createFunc;
    CreateAndInitFuncType createAndInitFunc;
 };
@@ -27,9 +24,6 @@ public:
       EditableInfo ei;
       ei.type = T::ItemType;
       ei.typeNameID = T::TypeNameID;
-      ei.toolID = T::ToolID;
-      ei.cursorID = T::CursorID;
-      ei.allowedViews = T::AllowedViews;
       ei.createFunc = &T::COMCreateEditable;
       ei.createAndInitFunc = &T::COMCreateAndInit;
       m_map[ei.type] = ei;
@@ -44,31 +38,12 @@ public:
    static IEditable* CreateAndInit(ItemTypeEnum type, PinTable *pt, float x, float y)
    {
       const EditableInfo* const info = FindOrFail(type);
-      return info->createAndInitFunc ? info->createAndInitFunc(pt, x, y) : nullptr;
+      return info->createAndInitFunc ? info->createAndInitFunc(x, y) : nullptr;
    }
 
    static int GetTypeNameStringID(ItemTypeEnum type)
    {
       return FindOrFail(type)->typeNameID;
-   }
-
-   static ItemTypeEnum TypeFromToolID(int toolID)
-   {
-      for (const auto& it : m_map)
-         if (it.second.toolID == toolID)
-            return it.second.type;
-
-      return eItemInvalid;
-   }
-
-   static int GetCursorID(ItemTypeEnum type)
-   {
-      return FindOrFail(type)->cursorID;
-   }
-
-   static unsigned int GetAllowedViews(ItemTypeEnum type)
-   {
-      return FindOrFail(type)->allowedViews;
    }
 
 private:

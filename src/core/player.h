@@ -2,19 +2,30 @@
 
 #pragma once
 
-#include "renderer/typedefs3D.h"
-#include "renderer/Renderer.h"
-#include "renderer/Window.h"
-#include "physics/PhysicsEngine.h"
-#include "ui/Debugger.h"
-#include "ui/live/LiveUI.h"
-#include "input/InputManager.h"
-#include "plugins/ControllerPlugin.h"
-#include "plugins/VPXPlugin.h"
-#include "plugins/ResURIResolver.h"
-#include "audio/AudioPlayer.h"
+#ifdef VPX_ENABLE_WIN32_EDITOR
+#include <wxx_stdcontrols.h> // Add CButton, CEdit, CListBox
+#include "ui/win/Debugger.h"
+#endif
 
+#include "audio/AudioPlayer.h"
+#include "core/ScriptInterpreter.h"
+#include "input/InputManager.h"
+#include "physics/PhysicsEngine.h"
+#include "plugins/ControllerPlugin.h"
+#include "plugins/ResURIResolver.h"
+#include "plugins/VPXPlugin.h"
+#include "renderer/typedefs3D.h"
+#include "renderer/Window.h"
+#include "ui/LoadProgress.h"
+#include "utils/wintimer.h"
+#include "VPXPluginAPIImpl.h"
+
+class Renderer;
 class VRDevice;
+class LiveUI;
+class BaseTexture;
+class IEditable;
+class Texture;
 class ReelDmd;
 
 enum InfoMode
@@ -27,7 +38,6 @@ enum InfoMode
    IF_AO_ONLY,
    IF_LIGHT_BUFFER_ONLY,
    IF_RENDER_PROBES,
-   IF_BAM_MENU,
    IF_INVALID
 };
 
@@ -38,60 +48,20 @@ enum ProfilingMode
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// Startup progress dialog
-
-class ProgressDialog final : public CDialog
-{
-public:
-   ProgressDialog() : CDialog(IDD_PROGRESS) { }
-
-   void SetProgress(const string &text, const int value = -1) {
-      #ifndef __STANDALONE__
-      if (IsWindow()) {
-         m_progressName.SetWindowText(text.c_str());
-         if (value != -1)
-            m_progressBar.SetPos(value);
-      }
-      #else
-      if (value != -1 && m_progress != value) {
-         // PLOGI.printf("%s %d%%", text.c_str(), value);
-         m_progress = value;
-      }
-      #endif
-   }
-
-protected:
-   BOOL OnInitDialog() override
-   {
-      #ifndef __STANDALONE__
-      AttachItem(IDC_PROGRESS2, m_progressBar);
-      AttachItem(IDC_STATUSNAME, m_progressName);
-      #endif
-      return TRUE;
-   }
-
-private:
-   #ifdef __STANDALONE__
-   int m_progress = -1;
-   #else
-   CProgressBar m_progressBar;
-   CStatic m_progressName;
-   #endif
-};
-
-////////////////////////////////////////////////////////////////////////////////
-
-struct TimerOnOff
-{
-   HitTimer* m_timer;
-   bool m_enabled;
-};
-
 
 class Player final
 {
 public:
-   Player(PinTable *const live_table, const int playMode);
+   enum class PlayMode
+   {
+      Play,
+      EditPOV,
+      LiveEdit,
+      FullEdit,
+      CaptureAttract
+   };
+
+   Player(PinTable *const table, const PlayMode playMode, LoadProgress &loadProgress);
    ~Player();
 
    void LockForegroundWindow(const bool enable);
@@ -99,29 +69,101 @@ public:
    string GetPerfInfo();
 
    void SetPlayState(const bool isPlaying, const uint32_t delayBeforePauseMs = 0); // Allow to play/pause during UI interaction or to perform timed simulation steps (still needs the player window to be focused).
-   bool IsPlaying(const bool applyWndFocus = true) const { return m_playing && (applyWndFocus ? m_playfieldWnd->IsFocused() : true) && !IsEditorMode(); }
+   bool IsPlaying(const bool applyWndFocus = true) const { return (m_playMode == PlayMode::CaptureAttract) || (m_wantsToPlay && (applyWndFocus ? m_playfieldWnd->IsFocused() : true) && !IsEditorMode()); }
    void OnFocusChanged(); // On focus lost, pause player and show mouse cursor
 
    uint32_t m_pauseTimeTarget = 0;
    bool m_step = false; // If set to true, the physics engine will do a single physic step and stop simulation (turning this flag to false)
 
-   PinTable *const m_ptable; // The played table (which can eventually be a shallow copy of a table to allow being modified by the script without changing the original table)
-   bool IsEditorMode() const { return m_ptable->m_liveBaseTable == nullptr; }
+   PinTable *m_ptable; // The played table (which can eventually be a shallow copy of a table to allow being modified by the script without changing the original table)
+   bool m_tblMirrorEnabled = false; // Mirror tables left to right.  This is activated by a cheat during table selection.
 
-   ProgressDialog m_progressDialog;
+   bool IsEditorMode() const { return m_playMode == PlayMode::FullEdit; }
+   PlayMode m_playMode;
 
-   double m_time_sec; // current physics time
-   uint32_t m_time_msec; // current physics time
-   uint32_t m_last_frame_time_msec; // used for non-physics controlled animations to update once per-frame only, aligned with m_time_msec
+   // Request to replace the played table with a new one. The given reference on the table is adopted by
+   // the player. It is safe to call this at any time (including from a UI or a script callback).
+   // - Tables of the same base table / live copy pair (i.e. a shallow copy created with
+   //   PinTable::CopyForPlay, or the base table of one) are swapped in-place at the beginning of the
+   //   next game loop iteration.
+   // - Tables of a different base table require recreating the player: the request is recorded and the
+   //   session is ended, then the host takes the request over with TakeTableSwitch and creates a new
+   //   player. Only Replace is supported in this case (a suspended session can not survive the player
+   //   destruction).
+   enum class TableTransition
+   {
+      Replace, // Discard the current table session and switch to the new table
+      Stack    // Suspend the current table session and switch to the new table (restored when the new session ends, same base table / live copy pair only)
+   };
+   void SetTable(PinTable *table, TableTransition transition);
+   bool HasStackedTableSession() const { return !m_tableStack.empty(); }
 
-   HitBall *m_pactiveball = nullptr; // ball the script user can get with ActiveBall
-   HitBall *m_pactiveballDebug = nullptr; // ball the debugger will use as ActiveBall when firing events
-
-   void FireSyncController();
+   // To be called by the host after the game loop has ended: if the session was ended by a SetTable
+   // request for a table of a different base table, returns that table (the caller adopts its
+   // reference) and the play mode to use for its session. Returns nullptr otherwise.
+   PinTable *TakeTableSwitch(PlayMode &playMode);
 
 private:
-   bool m_playing = true;
-   void ApplyPlayingState(const bool play);
+   // A table session suspended by a stacked SetTable, restored when the newer session ends
+   struct StackedTable
+   {
+      PinTable *table;   // Table of the suspended session (a reference is owned by the stack)
+      PlayMode playMode; // Play mode to restore when getting back to this session
+      bool editorWasOpened;
+   };
+   vector<StackedTable> m_tableStack;
+   PinTable *m_pendingTable = nullptr; // Table requested through SetTable (a reference is owned until applied)
+   PinTable *m_pendingSwitchTable = nullptr; // Table of a different base table requested through SetTable (a reference is owned until taken by the host)
+   PlayMode m_pendingSwitchMode = PlayMode::Play; // Play mode to use for the m_pendingSwitchTable session
+   bool m_pendingTableStack = false;
+   volatile bool m_pendingTablePop = false;
+   bool m_frameMutexHeld = false; // True while the game thread owns the render frame mutex, in which case table transitions must be deferred (BGFX only)
+   void RenderLoadingFrame(); // Records and submits a frame containing only the loading UI
+   void ProcessTableTransitions();
+   void ApplyTableTransition(PinTable *newTable, bool stackTable, const StackedTable *restore);
+   void InitTableSession(bool isInitial);
+   void ShutdownTableSession();
+   void LockRenderThread();   // Wait for the render thread to be idle and take ownership of the render frame (BGFX only)
+   void UnlockRenderThread(); // Release render frame ownership, letting the game loop resume (BGFX only)
+
+public:
+   // Stats shared between the texture loading worker threads and the loading UI
+   struct TextureLoadStats
+   {
+      void Reset()
+      {
+         nImagesTotal = 0;
+         nImagesDone = 0;
+         nCompressed = 0;
+         skipCompression = false;
+         inFlight.clear();
+      }
+      std::atomic<int> nImagesTotal { 0 }; // Total number of images in the table
+      std::atomic<int> nImagesDone { 0 }; // Images processed so far (loaded, cached, or failed)
+      std::atomic<int> nCompressed { 0 }; // Images that went through the compression path
+      std::atomic<bool> skipCompression { false }; // Set by the user to discard all pending texture compressions
+      std::mutex inFlightMutex;
+      vector<std::pair<const Texture *, bool>> inFlight; // Images being processed by the worker threads (flagged once in the compression phase)
+   };
+   TextureLoadStats m_texLoadStats;
+   bool m_isLoading = false; // True while the initial table content is being loaded (the loading UI is displayed instead of the game)
+
+   uint64_t m_timeUpdateTimeStamp = 0; // Timestamp in computer time that correspond to last update of game time
+   double m_time_sec = 0.0; // current physics time
+   uint32_t m_time_msec = 0; // current physics time
+   uint32_t m_last_frame_time_msec = 0; // used for non-physics controlled animations to update once per-frame only, aligned with m_time_msec
+
+   Ball *m_pactiveball = nullptr; // ball the script user can get with ActiveBall
+   Ball *m_pactiveballDebug = nullptr; // ball the debugger will use as ActiveBall when firing events
+
+   MsgPI::MsgPluginManager m_pluginManager;
+   VPXPluginAPIImpl m_pluginAPI;
+
+private:
+   bool m_wantsToPlay = true; // If we want the player to play beside the player focus state
+   bool m_playing = true; // If the player is actually playing or not
+
+   LoadProgress &m_loadProgress; // Load progress reporter provided by the caller (a dialog for the Win32 editor, logging elsewhere)
 
 #pragma region Main Loop
 public:
@@ -129,7 +171,7 @@ public:
 
    void UpdateGameLogic();
 
-   VideoSyncMode GetVideoSyncMode() const { return m_videoSyncMode; }
+   VideoSyncMode GetVideoSyncMode() const { return m_playMode == Player::PlayMode::CaptureAttract ? VideoSyncMode::VSM_NONE : m_videoSyncMode; }
    void SetVideoSyncMode(VideoSyncMode mode) { m_videoSyncMode = mode; }
    int GetTimerThrottleMs() const { return m_timerThrottleMs; }
    float GetTargetRefreshRate() const { return m_maxFramerate; }
@@ -142,6 +184,8 @@ public:
    FrameProfiler m_logicProfiler; // Frame timing profiler to be used when measuring timings from the game logic thread
    FrameProfiler* m_renderProfiler = nullptr; // Frame timing profiler to be used when measuring timings from the render thread (same as game logic profiler for single threaded mode)
 
+   void ProcessOSMessages(const bool isInitialized = true);
+
 private:
    VideoSyncMode m_videoSyncMode = VideoSyncMode::VSM_FRAME_PACING;
    int m_timerThrottleMs = 5;
@@ -149,9 +193,12 @@ private:
    uint64_t m_startFrameTick;  // System time in us when render frame was started (beginning of frame animation then collect,...)
    uint64_t m_lastPrepareStartUs = 0; // Used by the Android fps-cap throttle to space PrepareFrame calls to m_maxFramerate cadence.
    unsigned int m_onPrepareFrameMsgId;
+   const std::thread::id m_osThreadId;
 
-   void ProcessOSMessages();
+#ifdef ENABLE_BGFX
+   bool CallbackSteppedGameLoop();
    void MultithreadedGameLoop();
+#endif
    void FramePacingGameLoop();
    void GPUQueueStuffingGameLoop();
 #pragma endregion
@@ -163,21 +210,14 @@ public:
 #pragma endregion
 
 
-#pragma region Nudge
-public:
-   float m_NudgeShake; // whether to shake the screen during nudges and how much
-#pragma endregion
-
-
 #pragma region Physics
 public:
-   HitBall *CreateBall(const float x, const float y, const float z, const float vx, const float vy, const float vz, const float radius = 25.0f, const float mass = 1.0f);
-   void DestroyBall(HitBall *pHitBall);
+   Ball *CreateBall(const float x, const float y, const float z, const float vx, const float vy, const float vz, const float radius, const float mass);
+   void DestroyBall(Ball *pBall);
 
    PhysicsEngine* m_physics = nullptr;
 
-   vector<HitBall *> m_vball;
-   vector<IEditable *> m_vhitables; // all Renderable parts obtained from the table's list of Editables
+   vector<Ball *> m_vball;
 
    int m_minphyslooptime; // minimum physics loop processing time in usec (0-1000), effort to reduce input latency (mainly useful if vsync is enabled, too)
 
@@ -188,12 +228,19 @@ private:
 
 #pragma region Timers
 public:
-   void FireTimers(const unsigned int simulationTime);
-   void DeferTimerStateChange(HitTimer * const hittimer, bool enabled);
-   void ApplyDeferredTimerChanges();
+   void FireTimers(const int mode); // 0 = timer, -1 = frame sync, -2 = game sync
+   void TimerStateChange(HitTimer * const hittimer, bool enabled);
+   void TimerSetup(IEditable *editable);
+   void TimerRelease(IEditable *editable);
 
 private:
+   bool m_deferTimerChanges = false;
    vector<HitTimer *> m_vht;
+   struct TimerOnOff
+   {
+      HitTimer* m_timer;
+      bool m_enabled;
+   };
    vector<TimerOnOff> m_changed_vht; // stores all en/disable changes to the m_vht timer list, to avoid problems with timers dis/enabling themselves
 #pragma endregion
 
@@ -214,15 +261,23 @@ public:
 
 #pragma region Rendering
 public:
-   VPX::RenderOutput& GetOutput(VPXWindowId window);
-   VPX::Window* m_playfieldWnd;
+   //VPX::RenderOutput& GetOutput(VPXWindowId window);
+   VPX::Window* m_playfieldWnd = nullptr;
    VPX::RenderOutput m_backglassOutput;
    VPX::RenderOutput m_scoreViewOutput;
    VPX::RenderOutput m_topperOutput;
-   Renderer *m_renderer = nullptr;
+   std::unique_ptr<Renderer> m_renderer;
    VRDevice *m_vrDevice = nullptr;
-   bool m_headTracking = false;
    vector<AncillaryRendererDef> m_ancillaryWndRenderers[VPXWindowId::VPXWINDOW_Topper + 1];
+   int GetAncillaryRendererPriority(VPXWindowId window, const string& id) const;
+   void SetAncillaryRendererPriority(VPXWindowId window, const string& id, int priority);
+
+   bool IsVR() const { return m_vrDevice != nullptr; }
+
+   int GetCabinetAutoFitMode() const { return m_cabinetAutoFitMode; }
+   void SetCabinetAutoFitMode(int mode);
+   float GetCabinetAutoFitPos() const { return m_cabinetAutoFitPos; }
+   void SetCabinetAutoFitPos(float pos);
 
 private:
    void PrepareFrame();
@@ -231,17 +286,18 @@ private:
 
    static void OnAuxRendererChanged(const unsigned int msgId, void *userData, void *msgData);
    unsigned int m_getAuxRendererId = 0, m_onAuxRendererChgId = 0;
+   // Live (unsaved) renderer priorities, seeded from settings when renderers are collected
+   std::map<string, int, std::less<>> m_ancillaryWndRendererPriorities[VPXWindowId::VPXWINDOW_Topper + 1];
+
+   int m_cabinetAutoFitMode = 0;
+   float m_cabinetAutoFitPos = 0.05f;
 #pragma endregion
 
 
 #pragma region Input
 public:
    InputManager m_pininput;
-   void ShowMouseCursor(const bool show) { m_drawCursor = show; UpdateCursorState(); }
 
-private:
-   bool m_drawCursor = false;
-   void UpdateCursorState() const;
 #pragma endregion
 
 
@@ -251,22 +307,32 @@ public:
    void UnpauseMusic();
    void UpdateVolume();
 
-   bool m_PlayMusic;
-   bool m_PlaySound;
-   int m_MusicVolume; // -100..100
-   int m_SoundVolume; // -100..100
-   int m_PinmameVolume; // -32..32 dB (0 = native ROM level; matches VPinMAME tilde-OSD), >0 boosts PinMAME/plugin audio
-   bool m_musicPlaying = false;
+   float m_backglassVolume;
+   float m_playfieldVolume;
+   int m_PinmameVolume = 0; // -32..32 dB (0 = native ROM level; matches VPinMAME tilde-OSD), >0 boosts PinMAME/plugin audio
+
+   float GetAudioLaneMixerVolume(uint64_t laneId) const;
+   void SetAudioLaneMixerVolume(uint64_t laneId, float volume);
 
    std::unique_ptr<VPX::AudioPlayer> m_audioPlayer;
 
 private:
    int m_pauseMusicRefCount = 0;
 
-   // External audio sources
    static void OnAudioUpdated(const unsigned int msgId, void *userData, void *msgData);
+   static void OnAudioSrcChanged(const unsigned int msgId, void *userData, void *msgData);
    unsigned int m_onAudioUpdatedMsgId;
-   ankerl::unordered_dense::map<uint64_t, VPX::AudioPlayer::AudioStreamID> m_audioStreams;
+   unsigned int m_onAudioSrcChangedMsgId;
+   unsigned int m_getAudioSrcMsgId;
+   mutable std::mutex m_audioSourceMutex;
+   struct AudioLane
+   {
+      AudioSrcId source = { };
+      bool overriden = false;
+      float mixerVolume = 1.f;
+      ankerl::unordered_dense::map<uint64_t, VPX::AudioPlayer::AudioStreamID> streams;
+   };
+   ankerl::unordered_dense::map<uint64_t, AudioLane> m_audioLanes;
 #pragma endregion
 
 public:
@@ -280,9 +346,7 @@ public:
       CS_CLOSE_APP = 3,  // Close the application and get back to operating system
       CS_FORCE_STOP = 4, // Force close the application and get back to operating system
       CS_CLOSED = 5,     // Closing (or closed is called from another thread, but g_pplayer is null when closed)
-#ifdef __LIBVPINBALL__
       CS_CLOSE_CAPTURE_SCREENSHOT = 6 // Close and capture screenshot for table image
-#endif
    };
    void SetCloseState(CloseState state);
    CloseState GetCloseState() const { return m_closing; }
@@ -294,36 +358,39 @@ public:
    bool m_debugMode = false;
    bool m_showDebugger = false;
    HWND m_hwndDebugOutput = nullptr;
-#ifndef __STANDALONE__
+#ifdef VPX_ENABLE_WIN32_EDITOR
    DebuggerDialog m_debuggerDialog;
 #endif
 
-   bool m_debugBalls = false;           // Draw balls in the foreground via 'O' key
+   bool m_debugBalls = false;    // Draw balls in the foreground via 'O' key
 
-   bool m_noTimeCorrect = false;        // Used so the frame after debugging does not do normal time correction
+   bool m_noTimeCorrect = false; // Used so the frame after debugging does not do normal time correction
 
    // Used to detect script hangs (modal is used by script to tell VPX that it is in a modal state, so disabling watch dog)
    bool m_detectScriptHang;
-   int m_LastKnownGoodCounter = 0;
-   int m_ModalRefCount = 0;
+   int m_lastKnownGoodCounter = 0;
+   int m_modalRefCount = 0;
 
    Primitive *m_implicitPlayfieldMesh = nullptr;
+   Flasher *m_implicitVRBackglass = nullptr;
 
    // External DMD and displays, defined from script or captured
-   bool m_capExtDMD = false; // frame capturing (hack for VR)
-   int2 m_dmdSize = int2(0, 0); // DMD defined through VPX API DMDWidth/DMDHeight/DMDPixels/DMDColoredPixels
+   int2 m_dmdSize = int2(0, 0); // DMD defined through VPX API DMDWidth/DMDHeight/DMDPixels/DMDColoredPixels, dmd size is actually commited when pixels are commited
    std::shared_ptr<BaseTexture> m_dmdFrame = nullptr;
-   unsigned int m_dmdFrameId = 0;
+   std::atomic_uint m_dmdFrameId = 0;
+
+   int m_nFrameToCapture = 0;
+   int m_frameCaptureFPS = 0;
+   bool m_cutCaptureToLoop = true;
 
    // Composites EM score reels into m_dmdFrame so the ScoreView can display them.
    std::unique_ptr<ReelDmd> m_reelDmd;
 
-   ResURIResolver m_resURIResolver;
+   CComObject<ScriptInterpreter>* m_scriptInterpreter = nullptr;
+   unsigned int m_nScriptErrorNotification = 0;
+   void OnScriptError(ScriptInterpreter::ErrorType type, int line, int column, const string &description, const vector<string> &stackDump);
 
-
-public:
-   bool m_capPUP = false;
-   std::shared_ptr<BaseTexture> m_texPUP = nullptr;
+   PinballPlugin::ResURIResolver m_resURIResolver;
 
    unsigned int m_overall_frames = 0; // amount of rendered frames since start
 

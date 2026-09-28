@@ -81,7 +81,7 @@ JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInit(JNIEnv
    gJNICallbackObject = env->NewGlobalRef(callback);
    gJNIOnEventMethod = env->GetMethodID(env->GetObjectClass(gJNICallbackObject), "onEvent", "(ILjava/lang/String;)V");
 
-   VPinballInit(VPinballJNI_OnEventCallback);
+   VPinballInit(VPinballJNI_OnEventCallback, nullptr);
 }
 
 JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballInitHeadless(JNIEnv* env, jobject obj, jobject callback)
@@ -144,11 +144,6 @@ JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballLog(JNIEnv*
    const char* pMessage = env->GetStringUTFChars(message, nullptr);
    VPinballLog(static_cast<VPINBALL_LOG_LEVEL>(level), pMessage);
    env->ReleaseStringUTFChars(message, pMessage);
-}
-
-JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballResetLog(JNIEnv* env, jobject obj)
-{
-   VPinballResetLog();
 }
 
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballLoadValueInt(JNIEnv* env, jobject obj, jstring sectionName, jstring key, jint defaultValue)
@@ -251,6 +246,11 @@ JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballRefreshWebS
    VPinballRefreshWebServer();
 }
 
+JNIEXPORT jstring JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetPath(JNIEnv* env, jobject obj, jint pathType)
+{
+   return env->NewStringUTF(VPinballGetPath(static_cast<VPINBALL_PATH>(pathType)));
+}
+
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballLoadTable(JNIEnv* env, jobject obj, jstring path)
 {
    const char* pPath = env->GetStringUTFChars(path, nullptr);
@@ -264,9 +264,12 @@ JNIEXPORT void JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballCancelLoadi
    VPinballCancelLoading();
 }
 
-JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballExtractTableScript(JNIEnv* env, jobject obj)
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballExtractTableScript(JNIEnv* env, jobject obj, jstring path)
 {
-   return VPinballExtractTableScript();
+   const char* pPath = env->GetStringUTFChars(path, nullptr);
+   VPINBALL_STATUS status = VPinballExtractTableScript(pPath);
+   env->ReleaseStringUTFChars(path, pPath);
+   return status;
 }
 
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballPlay(JNIEnv* env, jobject obj)
@@ -577,6 +580,71 @@ JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballSetSwitch(J
 JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballGetSwitch(JNIEnv* env, jobject obj, jint switchNum)
 {
    return VPinballGetSwitch(switchNum);
+}
+
+struct ZipCallbackContext {
+   JNIEnv* env;
+   jobject callback;
+   jmethodID onProgressMethod;
+};
+
+static ZipCallbackContext* g_zipCallbackContext = nullptr;
+
+static void ZipProgressCallbackHandler(int current, int total, const char* filename)
+{
+   if (!g_zipCallbackContext || !g_zipCallbackContext->callback)
+      return;
+
+   JNIEnv* env = g_zipCallbackContext->env;
+   jstring filenameStr = filename ? env->NewStringUTF(filename) : nullptr;
+   env->CallVoidMethod(g_zipCallbackContext->callback, g_zipCallbackContext->onProgressMethod, current, total, filenameStr);
+
+   if (filenameStr)
+      env->DeleteLocalRef(filenameStr);
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballZipCreate(JNIEnv* env, jobject obj, jstring sourcePath, jstring destPath, jobject callback)
+{
+   const char* pSourcePath = env->GetStringUTFChars(sourcePath, nullptr);
+   const char* pDestPath = env->GetStringUTFChars(destPath, nullptr);
+
+   ZipCallbackContext context = { env, nullptr, nullptr };
+   if (callback) {
+      context.callback = callback;
+      jclass callbackClass = env->GetObjectClass(callback);
+      context.onProgressMethod = env->GetMethodID(callbackClass, "onProgress", "(IILjava/lang/String;)V");
+      g_zipCallbackContext = &context;
+   }
+
+   VPINBALL_STATUS status = VPinballZipCreate(pSourcePath, pDestPath, callback ? ZipProgressCallbackHandler : nullptr);
+
+   g_zipCallbackContext = nullptr;
+   env->ReleaseStringUTFChars(destPath, pDestPath);
+   env->ReleaseStringUTFChars(sourcePath, pSourcePath);
+
+   return status;
+}
+
+JNIEXPORT jint JNICALL Java_org_vpinball_app_jni_VPinballJNI_VPinballZipExtract(JNIEnv* env, jobject obj, jstring sourcePath, jstring destPath, jobject callback)
+{
+   const char* pSourcePath = env->GetStringUTFChars(sourcePath, nullptr);
+   const char* pDestPath = env->GetStringUTFChars(destPath, nullptr);
+
+   ZipCallbackContext context = { env, nullptr, nullptr };
+   if (callback) {
+      context.callback = callback;
+      jclass callbackClass = env->GetObjectClass(callback);
+      context.onProgressMethod = env->GetMethodID(callbackClass, "onProgress", "(IILjava/lang/String;)V");
+      g_zipCallbackContext = &context;
+   }
+
+   VPINBALL_STATUS status = VPinballZipExtract(pSourcePath, pDestPath, callback ? ZipProgressCallbackHandler : nullptr);
+
+   g_zipCallbackContext = nullptr;
+   env->ReleaseStringUTFChars(destPath, pDestPath);
+   env->ReleaseStringUTFChars(sourcePath, pSourcePath);
+
+   return status;
 }
 
 #ifdef ENABLE_XR

@@ -1,10 +1,12 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include "Sound.h"
 
 #include <iomanip>
 
 #include "core/vpversion.h"
+#include "utils/fileio.h"
 
 namespace VPX
 {
@@ -27,7 +29,7 @@ namespace VPX
  * @note The function uses raw file handling (`fopen_s`, `fseek`, `fread_s`, and `fclose`), and expects
  *       the sound file to be in a valid format.
  */
-Sound* Sound::CreateFromFile(const string& filename)
+Sound* Sound::CreateFromFile(const std::filesystem::path& filename)
 {
    vector<uint8_t> file = read_file(filename);
    return file.empty() ? nullptr : new Sound(TitleFromFilename(filename), filename, file);
@@ -57,52 +59,44 @@ struct WaveHeader
 #define MAKEFOURCC(ch0, ch1, ch2, ch3) ((uint32_t)(BYTE)(ch0) | ((uint32_t)(BYTE)(ch1) << 8) | ((uint32_t)(BYTE)(ch2) << 16) | ((uint32_t)(BYTE)(ch3) << 24))
 #endif
 
-Sound* Sound::CreateFromStream(IStream* pstm, const int LoadFileVersion)
+Sound* Sound::CreateFromStream(POLE::Stream& stream, const int LoadFileVersion)
 {
    int32_t len;
-   ULONG read;
 
    // Name (length, then string)
-   if (FAILED(pstm->Read(&len, sizeof(int32_t), &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(&len), sizeof(len));
    string name(len, '\0');
-   if (FAILED(pstm->Read(name.data(), len, &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(name.data()), len);
 
    // Filename (length, then string) including path (// full filename, incl. path)
-   if (FAILED(pstm->Read(&len, sizeof(len), &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(&len), sizeof(len));
    string path(len, '\0');
-   if (FAILED(pstm->Read(path.data(), len, &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(path.data()), len);
 
    // Was the lower case name, but not used anymore since 10.7+, 10.8+ also only stores 1,'\0'
-   if (FAILED(pstm->Read(&len, sizeof(len), &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(&len), sizeof(len));
    string dummy(len, '\0');
-   if (FAILED(pstm->Read(dummy.data(), len, &read)))
-      return nullptr;
+   stream.read(reinterpret_cast<unsigned char*>(dummy.data()), len);
 
    // Since vpinball was originally only for windows, the microsoft library import was used, which stores/converts WAVs to the waveformatex.
    // This header is stored for WAV files, identified by their filename extension, instead of the regular WAV file format.
-   const bool wav = isWav(path);
-   WAVEFORMATEX wfx;
-   if (wav && FAILED(pstm->Read(&wfx, sizeof(wfx), &read)))
-      return nullptr;
-
-   int32_t cdata = 0;
-   if (FAILED(pstm->Read(&cdata, sizeof(int32_t), &read)))
-      return nullptr;
+   const auto fsPath = PathFromString(path);
 
    // WAV files are stored with a special format, while others are just the raw imported file.
    // We detect and (re)create the appropriate header for WAV files so that they can be treated as other sounds.
    vector<uint8_t> data;
-   if (wav)
+   if (isWav(fsPath))
    {
+      WAVEFORMATEX wfx;
+      stream.read(reinterpret_cast<unsigned char*>(&wfx), sizeof(wfx));
+
+      int32_t cdata = 0;
+      stream.read(reinterpret_cast<unsigned char*>(&cdata), sizeof(cdata));
+
       const size_t waveFileSize = sizeof(WaveHeader) + cdata;
       data.resize(waveFileSize);
       // [Master RIFF chunk]
-      auto const waveHeader = reinterpret_cast<WaveHeader*>(data.data());
+      const auto waveHeader = reinterpret_cast<WaveHeader*>(data.data());
       waveHeader->dwRiff = MAKEFOURCC('R', 'I', 'F', 'F');
       waveHeader->dwSize = static_cast<uint32_t>(waveFileSize - 8); // File size - 8
       waveHeader->dwWave = MAKEFOURCC('W', 'A', 'V', 'E');
@@ -118,14 +112,15 @@ Sound* Sound::CreateFromStream(IStream* pstm, const int LoadFileVersion)
       // [Chunk containing the sampled data]
       waveHeader->dwData = MAKEFOURCC('d', 'a', 't', 'a');
       waveHeader->dwDataSize = static_cast<uint32_t>(cdata); // Sampled data size
-      if (FAILED(pstm->Read(data.data() + sizeof(WaveHeader), static_cast<ULONG>(cdata), &read)))
-         return nullptr;
+
+      stream.read(data.data() + sizeof(WaveHeader), cdata);
    }
    else
    {
+      int32_t cdata = 0;
+      stream.read(reinterpret_cast<unsigned char*>(&cdata), sizeof(cdata));
       data.resize(cdata);
-      if (FAILED(pstm->Read(data.data(), static_cast<ULONG>(data.size()), &read)))
-         return nullptr;
+      stream.read(data.data(), data.size());
    }
 
    // this reads in the settings that are used by the Windows UI in the Sound Manager and when PlaySound() is used.
@@ -135,32 +130,25 @@ Sound* Sound::CreateFromStream(IStream* pstm, const int LoadFileVersion)
    int32_t frontRearFade = 100;
    if (LoadFileVersion >= NEW_SOUND_FORMAT_VERSION)
    {
-      if (FAILED(pstm->Read(&outputTarget, sizeof(char), &read)))
-         return nullptr;
+      stream.read(reinterpret_cast<unsigned char*>(&outputTarget), sizeof(outputTarget));
+      stream.read(reinterpret_cast<unsigned char*>(&volume), sizeof(volume));
+      stream.read(reinterpret_cast<unsigned char*>(&pan), sizeof(pan));
+      stream.read(reinterpret_cast<unsigned char*>(&frontRearFade), sizeof(frontRearFade));
+      stream.read(reinterpret_cast<unsigned char*>(&volume), sizeof(volume));
       if (outputTarget > SoundOutTypes::SNDOUT_BACKGLASS)
          outputTarget = static_cast<uint8_t>(SoundOutTypes::SNDOUT_TABLE);
-      if (FAILED(pstm->Read(&volume, sizeof(int32_t), &read)))
-         return nullptr;
-      if (FAILED(pstm->Read(&pan, sizeof(int32_t), &read)))
-         return nullptr;
-      if (FAILED(pstm->Read(&frontRearFade, sizeof(int32_t), &read)))
-         return nullptr;
-      if (FAILED(pstm->Read(&volume, sizeof(int32_t), &read)))
-         return nullptr;
    }
    else
    {
       bool toBackglassOutput = false; // false: for pre-VPX tables
-      if (FAILED(pstm->Read(&toBackglassOutput, sizeof(bool), &read)))
-         return nullptr;
-      outputTarget = (StrFindNoCase(name, "bgout_"s) != string::npos) // legacy behavior, where the BG selection was encoded into the strings directly
-               || StrCompareNoCase(path, "* Backglass Output *"s) 
-               || toBackglassOutput
-            ? SNDOUT_BACKGLASS
-            : SNDOUT_TABLE;
+      stream.read(reinterpret_cast<unsigned char*>(&toBackglassOutput), sizeof(toBackglassOutput));
+      if (toBackglassOutput //
+         || (StrFindNoCase(name, "bgout_"s) != string::npos) // legacy behavior, where the BG selection was encoded into the strings directly
+         || StrCompareNoCase(path, "* Backglass Output *"s)) // legacy behavior, where the BG selection was encoded into the strings directly
+         outputTarget = SNDOUT_BACKGLASS;
    }
 
-   Sound* const pps = new Sound(name, path, data);
+   Sound* const pps = new Sound(name, fsPath, data);
    pps->SetOutputTarget(static_cast<SoundOutTypes>(outputTarget));
    pps->SetVolume(volume);
    pps->SetPan(pan);
@@ -168,16 +156,16 @@ Sound* Sound::CreateFromStream(IStream* pstm, const int LoadFileVersion)
    return pps;
 }
 
-void Sound::SetFromFileData(string filename, vector<uint8_t> filedata)
+void Sound::SetFromFileData(const std::filesystem::path& filename, vector<uint8_t> filedata)
 {
-   m_path = std::move(filename);
+   m_path = filename;
    m_data = std::move(filedata);
 }
 
-bool Sound::SaveToFile(const string& filename) const
+bool Sound::SaveToFile(const std::filesystem::path& filename) const
 {
    FILE* f;
-   if ((fopen_s(&f, filename.c_str(), "wb") == 0) && f)
+   if ((fopen_s(&f, filename.string().c_str(), "wb") == 0) && f)
    {
       fwrite(m_data.data(), 1, m_data.size(), f);
       fclose(f);
@@ -186,22 +174,21 @@ bool Sound::SaveToFile(const string& filename) const
    return false;
 }
 
-void Sound::SaveToStream(IStream* pstm) const
+void Sound::SaveToStream(InMemStream* pstm) const
 {
-   ULONG writ = 0;
    const int32_t nameLen = static_cast<int32_t>(m_name.length());
-   const int32_t pathLen = static_cast<int32_t>(m_path.length());
+   const int32_t pathLen = static_cast<int32_t>(m_path.string().length());
    constexpr int32_t dummyLen = 1;
    constexpr char dummyPath = '\0';
-   pstm->Write(&nameLen, sizeof(int32_t), &writ);
-   pstm->Write(m_name.c_str(), nameLen, &writ);
-   pstm->Write(&pathLen, sizeof(int32_t), &writ);
-   pstm->Write(m_path.c_str(), pathLen, &writ);
-   pstm->Write(&dummyLen, sizeof(int32_t), &writ); // Used to have the same name again in lower case, now just save an empty string for backward compatibility
-   pstm->Write(&dummyPath, dummyLen, &writ);
+   pstm->Write(&nameLen, sizeof(int32_t));
+   pstm->Write(m_name.c_str(), nameLen);
+   pstm->Write(&pathLen, sizeof(int32_t));
+   pstm->Write(m_path.string().c_str(), pathLen);
+   pstm->Write(&dummyLen, sizeof(int32_t)); // Used to have the same name again in lower case, now just save an empty string for backward compatibility
+   pstm->Write(&dummyPath, dummyLen);
    if (isWav(m_path))
    {
-      auto const waveHeader = reinterpret_cast<const WaveHeader*>(m_data.data());
+      const auto waveHeader = reinterpret_cast<const WaveHeader*>(m_data.data());
       WAVEFORMATEX wfx;
       wfx.wFormatTag = waveHeader->wFormatTag;
       wfx.nChannels = waveHeader->wNChannels;
@@ -210,28 +197,28 @@ void Sound::SaveToStream(IStream* pstm) const
       wfx.nBlockAlign = waveHeader->wNBlockAlign;
       wfx.wBitsPerSample = waveHeader->wBitsPerSample;
       wfx.cbSize = 0;
-      pstm->Write(&wfx, sizeof(WAVEFORMATEX), &writ);
+      pstm->Write(&wfx, sizeof(WAVEFORMATEX));
       const int32_t sampleDataLength = static_cast<int32_t>(m_data.size() - sizeof(WaveHeader));
-      pstm->Write(&sampleDataLength, sizeof(int32_t), &writ);
-      pstm->Write(m_data.data() + sizeof(WaveHeader), static_cast<ULONG>(sampleDataLength), &writ);
+      pstm->Write(&sampleDataLength, sizeof(int32_t));
+      pstm->Write(m_data.data() + sizeof(WaveHeader), static_cast<size_t>(sampleDataLength));
    }
    else
    {
       const int32_t dataLength = static_cast<int32_t>(m_data.size());
-      pstm->Write(&dataLength, sizeof(int32_t), &writ);
-      pstm->Write(m_data.data(), static_cast<ULONG>(dataLength), &writ);
+      pstm->Write(&dataLength, sizeof(int32_t));
+      pstm->Write(m_data.data(), static_cast<size_t>(dataLength));
    }
 
    // Begin NEW_SOUND_FORMAT_VERSION data
    const uint8_t outputTarget = static_cast<uint8_t>(GetOutputTarget());
-   pstm->Write(&outputTarget, sizeof(uint8_t), &writ);
+   pstm->Write(&outputTarget, sizeof(uint8_t));
    const int32_t volume = GetVolume();
-   pstm->Write(&volume, sizeof(int32_t), &writ);
+   pstm->Write(&volume, sizeof(int32_t));
    const int32_t pan = GetPan();
-   pstm->Write(&pan, sizeof(int32_t), &writ);
+   pstm->Write(&pan, sizeof(int32_t));
    const int32_t frontRearFade = GetFrontRearFade();
-   pstm->Write(&frontRearFade, sizeof(int32_t), &writ);
-   pstm->Write(&volume, sizeof(int32_t), &writ);
+   pstm->Write(&frontRearFade, sizeof(int32_t));
+   pstm->Write(&volume, sizeof(int32_t));
 }
 
 }

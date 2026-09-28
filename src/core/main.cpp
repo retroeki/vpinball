@@ -9,9 +9,9 @@
 #include "plugins/VPXPlugin.h"
 #include "core/VPXPluginAPIImpl.h"
 
+#include "core/AppCommands.h"
 #include "core/VPApp.h"
 
-#include "ui/resource.h"
 #include <initguid.h>
 
 #define SET_CRT_DEBUG_FIELD(a) _CrtSetDbgFlag((a) | _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG))
@@ -20,29 +20,38 @@
 #include <codecvt>
 
 #ifdef __STANDALONE__
-#include <SDL3_ttf/SDL_ttf.h>
 #include <filesystem>
 #endif
 
-#if defined(__STANDALONE__) && defined(__linux__) && !defined(__ANDROID__)
+#if defined(__STANDALONE__) && ((defined(__linux__) && !defined(__ANDROID__)) || defined(__MINGW32__) || (defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX))
 #include <csignal>
+#include <unistd.h>
 
 void OnSignalHandler(int signum)
 {
+   // A signal handler runs on whichever thread receives the signal, while the game loop, the emulation and
+   // the render threads keep running. exit() from here would run the atexit handlers and the static
+   // destructors of the executable and of every loaded plugin library under those running threads. So the
+   // handler only asks the player to close: the game loop then unloads the plugins and stops the emulation,
+   // and the process leaves through the normal exit.
+   // A signal repeated after a few seconds means that shutdown is stuck. Then the process ends with _exit(),
+   // which returns to the kernel at once and runs none of the above, the only way out that is safe here.
+   static volatile time_t closeRequestedAt = 0;
+   const time_t now = time(nullptr);
+   if (g_pplayer != nullptr && (closeRequestedAt == 0 || now - closeRequestedAt < 3))
+   {
+      if (closeRequestedAt == 0)
+      {
+         closeRequestedAt = now;
+         PLOGI.printf("Closing from signal: %d", signum);
+      }
+      g_pplayer->SetCloseState(Player::CloseState::CS_CLOSE_APP);
+      return;
+   }
    PLOGI.printf("Exiting from signal: %d", signum);
-   exit(-9999);
+   _exit(-9999);
 }
 #endif
-
-#ifndef OVERRIDE
-#ifndef __STANDALONE__
-   #define OVERRIDE override
-#else
-   #define OVERRIDE
-#endif
-#endif
-
-
 
 
 #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
@@ -178,7 +187,14 @@ extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, 
 
    Logger::Init();
 
-   int retval;
+#ifndef __STANDALONE__
+   // Default message sink for the whole application lifetime: report user messages through
+   // plain Win32 message boxes. UI contexts (Win32 editor, player) install their own sinks.
+   Win32DialogSink win32DialogSink;
+   ScopedUserMessageSink scopedMessageSink(&win32DialogSink);
+#endif
+
+   int retval = 0;
    try
    {
       #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
@@ -189,73 +205,29 @@ extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, 
          SetNVIDIAThreadOptimization(NV_THREAD_OPTIMIZATION_DISABLE);
       }
       #endif
-      // Start Win32++
-      VPApp theApp(hInstance);
-      theApp.ProcessCommandLine();
-      theApp.InitInstance();
 
-      class SDLModuleLoader final : public MsgPI::MsgModuleLoader
-      {
-      public:
-         ~SDLModuleLoader() override { }
-         void* Link(const std::string& directory, const std::string& file) override {
-            #if defined(_MSC_VER)
-               SetDllDirectory(directory.c_str());
-            #endif
-            void* module = static_cast<void*>(SDL_LoadObject(file.c_str()));
-            #if defined(_MSC_VER)
-               SetDllDirectory(NULL);
-            #endif
-            return module;
-         }
-         void Unlink(void* module) override
-         {
-            SDL_UnloadObject(static_cast<SDL_SharedObject*>(module));
-         }
-         void* GetFunction(void* module, const std::string& functionName) override
-         {
-            return reinterpret_cast<void*>(SDL_LoadFunction(static_cast<SDL_SharedObject*>(module), functionName.c_str()));
-         }
-      };
-      MsgPI::MsgPluginManager::GetInstance().ScanPluginFolder(std::make_shared<SDLModuleLoader>(), g_pvp->m_myPath + "plugins",
-         [](MsgPI::MsgPlugin& plugin)
-         {
-            VPX::Properties::PropertyRegistry::PropId enableId;
-            if (auto existing = Settings::GetRegistry().GetPropertyId("Plugin." + plugin.m_id, "Enable"s); existing.has_value())
-               enableId = existing.value();
-            else
-               enableId = Settings::GetRegistry().Register(
-                  std::make_unique<VPX::Properties::BoolPropertyDef>("Plugin." + plugin.m_id, "Enable"s, "Enable"s, "Enable/Disable plugin '" + plugin.m_name + '\'', true, false));
-            if (g_pvp->m_settings.GetBool(enableId))
-            {
-               plugin.Load(&MsgPI::MsgPluginManager::GetInstance().GetMsgAPI());
-            }
-            else
-            {
-               PLOGI << "Plugin " << plugin.m_id << " was found but is disabled (" << plugin.m_library << ')';
-            }
-         });
+      VPApp theApp;
+      CommandLineProcessor cmdLine;
+      cmdLine.ProcessCommandLine();
+      theApp.InitInstance(dynamic_cast<PlayTableCommand*>(cmdLine.m_command.get()) != nullptr);
+
+      // The video subsystem is initialized lazily when a window is created (see VPX::Window), so
+      // headless commands (info, script/POV export, audit, tournament validation) run without a
+      // display or a working video driver.
 
       // Run the application
-      retval = theApp.Run();
+      if (cmdLine.m_command)
+         cmdLine.m_command->Execute();
    }
 
    // catch all CException types
    catch (const CException &e)
    {
       // Display the exception and quit
-      MessageBox(nullptr, e.GetText(), AtoT(e.what()), MB_ICONERROR);
+      ShowMessage(MsgSeverity::Fatal, e.GetText(), e.what());
 
       retval = -1;
    }
-
-   MsgPI::MsgPluginManager::GetInstance().UnloadPlugins();
-
-   SDL_QuitSubSystem(SDL_INIT_VIDEO);
-
-   #ifdef __STANDALONE__
-      TTF_Quit();
-   #endif
 
    #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__) 
    if (s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_NO_SUPPORT && s_OriginalNVidiaThreadOptimization != NV_THREAD_OPTIMIZATION_DISABLE)
@@ -271,15 +243,19 @@ extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, 
    return retval;
 }
 
-#if defined(__STANDALONE__) && defined(__linux__) && !defined(__ANDROID__)
+#if defined(__STANDALONE__) && ((defined(__linux__) && !defined(__ANDROID__)) || defined(__MINGW32__))
 extern int g_argc;
-extern char **g_argv;
-int main(int argc, char** argv) {
+extern const char **g_argv;
+int main(int argc, const char** argv) {
+#ifdef __MINGW32__
+   signal(SIGINT, OnSignalHandler);
+#else
    struct sigaction sigIntHandler;
    sigIntHandler.sa_handler = OnSignalHandler;
    sigemptyset(&sigIntHandler.sa_mask);
    sigIntHandler.sa_flags = 0;
    sigaction(SIGINT, &sigIntHandler, nullptr);
+#endif
 
    g_argc = argc;
    g_argv = argv;

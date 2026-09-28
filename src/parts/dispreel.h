@@ -4,7 +4,12 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/Collection.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
 
 // data in this class is persisted with the table
 class DispReelData final : public BaseProperty
@@ -23,7 +28,6 @@ public:
 
    COLORREF    m_backcolor;         // colour of the background
 
-   TimerDataRoot m_tdr;             // timer information
    bool        m_transparent;       // is the background transparent
    bool        m_useImageGrid;
 };
@@ -37,22 +41,22 @@ class DispReel :
    public EventProxy<DispReel, &DIID_IDispReelEvents>,
    public IConnectionPointContainerImpl<DispReel>,
    public IProvideClassInfo2Impl<&CLSID_DispReel, &DIID_IDispReelEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
    public IScriptable,
    public IFireEvents,
-   public Hitable,
-   public IPerPropertyBrowsing     // Ability to fill in dropdown(s) in property browser
+   public IHitable, // only used for UI picking
+   public IRenderable,
+   public IPerPropertyBrowsing // Ability to fill in dropdown(s) in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   DispReel();
-   virtual ~DispReel();
+   DispReel() { m_desktopBackdrop = true; } // DispReel is always located on backdrop
+   ~DispReel() override;
 
    BEGIN_COM_MAP(DispReel)
       COM_INTERFACE_ENTRY(IDispatch)
@@ -71,15 +75,11 @@ public:
       CONNECTION_POINT_ENTRY(DIID_IDispReelEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(DispReel, eItemDispReel, DISPREEL, VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES(DispReel, eItemDispReel, DISPREEL)
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
-
-   ItemTypeEnum HitableGetItemType() const final { return eItemDispReel; }
 
    void WriteRegDefaults() final;
 
@@ -135,7 +135,7 @@ public:
        m_d.m_v2.y = m_d.m_v1.y + getBoxHeight();
    }
    float   GetSpacing() const { return m_d.m_reelspacing; }
-   void    SetSpacing(const float newSpace) 
+   void    SetSpacing(const float newSpace)
    {
        m_d.m_reelspacing = max(0.0f, newSpace);
        m_d.m_v2.x = m_d.m_v1.x + getBoxWidth();
@@ -158,9 +158,7 @@ private:
    float   getBoxWidth() const;
    float   getBoxHeight() const;
 
-   PinTable    *m_ptable = nullptr;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    float       m_renderwidth, m_renderheight;     // size of each reel (rendered)
 
    struct ReelInfo

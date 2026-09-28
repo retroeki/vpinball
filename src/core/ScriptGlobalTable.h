@@ -3,18 +3,18 @@
 #pragma once
 
 // Object to expose global methods and properties to table scripts
-class ScriptGlobalTable : 
-   public CComObjectRootEx<CComSingleThreadModel>, 
-   public IDispatchImpl<ITableGlobal, &IID_ITableGlobal, &LIBID_VPinballLib>, 
+class ScriptGlobalTable :
+   public CComObjectRootEx<CComSingleThreadModel>,
+   public IDispatchImpl<ITableGlobal, &IID_ITableGlobal, &LIBID_VPinballLib>,
    public IScriptable
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
 #endif
-   // Headers to support communication between the game and the script.
+   // Headers to support communication between the game and the script
    STDMETHOD(EndModal)();
    STDMETHOD(BeginModal)();
    STDMETHOD(GetTextFile)(BSTR FileName, /*[out, retval]*/ BSTR *pContents);
@@ -73,6 +73,10 @@ public:
    STDMETHOD(get_DisableStaticPrerendering)(/*[out, retval]*/ VARIANT_BOOL *pVal);
    STDMETHOD(put_DisableStaticPrerendering)(/*[in]*/ VARIANT_BOOL newVal);
 
+private:
+   bool m_scriptDisableStaticPrerendering = false;
+
+public:
    STDMETHOD(get_WindowWidth)(/*[out, retval]*/ int *pVal);
    STDMETHOD(get_WindowHeight)(/*[out, retval]*/ int *pVal);
 
@@ -95,7 +99,6 @@ public:
    STDMETHOD(NudgeSensorStatus)(VARIANT *XNudge, VARIANT *YNudge);
    STDMETHOD(NudgeTiltStatus)(VARIANT *XPlumb, VARIANT *YPlumb, VARIANT *Tilt);
 
-   const WCHAR *get_Name() const final;
    STDMETHOD(get_Name)(BSTR *pVal);
 
    STDMETHOD(GetBalls)(/*[out, retval]*/ LPSAFEARRAY *pVal);
@@ -133,14 +136,12 @@ public:
 
    STDMETHOD(CreatePluginObject)(/*[in]*/ BSTR classId, /*[out, retval]*/ IDispatch **pVal);
 
-   void Init(VPinball *vpinball, PinTable *pt);
+   ScriptGlobalTable() { m_wzName = L"Global"sv; }
+   void Init(PinTable *pt);
    ~ScriptGlobalTable();
 
-   IDispatch *GetDispatch() final { return (IDispatch *)this; }
-   const IDispatch *GetDispatch() const final { return (const IDispatch *)this; }
-
-   ISelect *GetISelect() final { return nullptr; }
-   const ISelect *GetISelect() const final { return nullptr; }
+   IDispatch *GetIDispatch() final { return (IDispatch *)this; }
+   const IDispatch *GetIDispatch() const final { return (const IDispatch *)this; }
 
    BEGIN_COM_MAP(ScriptGlobalTable)
    COM_INTERFACE_ENTRY(ITableGlobal)
@@ -148,8 +149,5 @@ public:
    END_COM_MAP()
 
 private:
-   bool GetTextFileFromDirectory(const string& filename, const string& dirname, BSTR *pContents);
-
-   PinTable *m_pt = nullptr;
-   VPinball *m_vpinball = nullptr;
+   PinTable * m_table = nullptr;
 };

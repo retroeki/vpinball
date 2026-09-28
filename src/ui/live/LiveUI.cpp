@@ -1,42 +1,43 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "LiveUI.h"
 
-#include "renderer/VRDevice.h"
-
+#include "core/VPApp.h"
+#include "core/VPXPluginAPIImpl.h"
 #include "fonts/DroidSans.h"
 #include "fonts/DroidSansBold.h"
 #include "fonts/IconsForkAwesome.h"
 #include "fonts/ForkAwesome.h"
-
+#include "math/matrix.h"
 #include "plugins/VPXPlugin.h"
-#include "core/VPXPluginAPIImpl.h"
+#include "renderer/Renderer.h"
+#include "renderer/VRDevice.h"
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_sdl3.h"
 #include "imgui/imgui_stdlib.h"
 #include "imgui_markdown/imgui_markdown.h"
 
-#ifndef __STANDALONE__
-#include "BAM/BAMView.h"
-#endif
-
 
 ImGui::MarkdownConfig LiveUI::markdown_config;
 
-LiveUI::LiveUI(RenderDevice *const rd)
-   : m_inGameUI(*this) 
-   , m_editorUI(*this)
-   , m_ballControl(*this)
-   , m_rd(rd)
-   , m_perfUI(g_pplayer)
+// Implementation of supporting function for logging of all math objects
+namespace plog
 {
-   m_app = g_pvp;
-   m_player = g_pplayer;
+Record &operator<<(Record &record, const ImVec2 &pt) { return record << '(' << pt.x << ", " << pt.y << ')'; }
+}
+
+LiveUI::LiveUI(RenderDevice *const rd)
+   : m_ballControl(*this) 
+   , m_inGameUI(*this)
+   , m_perfUI(g_pplayer)
+   , m_editorUI(*this)
+   , m_rd(rd)
+   , m_player(g_pplayer)
+   , m_renderer(m_player->m_renderer)
+{
    m_pininput = &(m_player->m_pininput);
-   m_renderer = m_player->m_renderer;
    
    IMGUI_CHECKVERSION();
    ImGui::CreateContext();
@@ -81,8 +82,8 @@ LiveUI::LiveUI(RenderDevice *const rd)
 
    NewFrame();
 
-   m_showTouchOverlay = g_pvp->m_settings.GetPlayer_TouchOverlay();
-   m_showNotifications = g_pvp->m_settings.GetPlayer_ShowNotifications();
+   m_showTouchOverlay = g_settingsService.GetAppSettings().GetPlayer_TouchOverlay();
+   m_showNotifications = g_settingsService.GetAppSettings().GetPlayer_ShowNotifications();
 }
 
 LiveUI::~LiveUI()
@@ -96,6 +97,8 @@ LiveUI::~LiveUI()
       io.BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
       for (auto tex : ImGui::GetPlatformIO().Textures)
       {
+         delete static_cast<std::shared_ptr<BaseTexture> *>(tex->BackendUserData);
+         tex->BackendUserData = nullptr;
          tex->SetTexID(ImTextureID_Invalid);
          tex->SetStatus(ImTextureStatus_Destroyed);
       }
@@ -104,6 +107,33 @@ LiveUI::~LiveUI()
 
       ImGui::DestroyContext();
    }
+}
+
+void LiveUI::Notify(const MsgSeverity severity, const string &title, const string &message)
+{
+   if (severity == MsgSeverity::Fatal)
+   {
+      // Fatal errors are reported through a blocking message box as the application is terminating
+      SDL_Window *const wnd = (m_player != nullptr && m_player->m_playfieldWnd != nullptr) ? m_player->m_playfieldWnd->GetCore() : nullptr;
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), message.c_str(), wnd);
+      return;
+   }
+   const int durationMs = severity == MsgSeverity::Error ? 10000 : severity == MsgSeverity::Warning ? 8000 : 5000;
+   PushNotification(message, durationMs);
+}
+
+bool LiveUI::Confirm(const string &title, const string &message, const bool fallback)
+{
+   SDL_Window *const wnd = (m_player != nullptr && m_player->m_playfieldWnd != nullptr) ? m_player->m_playfieldWnd->GetCore() : nullptr;
+   const SDL_MessageBoxButtonData buttons[] = {
+      { static_cast<Uint32>(fallback ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0), 1, "Yes" },
+      { static_cast<Uint32>(SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT | (fallback ? 0 : SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT)), 0, "No" },
+   };
+   const SDL_MessageBoxData data = { SDL_MESSAGEBOX_WARNING, wnd, title.c_str(), message.c_str(), SDL_arraysize(buttons), buttons, nullptr };
+   int buttonId = fallback ? 1 : 0;
+   if (!SDL_ShowMessageBox(&data, &buttonId))
+      return fallback;
+   return buttonId == 1;
 }
 
 void LiveUI::MarkdownFormatCallback(const ImGui::MarkdownFormatInfo &markdownFormatInfo, bool start)
@@ -219,7 +249,7 @@ void LiveUI::UpdateScale()
       // For cabinet mode, the user is not standing in front of screen, so scale out the UI based on display size to be more readable (more "game like")
       if (m_player->m_ptable->GetViewMode() == ViewSetupID::BG_FULLSCREEN)
       {
-         m_uiScale = max(m_uiScale, static_cast<float>(m_player->m_playfieldWnd->GetWidth()) / 750.f);
+         m_uiScale = max(m_uiScale, static_cast<float>(min(m_player->m_playfieldWnd->GetWidth(), m_player->m_playfieldWnd->GetHeight())) / 750.f);
       }
    }
    m_uiScale = min(m_uiScale, 10.f); // To avoid texture size overflows
@@ -230,50 +260,81 @@ void LiveUI::UpdateScale()
    {
       m_perfUI.SetUIScale(overlayScale);
       m_plumbOverlay.SetUIScale(overlayScale);
-      if (prevDPI == 0.f)
-         ImGui::GetStyle().ScaleAllSizes(m_uiScale);
-      else
-         ImGui::GetStyle().ScaleAllSizes(m_uiScale / prevDPI);
+      SetupImGuiStyle(m_editorUI.IsOpened());
+   }
+}
+
+void LiveUI::AddMousePosEvent(bool isTouch, float x, float y) const
+{
+   ImGuiIO &io = ImGui::GetIO();
+   io.AddMouseSourceEvent(isTouch ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
+   switch (m_rotate)
+   {
+   case 0: io.AddMousePosEvent(x, y); break;
+   case 1: io.AddMousePosEvent(y, io.DisplaySize.y - x); break;
+   case 2: io.AddMousePosEvent(x, io.DisplaySize.y - y); break;
+   case 3: io.AddMousePosEvent(io.DisplaySize.x - y, x); break;
+   default: assert(false); return;
+   }
+}
+
+void LiveUI::HandleSDLEvent(SDL_Event &e) const
+{
+   if (e.type == SDL_EVENT_MOUSE_MOTION)
+   {
+      // Custom implementation of ImGui_ImplSDL3_ProcessEvent supporting screen rotation and event filtering
+      AddMousePosEvent(e.motion.which == SDL_TOUCH_MOUSEID, e.motion.x, e.motion.y);
+   }
+   else
+   {
+      ImGui_ImplSDL3_ProcessEvent(&e);
    }
 }
 
 void LiveUI::NewFrame()
 {
+   ImGuiIO &io = ImGui::GetIO();
+   if (m_editorUI.IsOpened() || SDL_CursorVisible())
+      io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+   else
+      io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
    UpdateScale();
    ImGui_ImplSDL3_NewFrame();
 
-   ImGuiIO &io = ImGui::GetIO();
-   switch (m_player->m_renderer->m_stereo3Denabled ? m_player->m_renderer->m_stereo3D : STEREO_OFF)
+   // Adjust display size and scale eventually gathered in ImGui_ImplSDL3_NewFrame to our framebuffer rendering with rotation & stereo support
    {
-   // Render is a vertically squashed view which is stretched back by the display
-   case STEREO_TB:
-   case STEREO_INT:
-   case STEREO_FLIPPED_INT:
-      io.DisplayFramebufferScale.y *= 0.5f;
-      break;
+      const float renderWidth = m_rd->GetCurrentPass() ? static_cast<float>(m_rd->GetCurrentPass()->m_rt->GetWidth()) : 1920.f;
+      const float renderHeight = m_rd->GetCurrentPass() ? static_cast<float>(m_rd->GetCurrentPass()->m_rt->GetHeight()) : 1080.f;
 
-   // Render is a horizontally squashed view which is stretched back by the display
-   case STEREO_SBS:
-      io.DisplayFramebufferScale.x *= 0.5f;
-      break;
+      if (io.DisplayFramebufferScale.x <= 0.f)
+         io.DisplayFramebufferScale.x = 1.f;
+      if (io.DisplayFramebufferScale.y <= 0.f)
+         io.DisplayFramebufferScale.y = 1.f;
+      switch (m_player->m_renderer->m_stereo3Denabled ? m_player->m_renderer->m_stereo3D : STEREO_OFF)
+      {
+      // Render is a vertically squashed view which is stretched back by the display
+      case STEREO_TB:
+      case STEREO_INT:
+      case STEREO_FLIPPED_INT: io.DisplayFramebufferScale.y *= 0.5f; break;
 
-   default:
-      break;
-   }
-   const int width = m_rd->GetCurrentPass() ? m_rd->GetCurrentPass()->m_rt->GetWidth() : 1920;
-   const int height = m_rd->GetCurrentPass() ? m_rd->GetCurrentPass()->m_rt->GetHeight() : 1080;
-   io.DisplaySize.x = static_cast<float>(width) / io.DisplayFramebufferScale.x;
-   io.DisplaySize.y = static_cast<float>(height) / io.DisplayFramebufferScale.y;
-   m_rotate = m_renderer->m_stereo3D == STEREO_VR
-      ? 0 : ((int)(m_player->m_ptable->GetViewSetup().GetRotation((int)io.DisplaySize.x, (int)io.DisplaySize.y) / 90.0f));
-   if (m_rotate == 1 || m_rotate == 3)
-   {
-      const float size = io.DisplaySize.x;
-      io.DisplaySize.x = io.DisplaySize.y;
-      io.DisplaySize.y = size;
-      const float scale = io.DisplayFramebufferScale.x;
-      io.DisplayFramebufferScale.x = io.DisplayFramebufferScale.y;
-      io.DisplayFramebufferScale.y = scale;
+      // Render is a horizontally squashed view which is stretched back by the display
+      case STEREO_SBS: io.DisplayFramebufferScale.x *= 0.5f; break;
+
+      default: break;
+      }
+
+      io.DisplaySize.x = renderWidth / io.DisplayFramebufferScale.x;
+      io.DisplaySize.y = renderHeight / io.DisplayFramebufferScale.y;
+
+      if (m_renderer->m_stereo3D == STEREO_VR)
+         m_rotate = 0;
+      else
+         m_rotate = static_cast<int>(m_player->m_ptable->GetViewSetup().GetRotation(static_cast<int>(io.DisplaySize.x), static_cast<int>(io.DisplaySize.y)) / 90.0f);
+      if (m_rotate == 1 || m_rotate == 3)
+      {
+         std::swap(io.DisplaySize.x, io.DisplaySize.y);
+         std::swap(io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+      }
    }
 
    // Enable mouse capture when dragging (needed when dragging main windows)
@@ -284,26 +345,17 @@ void LiveUI::NewFrame()
             want_capture = true;
       SDL_CaptureMouse(want_capture);
    }
-   // Update mouse position to latest global state (needed when dragging main windows)
-   SDL_Window *focused_window = SDL_GetKeyboardFocus();
-   if (!SDL_GetWindowRelativeMouseMode(focused_window))
+
+   // Late mouse position update to latest (async) global state (needed when dragging main windows)
    {
-      float mouse_x_global, mouse_y_global;
-      int window_x, window_y;
-      SDL_GetGlobalMouseState(&mouse_x_global, &mouse_y_global);
-      SDL_GetWindowPosition(focused_window, &window_x, &window_y);
-      const ImVec2 mousePos(mouse_x_global - (float)window_x, mouse_y_global - (float)window_y);
-      switch (m_rotate)
-      {
-      case 0: ImGui::GetIO().AddMousePosEvent(mousePos.x, mousePos.y); break;
-      case 1: ImGui::GetIO().AddMousePosEvent(mousePos.y, io.DisplaySize.y - mousePos.x); break;
-      case 2: ImGui::GetIO().AddMousePosEvent(mousePos.x, io.DisplaySize.y - mousePos.y); break;
-      case 3: ImGui::GetIO().AddMousePosEvent(io.DisplaySize.x - mousePos.y, mousePos.x); break;
-      default: assert(false); return;
-      }
+      SDL_Point windowPos;
+      SDL_FPoint globalMouse;
+      SDL_GetGlobalMouseState(&globalMouse.x, &globalMouse.y);
+      SDL_GetWindowPosition(m_player->m_playfieldWnd->GetCore(), &windowPos.x, &windowPos.y);
+      AddMousePosEvent(false, globalMouse.x - static_cast<float>(windowPos.x), globalMouse.y - static_cast<float>(windowPos.y));
    }
 
-   // We implement our own keyboard navigation using flipper keys
+   // We implement our own keyboard navigation using flipper keys/gamepad/VR controller
    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
 
    ImGui::NewFrame();
@@ -317,24 +369,22 @@ void LiveUI::Render3D()
 
 void LiveUI::RenderUI()
 {
-   // For the time being, the UI is only available inside a running player
-   if (m_player == nullptr || m_player->GetCloseState() != Player::CS_PLAYING || m_rd->GetCurrentPass() == nullptr)
+   if (m_player == nullptr || m_player->GetCloseState() != Player::CS_PLAYING || m_rd->GetCurrentPass() == nullptr || m_player->m_playMode == Player::PlayMode::CaptureAttract)
       return;
 
-   const int width = m_rd->GetCurrentPass()->m_rt->GetWidth();
-   const int height = m_rd->GetCurrentPass()->m_rt->GetHeight();
+   const ImGuiIO& io = ImGui::GetIO();
+   const bool rotated = (m_rotate == 1 || m_rotate == 3);
+   const int width = static_cast<int>(rotated ? io.DisplaySize.y : io.DisplaySize.x);
+   const int height = static_cast<int>(rotated ? io.DisplaySize.x : io.DisplaySize.y);
 
    UpdateTouchUI();
 
    ImGui::PushFont(m_baseFont, m_baseFont->LegacySize);
 
-   if (!m_deviceLayoutName.empty())
-      UpdateDeviceLayoutPopup();
-
    // Tweak UI (aligned to playfield view, using custom flipper controls)
    m_inGameUI.Update();
 
-   if (!m_player->IsPlaying() && !m_editorUI.IsOpened())
+   if (!m_player->IsPlaying() && !m_player->m_isLoading && !m_editorUI.IsOpened())
    {
       ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 24 * m_uiScale, 4 * m_uiScale));
       ImGui::Begin("PauseOverlay", nullptr, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus // Prevent focus issues
@@ -343,13 +393,7 @@ void LiveUI::RenderUI()
       ImGui::End();
    }
 
-   if (ImGui::IsPopupOpen(ID_BAM_SETTINGS))
-   { // BAM headtracking UI (aligned to desktop, using traditional mouse interaction) => hacky, remove and use plugin + plugin settings instead
-      #ifndef __STANDALONE__
-         BAMView::drawMenu();
-      #endif
-   }
-   else if (m_editorUI.IsOpened())
+   if (m_editorUI.IsOpened())
    { // Editor UI (aligned to desktop, using traditional mouse interaction)
       SetupImGuiStyle(true);
       m_editorUI.RenderUI();
@@ -379,27 +423,32 @@ void LiveUI::RenderUI()
 
    // Update textures
    if (draw_data->Textures != nullptr)
+   {
       for (ImTextureData *tex : *draw_data->Textures)
       {
          if (tex->Status == ImTextureStatus_WantCreate || tex->Status == ImTextureStatus_WantUpdates)
          {
-            // Somewhat overkill as we treat update as destroy/create but fine enough (just slightly impact performance)
             assert(tex->GetPitch() == tex->Width * 4);
             assert(tex->Format == ImTextureFormat_RGBA32);
-            std::shared_ptr<BaseTexture> texture;
-            BaseTexture::Update(texture, tex->Width, tex->Height, BaseTexture::RGBA, static_cast<const uint8_t *>(tex->GetPixels()));
-            tex->SetTexID(m_renderer->m_renderDevice->m_texMan.LoadTexture(texture.get(), false));
+            if (tex->Status == ImTextureStatus_WantCreate)
+               tex->BackendUserData = new std::shared_ptr<BaseTexture>();
+            auto texture = static_cast<std::shared_ptr<BaseTexture> *>(tex->BackendUserData);
+            BaseTexture::Update(*texture, tex->Width, tex->Height, BaseTexture::RGBA, static_cast<const uint8_t *>(tex->GetPixels()));
+            (*texture)->SetName(std::format("ImGui.Tex{}", tex->UniqueID));
+            tex->SetTexID(m_renderer->m_renderDevice->m_texMan.LoadTexture(texture->get(), false));
             tex->SetStatus(ImTextureStatus_OK);
          }
-         if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames > 0)
+         else if (tex->Status == ImTextureStatus_WantDestroy && tex->UnusedFrames > 0)
          {
+            delete static_cast<std::shared_ptr<BaseTexture> *>(tex->BackendUserData);
+            tex->BackendUserData = nullptr;
             tex->SetTexID(ImTextureID_Invalid);
             tex->SetStatus(ImTextureStatus_Destroyed);
          }
       }
+   }
 
    // Update meshes and renders
-   const ImGuiIO &io = ImGui::GetIO();
    const Matrix3D matRotate = Matrix3D::MatrixRotateZ(static_cast<float>(m_rotate * (M_PI / 2.0)));
    Matrix3D matTranslate;
    switch (m_rotate)
@@ -412,14 +461,17 @@ void LiveUI::RenderUI()
    }
    const float right = (m_rotate == 1 || m_rotate == 3) ? io.DisplaySize.y : io.DisplaySize.x;
    const float bottom = (m_rotate == 1 || m_rotate == 3) ? io.DisplaySize.x : io.DisplaySize.y;
-   const Matrix3D matProj = matRotate * matTranslate * Matrix3D::MatrixOrthoOffCenterRH(0.f, right, bottom, 0.f, 0.f, 1.f);
-   m_rd->m_uiShader->SetMatrix(SHADER_matWorldView, &matProj);
-   m_rd->m_uiShader->SetVector(SHADER_staticColor_Alpha,
+   Matrix3D matView[2];
+   matView[0] = matRotate * matTranslate * Matrix3D::MatrixOrthoOffCenterRH(0.f, right, bottom, 0.f, 0.f, 1.f);
+   if (m_rd->m_nEyes == 2)
+      matView[1] = matView[0];  
+   m_rd->m_uiShader->SetMatrix(ShaderUniform::matWorldView, &matView[0], m_rd->m_nEyes);
+   m_rd->m_uiShader->SetVector(ShaderUniform::staticColor_Alpha,
       m_player->m_vrDevice ? ((float)m_player->m_vrDevice->GetEyeWidth() * 0.15f) : 0.f, // Stereo offset for VR (fake depth)
       0.f, // Unused
       0.f, // Unused
-      // A value of 1.0 should be sdrWhite * 80, while in the WCG colorspace 80 nits is 0.5
-      m_player->m_playfieldWnd->IsWCGBackBuffer() ? (2.0f / m_player->m_playfieldWnd->GetSDRWhitePoint()) : 1.f); // SDR color scaling
+      // SDR white level to place UI white at, normalized to the 10000 nits PQ encodes (the white point counts in multiples of 80 nits). 0 = no conversion (sRGB backbuffer)
+      m_player->m_playfieldWnd->IsWCGBackBuffer() ? (m_player->m_playfieldWnd->GetSDRWhitePoint() * (float)(80. / 10000.)) : 0.f);
    m_rd->ResetRenderState();
    m_rd->SetRenderState(RenderState::COLORWRITEENABLE, RenderState::RGBMASK_RGBA);
    m_rd->SetRenderState(RenderState::ALPHABLENDENABLE, RenderState::RS_TRUE);
@@ -429,9 +481,15 @@ void LiveUI::RenderUI()
    m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
    m_rd->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
    m_rd->SetRenderState(RenderState::ZENABLE, RenderState::RS_FALSE);
-   m_rd->m_uiShader->SetTechnique(SHADER_TECHNIQUE_LiveUI);
+   #ifdef ENABLE_BGFX
+   if (m_rd->GetCurrentPass()->m_rt->m_nLayers == 1)
+      m_rd->m_uiShader->SetTechnique(ShaderTechnique::LiveUI_mono);
+   else
+   #endif
+      m_rd->m_uiShader->SetTechnique(ShaderTechnique::LiveUI);
    if (static_cast<int>(m_meshBuffers.size()) < draw_data->CmdListsCount)
       m_meshBuffers.resize(draw_data->CmdListsCount);
+   int depthSort = -10000;
    for (int n = 0; n < draw_data->CmdListsCount; n++)
    {
       const ImDrawList * const cmd_list = draw_data->CmdLists[n];
@@ -444,7 +502,7 @@ void LiveUI::RenderUI()
          {
             auto ib = std::make_shared<IndexBuffer>(m_rd, max(m_meshBuffers[n] ? m_meshBuffers[n]->m_ib->m_count : 0, numIndices), true, IndexBuffer::Format::FMT_INDEX32);
             auto vb = std::make_shared<VertexBuffer>(m_rd, max(m_meshBuffers[n] ? m_meshBuffers[n]->m_vb->m_count : 0, numVertices), nullptr, true);
-            m_meshBuffers[n] = std::make_shared<MeshBuffer>(vb, ib, true);
+            m_meshBuffers[n] = std::make_shared<MeshBuffer>(std::format("ImGui.{}", n), vb, ib, false);
          }
 
          Vertex3D_NoTex2 *vb;
@@ -473,16 +531,10 @@ void LiveUI::RenderUI()
       {
          if (cmd->ElemCount != 0)
          {
-            #ifdef ENABLE_BGFX
-            // FIXME Hacky forced mesh buffer upload before actually drawing, not sure why this is needed: upload are supposed to happen in the 'preCmd' list (before any render command)
-            // so this should not have any effect, still it does. This definitely needs more investigation...
-            m_rd->m_uiShader->SetVector(SHADER_clip_plane, 0.f, 0.f, 0.f, 0.f);
-            m_rd->DrawMesh(m_rd->m_uiShader, true, Vertex3Ds(), -10000.f, m_meshBuffers[n], RenderDevice::TRIANGLELIST, 0, 1);
-            #endif
-
-            m_rd->m_uiShader->SetVector(SHADER_clip_plane, cmd->ClipRect.x, cmd->ClipRect.y, cmd->ClipRect.z, cmd->ClipRect.w);
-            m_rd->m_uiShader->SetTexture(SHADER_tex_base_color, cmd->GetTexID());
-            m_rd->DrawMesh(m_rd->m_uiShader, true, Vertex3Ds(), -10000.f, m_meshBuffers[n], RenderDevice::TRIANGLELIST, cmd->IdxOffset, cmd->ElemCount);
+            m_rd->m_uiShader->SetVector(ShaderUniform::clip_plane, cmd->ClipRect.x, cmd->ClipRect.y, cmd->ClipRect.z, cmd->ClipRect.w);
+            m_rd->m_uiShader->SetTexture(ShaderUniform::tex_base_color, cmd->GetTexID());
+            m_rd->DrawMesh(m_rd->m_uiShader, true, Vertex3Ds(0.f, 0.f, 0.f), static_cast<float>(depthSort), m_meshBuffers[n], RenderDevice::TRIANGLELIST, cmd->IdxOffset, cmd->ElemCount);
+            depthSort--;
          }
       }
    }
@@ -495,6 +547,9 @@ void LiveUI::UpdateTouchUI()
    if (!m_player->m_pininput.HasTouchInput())
       return;
 
+   if (m_player->m_vrDevice)
+      return;
+
    if (!m_showTouchOverlay)
       return;
 
@@ -503,9 +558,9 @@ void LiveUI::UpdateTouchUI()
    const float screenWidth = io.DisplaySize.x;
    const float screenHeight = io.DisplaySize.y;
 
-   constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+   constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize
+      | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
 
-   ImGui::SetNextWindowBgAlpha(0.0f);
    ImGui::SetNextWindowPos(ImVec2(0, 0));
    ImGui::SetNextWindowSize(ImVec2(screenWidth, screenHeight));
    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -542,50 +597,9 @@ void LiveUI::HideUI()
    if (m_inGameUI.IsOpened())
       m_inGameUI.Close();
    m_editorUI.Close();
-   m_player->m_ptable->m_settings.Save();
-   g_pvp->m_settings.Save();
+   g_settingsService.GetActiveSettings().Save();
+   g_settingsService.GetAppSettings().Save();
    m_player->SetPlayState(true);
-}
-
-bool LiveUI::ProposeInputLayout(const string &deviceName, const std::function<void(bool, bool)> &handler)
-{
-   // RETROEKI: Disabled controller detector dialog - we hardcode our own controls
-   return false;
-
-   if (!m_deviceLayoutName.empty())
-      return false;
-   m_deviceLayoutName = deviceName;
-   m_deviceLayoutHandler = handler;
-   m_deviceLayoutDontAskAgain = false;
-   return true;
-}
-
-void LiveUI::UpdateDeviceLayoutPopup()
-{
-   if (!m_deviceLayoutName.empty())
-      ImGui::OpenPopup("Apply Device Layout ?");
-   ImGui::SetNextWindowSize(ImVec2(350.f * m_uiScale, 0.f));
-   if (ImGui::BeginPopupModal("Apply Device Layout ?"))
-   {
-      ImGui::TextWrapped("Device '%s' was detected. Would you like the default input layout to be applied ?", m_deviceLayoutName.c_str());
-      ImGui::Separator();
-      ImGui::Checkbox("Don't ask again", &m_deviceLayoutDontAskAgain);
-      ImGui::Separator();
-      if (ImGui::Button("Discard"))
-      {
-         m_deviceLayoutName = ""s;
-         m_deviceLayoutHandler(false, m_deviceLayoutDontAskAgain);
-         ImGui::CloseCurrentPopup();
-      }
-      ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("Apply").x - ImGui::GetStyle().FramePadding.x * 2.f);
-      if (ImGui::Button("Apply"))
-      {
-         m_deviceLayoutName = ""s;
-         m_deviceLayoutHandler(true, m_deviceLayoutDontAskAgain);
-         ImGui::CloseCurrentPopup();
-      }
-      ImGui::EndPopup();
-   }
 }
 
 extern ImGuiKey ImGui_ImplSDL3_KeyEventToImGuiKey(SDL_Keycode keycode, SDL_Scancode scancode);
@@ -619,7 +633,10 @@ void LiveUI::SetupImGuiStyle(const bool isEditor) const
 {
    // Theme looking somewhat like Blender's style, based on 'Rounded Visual Studio' style by RedNicStone from ImThemes
    ImGuiStyle &style = ImGui::GetStyle();
-   constexpr float overall_alpha = 1.f;
+
+   // Reset to defaults to be able to use ScaleAllSize while not defining all style sizes
+   ImGuiStyle defaultStyle;
+   style = defaultStyle;
 
    style.Alpha = 1.0f;
    style.DisabledAlpha = 0.6f;
@@ -652,57 +669,59 @@ void LiveUI::SetupImGuiStyle(const bool isEditor) const
    style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
    style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
 
+   ImGui::GetStyle().ScaleAllSizes(m_uiScale);
+
    style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-   style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.592f, 0.592f, 0.592f, overall_alpha);
-   style.Colors[ImGuiCol_WindowBg] = isEditor ? ImColor(0xFF363636) : ImColor(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_ChildBg] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_PopupBg] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_Border] = ImVec4(0.306f, 0.306f, 0.306f, overall_alpha);
-   style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.306f, 0.306f, 0.306f, overall_alpha);
-   style.Colors[ImGuiCol_FrameBg] = isEditor ? ImColor(0xFF545454) : ImColor(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_TitleBg] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.322f, 0.322f, 0.333f, overall_alpha);
-   style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.353f, 0.353f, 0.373f, overall_alpha);
-   style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.353f, 0.353f, 0.373f, overall_alpha);
-   style.Colors[ImGuiCol_CheckMark] = isEditor ? ImColor(0xFFdddddd) : ImColor(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_Button] = ImVec4(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_Header] = isEditor ? ImColor(0xFF3d3d3d) : ImColor(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_Separator] = ImVec4(0.306f, 0.306f, 0.306f, overall_alpha);
-   style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.306f, 0.306f, 0.306f, overall_alpha);
-   style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.306f, 0.306f, 0.306f, overall_alpha);
-   style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.2f, 0.2f, 0.216f, overall_alpha);
-   style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.322f, 0.322f, 0.333f, overall_alpha);
-   style.Colors[ImGuiCol_Tab] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_TabHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_TabActive] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_PlotLines] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.114f, 0.592f, 0.925f, overall_alpha);
-   style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.188f, 0.188f, 0.2f, overall_alpha);
-   style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.310f, 0.310f, 0.349f, overall_alpha);
-   style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.227f, 0.227f, 0.247f, overall_alpha);
-   style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f * overall_alpha);
-   style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.060f * overall_alpha);
-   style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.0f, 0.467f, 0.784f, overall_alpha);
-   style.Colors[ImGuiCol_DragDropTarget] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_NavHighlight] = ImVec4(0.145f, 0.145f, 0.149f, overall_alpha);
-   style.Colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.0f, 1.0f, 1.0f, 0.700f * overall_alpha);
-   style.Colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.800f, 0.800f, 0.800f, 0.20f * overall_alpha);
-   style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.145f, 0.145f, 0.149f, 0.35f * overall_alpha);
+   style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.592f, 0.592f, 0.592f, 1.0f);
+   style.Colors[ImGuiCol_WindowBg] = isEditor ? ImColor(0xFF363636) : ImColor(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_ChildBg] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_PopupBg] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_Border] = ImVec4(0.306f, 0.306f, 0.306f, 1.0f);
+   style.Colors[ImGuiCol_BorderShadow] = ImVec4(0.306f, 0.306f, 0.306f, 1.0f);
+   style.Colors[ImGuiCol_FrameBg] = isEditor ? ImColor(0xFF545454) : ImColor(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_FrameBgActive] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_TitleBg] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.322f, 0.322f, 0.333f, 1.0f);
+   style.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.353f, 0.353f, 0.373f, 1.0f);
+   style.Colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.353f, 0.353f, 0.373f, 1.0f);
+   style.Colors[ImGuiCol_CheckMark] = isEditor ? ImColor(0xFFdddddd) : ImColor(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_Button] = ImVec4(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_Header] = isEditor ? ImColor(0xFF2B5A8C) : ImColor(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_Separator] = ImVec4(0.306f, 0.306f, 0.306f, 1.0f);
+   style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(0.306f, 0.306f, 0.306f, 1.0f);
+   style.Colors[ImGuiCol_SeparatorActive] = ImVec4(0.306f, 0.306f, 0.306f, 1.0f);
+   style.Colors[ImGuiCol_ResizeGrip] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.2f, 0.2f, 0.216f, 1.0f);
+   style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(0.322f, 0.322f, 0.333f, 1.0f);
+   style.Colors[ImGuiCol_Tab] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_TabHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_TabActive] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_PlotLines] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_PlotHistogram] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(0.114f, 0.592f, 0.925f, 1.0f);
+   style.Colors[ImGuiCol_TableHeaderBg] = ImVec4(0.188f, 0.188f, 0.2f, 1.0f);
+   style.Colors[ImGuiCol_TableBorderStrong] = ImVec4(0.310f, 0.310f, 0.349f, 1.0f);
+   style.Colors[ImGuiCol_TableBorderLight] = ImVec4(0.227f, 0.227f, 0.247f, 1.0f);
+   style.Colors[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f * 1.0f);
+   style.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 1.0f, 1.0f, 0.060f * 1.0f);
+   style.Colors[ImGuiCol_TextSelectedBg] = ImVec4(0.0f, 0.467f, 0.784f, 1.0f);
+   style.Colors[ImGuiCol_DragDropTarget] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_NavHighlight] = ImVec4(0.145f, 0.145f, 0.149f, 1.0f);
+   style.Colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.0f, 1.0f, 1.0f, 0.700f);
+   style.Colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.800f, 0.800f, 0.800f, 0.20f);
+   style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.145f, 0.145f, 0.149f, 0.35f);
 }

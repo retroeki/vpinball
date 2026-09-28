@@ -13,6 +13,7 @@
 		C114190C2C277D9900582B6F /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C114190B2C277D9900582B6F /* Preview Assets.xcassets */; };
 		C11419182C28C5C500582B6F /* Shimmer.metal in Sources */ = {isa = PBXBuildFile; fileRef = C11419162C28C5C500582B6F /* Shimmer.metal */; };
 		C119B03B2C32D48A00A4E74D /* VPinballManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C119B03A2C32D48A00A4E74D /* VPinballManager.swift */; };
+		C1A3F0E12F3C1A0000A4E74D /* HapticsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A3F0E02F3C1A0000A4E74D /* HapticsManager.swift */; };
 		C120EA732CA703810048EB24 /* VPinballFramework.dSYM in Copy VPinballFramework.dSYM */ = {isa = PBXBuildFile; fileRef = C120EA722CA703810048EB24 /* VPinballFramework.dSYM */; };
 		C12124612D04725900EB0481 /* VPinballInterop.swift in Sources */ = {isa = PBXBuildFile; fileRef = C12124602D04725900EB0481 /* VPinballInterop.swift */; };
 		C1320F602C8E56BD00035C0F /* HUDOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1320F5F2C8E56BD00035C0F /* HUDOverlayView.swift */; };
@@ -20,7 +21,7 @@
 		C145FE1E2C5B4ADB0049D313 /* SettingsExternalDMDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C145FE1A2C5B4ADB0049D313 /* SettingsExternalDMDView.swift */; };
 		C145FE202C5B4ADB0049D313 /* SettingsPerformanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C145FE1C2C5B4ADB0049D313 /* SettingsPerformanceView.swift */; };
 		C15528C42EA016BA005CBB91 /* TableFileOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15528C32EA016BA005CBB91 /* TableFileOperations.swift */; };
-		C15DE5762C7257F1001F1D13 /* VPinballViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15DE5752C7257F1001F1D13 /* VPinballViewModel.swift */; };
+		C15DE5762C7257F1001F1D13 /* VPinballModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15DE5752C7257F1001F1D13 /* VPinballModel.swift */; };
 		C15DE57C2C75A324001F1D13 /* CodeWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C15DE57B2C75A324001F1D13 /* CodeWebView.swift */; };
 		C1610F1C2C4BE8930049ED87 /* ViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1610F1B2C4BE8930049ED87 /* ViewModifiers.swift */; };
 		C1610F202C4D31350049ED87 /* Enums.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1610F1F2C4D31350049ED87 /* Enums.swift */; };
@@ -29,16 +30,18 @@
 		C16266452C29955E0002FD15 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C162663B2C29955E0002FD15 /* SplashView.swift */; };
 		C16266462C29955E0002FD15 /* DocumentPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C162663C2C29955E0002FD15 /* DocumentPickerView.swift */; };
 		C16266482C29955E0002FD15 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16266402C29955E0002FD15 /* Extensions.swift */; };
-		C18B50682E9C6C5B00BF76FE /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = C18B50672E9C6C5B00BF76FE /* ZIPFoundation */; };
 		C1920AF62C67BCE000483104 /* TableImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1920AF52C67BCE000483104 /* TableImageView.swift */; };
-		C1920AF82C67CBC700483104 /* TableListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1920AF72C67CBC700483104 /* TableListView.swift */; };
-		C1920AFA2C68E22E00483104 /* TableListButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1920AF92C68E22E00483104 /* TableListButton.swift */; };
-		C1920AFC2C6A281A00483104 /* TablePlaceholderImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1920AFB2C6A281A00483104 /* TablePlaceholderImage.swift */; };
+		C1920AFC2C6A281A00483104 /* TableImagePlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1920AFB2C6A281A00483104 /* TableImagePlaceholderView.swift */; };
 		C194FC822C372668009027E4 /* ActivityViewControllerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C194FC812C372668009027E4 /* ActivityViewControllerView.swift */; };
 		C19651892C46EE31002BAED9 /* VPinballFramework.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C19651872C46EE31002BAED9 /* VPinballFramework.framework */; };
 		C196518A2C46EE31002BAED9 /* VPinballFramework.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = C19651872C46EE31002BAED9 /* VPinballFramework.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		C19E19C62F38DCB900B9030B /* TableGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19E19C52F38DCB900B9030B /* TableGridView.swift */; };
+		C19E19C72F38DCB900B9030B /* TableContextMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19E19C22F38DCB900B9030B /* TableContextMenu.swift */; };
+		C19E19C82F38DCB900B9030B /* TableItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19E19C42F38DCB900B9030B /* TableItemView.swift */; };
+		C19E19C92F38DCB900B9030B /* TableContextPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19E19C32F38DCB900B9030B /* TableContextPreview.swift */; };
 		C1A292E32C4720090056A3C0 /* MailComposeViewControllerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A292E22C4720090056A3C0 /* MailComposeViewControllerView.swift */; };
 		C1A292E92C4751C20056A3C0 /* CodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A292E82C4751C20056A3C0 /* CodeView.swift */; };
+		C1AA00012F3A000000000001 /* MainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA00002F3A000000000001 /* MainViewModel.swift */; };
 		C1B20FC92DF1F0110012E33F /* SettingsWebServerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B20FC82DF1F0110012E33F /* SettingsWebServerView.swift */; };
 		C1D5C4042E9B52750059F90F /* VPinballIOSStartup.m in Sources */ = {isa = PBXBuildFile; fileRef = C1D5C4022E9B52750059F90F /* VPinballIOSStartup.m */; };
 		C1D5C4052E9B52750059F90F /* VPinballIOSStartup.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D5C4032E9B52750059F90F /* VPinballIOSStartup.swift */; };
@@ -81,6 +84,7 @@
 		C114191F2C28C9B800582B6F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C119B0392C32060400A4E74D /* VPinball.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VPinball.entitlements; sourceTree = "<group>"; };
 		C119B03A2C32D48A00A4E74D /* VPinballManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VPinballManager.swift; sourceTree = "<group>"; };
+		C1A3F0E02F3C1A0000A4E74D /* HapticsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticsManager.swift; sourceTree = "<group>"; };
 		C120EA722CA703810048EB24 /* VPinballFramework.dSYM */ = {isa = PBXFileReference; lastKnownFileType = wrapper.dsym; name = VPinballFramework.dSYM; path = VPinball/Frameworks/dSYM/VPinballFramework.dSYM; sourceTree = "<group>"; };
 		C12124602D04725900EB0481 /* VPinballInterop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPinballInterop.swift; sourceTree = "<group>"; };
 		C1320F5F2C8E56BD00035C0F /* HUDOverlayView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HUDOverlayView.swift; sourceTree = "<group>"; };
@@ -88,7 +92,7 @@
 		C145FE1A2C5B4ADB0049D313 /* SettingsExternalDMDView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsExternalDMDView.swift; sourceTree = "<group>"; };
 		C145FE1C2C5B4ADB0049D313 /* SettingsPerformanceView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsPerformanceView.swift; sourceTree = "<group>"; wrapsLines = 0; };
 		C15528C32EA016BA005CBB91 /* TableFileOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableFileOperations.swift; sourceTree = "<group>"; };
-		C15DE5752C7257F1001F1D13 /* VPinballViewModel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VPinballViewModel.swift; sourceTree = "<group>"; };
+		C15DE5752C7257F1001F1D13 /* VPinballModel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VPinballModel.swift; sourceTree = "<group>"; };
 		C15DE57B2C75A324001F1D13 /* CodeWebView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CodeWebView.swift; sourceTree = "<group>"; };
 		C1610F1B2C4BE8930049ED87 /* ViewModifiers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ViewModifiers.swift; sourceTree = "<group>"; };
 		C1610F1F2C4D31350049ED87 /* Enums.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Enums.swift; sourceTree = "<group>"; };
@@ -98,13 +102,16 @@
 		C162663C2C29955E0002FD15 /* DocumentPickerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DocumentPickerView.swift; sourceTree = "<group>"; };
 		C16266402C29955E0002FD15 /* Extensions.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		C1920AF52C67BCE000483104 /* TableImageView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TableImageView.swift; sourceTree = "<group>"; };
-		C1920AF72C67CBC700483104 /* TableListView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TableListView.swift; sourceTree = "<group>"; };
-		C1920AF92C68E22E00483104 /* TableListButton.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TableListButton.swift; sourceTree = "<group>"; };
-		C1920AFB2C6A281A00483104 /* TablePlaceholderImage.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TablePlaceholderImage.swift; sourceTree = "<group>"; };
+		C1920AFB2C6A281A00483104 /* TableImagePlaceholderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TableImagePlaceholderView.swift; sourceTree = "<group>"; };
 		C194FC812C372668009027E4 /* ActivityViewControllerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ActivityViewControllerView.swift; sourceTree = "<group>"; };
 		C19651872C46EE31002BAED9 /* VPinballFramework.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VPinballFramework.framework; path = VPinball/Frameworks/VPinballFramework.framework; sourceTree = "<group>"; };
+		C19E19C22F38DCB900B9030B /* TableContextMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableContextMenu.swift; sourceTree = "<group>"; };
+		C19E19C32F38DCB900B9030B /* TableContextPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableContextPreview.swift; sourceTree = "<group>"; };
+		C19E19C42F38DCB900B9030B /* TableItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableItemView.swift; sourceTree = "<group>"; };
+		C19E19C52F38DCB900B9030B /* TableGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridView.swift; sourceTree = "<group>"; };
 		C1A292E22C4720090056A3C0 /* MailComposeViewControllerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MailComposeViewControllerView.swift; sourceTree = "<group>"; };
 		C1A292E82C4751C20056A3C0 /* CodeView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CodeView.swift; sourceTree = "<group>"; };
+		C1AA00002F3A000000000001 /* MainViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewModel.swift; sourceTree = "<group>"; };
 		C1B20FC82DF1F0110012E33F /* SettingsWebServerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWebServerView.swift; sourceTree = "<group>"; };
 		C1D5C4022E9B52750059F90F /* VPinballIOSStartup.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = VPinballIOSStartup.m; sourceTree = "<group>"; };
 		C1D5C4032E9B52750059F90F /* VPinballIOSStartup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPinballIOSStartup.swift; sourceTree = "<group>"; };
@@ -118,7 +125,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				C19651892C46EE31002BAED9 /* VPinballFramework.framework in Frameworks */,
-				C18B50682E9C6C5B00BF76FE /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,10 +197,12 @@
 				C162663A2C29955E0002FD15 /* SettingsView.swift */,
 				C1B20FC82DF1F0110012E33F /* SettingsWebServerView.swift */,
 				C162663B2C29955E0002FD15 /* SplashView.swift */,
+				C19E19C22F38DCB900B9030B /* TableContextMenu.swift */,
+				C19E19C32F38DCB900B9030B /* TableContextPreview.swift */,
+				C19E19C52F38DCB900B9030B /* TableGridView.swift */,
+				C1920AFB2C6A281A00483104 /* TableImagePlaceholderView.swift */,
 				C1920AF52C67BCE000483104 /* TableImageView.swift */,
-				C1920AF92C68E22E00483104 /* TableListButton.swift */,
-				C1920AF72C67CBC700483104 /* TableListView.swift */,
-				C1920AFB2C6A281A00483104 /* TablePlaceholderImage.swift */,
+				C19E19C42F38DCB900B9030B /* TableItemView.swift */,
 			);
 			path = views;
 			sourceTree = "<group>";
@@ -202,9 +210,10 @@
 		C162663F2C29955E0002FD15 /* models */ = {
 			isa = PBXGroup;
 			children = (
-				C15DE5752C7257F1001F1D13 /* VPinballViewModel.swift */,
+				C1AA00002F3A000000000001 /* MainViewModel.swift */,
 				C1D90AE42C9A6007006CB735 /* SettingsModel.swift */,
 				C104D1C92E52744800FD86CC /* Table.swift */,
+				C15DE5752C7257F1001F1D13 /* VPinballModel.swift */,
 			);
 			path = models;
 			sourceTree = "<group>";
@@ -215,6 +224,7 @@
 				C1610F1F2C4D31350049ED87 /* Enums.swift */,
 				C16266402C29955E0002FD15 /* Extensions.swift */,
 				C13A42CB2E871BB0001A44AD /* StatusBarManager.swift */,
+				C1A3F0E02F3C1A0000A4E74D /* HapticsManager.swift */,
 				C15528C32EA016BA005CBB91 /* TableFileOperations.swift */,
 				C1F802E52E9926EB00A99C73 /* TableManager.swift */,
 				C1610F1B2C4BE8930049ED87 /* ViewModifiers.swift */,
@@ -254,7 +264,6 @@
 			);
 			name = VPinball;
 			packageProductDependencies = (
-				C18B50672E9C6C5B00BF76FE /* ZIPFoundation */,
 			);
 			productName = VPinball;
 			productReference = C11419012C277D9800582B6F /* Visual Pinball.app */;
@@ -268,7 +277,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1540;
-				LastUpgradeCheck = 1540;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					C11419002C277D9800582B6F = {
 						CreatedOnToolsVersion = 15.4;
@@ -286,7 +295,6 @@
 			);
 			mainGroup = C11418F82C277D9800582B6F;
 			packageReferences = (
-				C18B50662E9C6C5B00BF76FE /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			productRefGroup = C11419022C277D9800582B6F /* Products */;
 			projectDirPath = "";
@@ -327,7 +335,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "BUNDLE_RESOURCES=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/scripts\"\ncp -r \"$PROJECT_DIR/../../scripts\" \"${BUNDLE_RESOURCES}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/assets\"\ncp -r \"$PROJECT_DIR/../../src/assets\" \"${BUNDLE_RESOURCES}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/plugins\"\n\nmkdir -p \"${BUNDLE_RESOURCES}/plugins/scoreview\"\ncp -r \"$PROJECT_DIR/../../plugins/scoreview/layouts\" \"${BUNDLE_RESOURCES}/plugins/scoreview\"\n\nmkdir -p \"${BUNDLE_RESOURCES}/plugins/flexdmd\"\ncp -r \"$PROJECT_DIR/../../plugins/flexdmd/assets\" \"${BUNDLE_RESOURCES}/plugins/flexdmd\"\n";
+			shellScript = "BUNDLE_RESOURCES=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/scripts\"\ncp -r \"$PROJECT_DIR/../../scripts\" \"${BUNDLE_RESOURCES}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/assets\"\ncp -r \"$PROJECT_DIR/../../src/assets\" \"${BUNDLE_RESOURCES}\"\n\nrm -rf \"${BUNDLE_RESOURCES}/plugins\"\n\nmkdir -p \"${BUNDLE_RESOURCES}/plugins/scoreview\"\ncp -r \"$PROJECT_DIR/../../plugins/scoreview/layouts\" \"${BUNDLE_RESOURCES}/plugins/scoreview\"\n\nmkdir -p \"${BUNDLE_RESOURCES}/plugins/flexdmd\"\ncp -r \"$PROJECT_DIR/../../plugins/flexdmd/assets\" \"${BUNDLE_RESOURCES}/plugins/flexdmd\"\n\nmkdir -p \"${BUNDLE_RESOURCES}/plugins/inspector\"\ncp -r \"$PROJECT_DIR/../../plugins/inspector/assets\" \"${BUNDLE_RESOURCES}/plugins/inspector\"\n";
 		};
 		C1FF3F472CB8DD67004D238B /* Copy Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -358,8 +366,13 @@
 				C1D5C4042E9B52750059F90F /* VPinballIOSStartup.m in Sources */,
 				C1D5C4052E9B52750059F90F /* VPinballIOSStartup.swift in Sources */,
 				C16266462C29955E0002FD15 /* DocumentPickerView.swift in Sources */,
+				C19E19C62F38DCB900B9030B /* TableGridView.swift in Sources */,
+				C19E19C72F38DCB900B9030B /* TableContextMenu.swift in Sources */,
+				C19E19C82F38DCB900B9030B /* TableItemView.swift in Sources */,
+				C19E19C92F38DCB900B9030B /* TableContextPreview.swift in Sources */,
 				C13A42CC2E871BB0001A44AD /* StatusBarManager.swift in Sources */,
 				C119B03B2C32D48A00A4E74D /* VPinballManager.swift in Sources */,
+				C1A3F0E12F3C1A0000A4E74D /* HapticsManager.swift in Sources */,
 				C1F802E62E9926EB00A99C73 /* TableManager.swift in Sources */,
 				C15DE57C2C75A324001F1D13 /* CodeWebView.swift in Sources */,
 				C1320F602C8E56BD00035C0F /* HUDOverlayView.swift in Sources */,
@@ -368,12 +381,12 @@
 				C1610F1C2C4BE8930049ED87 /* ViewModifiers.swift in Sources */,
 				C1D90AE52C9A6007006CB735 /* SettingsModel.swift in Sources */,
 				C11419052C277D9800582B6F /* VPinballApp.swift in Sources */,
-				C15DE5762C7257F1001F1D13 /* VPinballViewModel.swift in Sources */,
+				C1AA00012F3A000000000001 /* MainViewModel.swift in Sources */,
+				C15DE5762C7257F1001F1D13 /* VPinballModel.swift in Sources */,
 				C145FE202C5B4ADB0049D313 /* SettingsPerformanceView.swift in Sources */,
 				C16266452C29955E0002FD15 /* SplashView.swift in Sources */,
-				C1920AFC2C6A281A00483104 /* TablePlaceholderImage.swift in Sources */,
+				C1920AFC2C6A281A00483104 /* TableImagePlaceholderView.swift in Sources */,
 				C145FE1E2C5B4ADB0049D313 /* SettingsExternalDMDView.swift in Sources */,
-				C1920AFA2C68E22E00483104 /* TableListButton.swift in Sources */,
 				C16266482C29955E0002FD15 /* Extensions.swift in Sources */,
 				C12124612D04725900EB0481 /* VPinballInterop.swift in Sources */,
 				C11419182C28C5C500582B6F /* Shimmer.metal in Sources */,
@@ -383,7 +396,6 @@
 				C1A292E32C4720090056A3C0 /* MailComposeViewControllerView.swift in Sources */,
 				C1A292E92C4751C20056A3C0 /* CodeView.swift in Sources */,
 				C1B20FC92DF1F0110012E33F /* SettingsWebServerView.swift in Sources */,
-				C1920AF82C67CBC700483104 /* TableListView.swift in Sources */,
 				C1610F202C4D31350049ED87 /* Enums.swift in Sources */,
 				C194FC822C372668009027E4 /* ActivityViewControllerView.swift in Sources */,
 			);
@@ -427,6 +439,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = UKWC4J7BE5;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -489,6 +502,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = UKWC4J7BE5;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -521,7 +535,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10.8.1.1;
 				DEVELOPMENT_ASSET_PATHS = "\"VPinball/Preview Content\"";
-				DEVELOPMENT_TEAM = UKWC4J7BE5;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -536,7 +549,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Visual Pinball would like to use Bluetooth controllers for input.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
@@ -572,7 +585,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10.8.1.1;
 				DEVELOPMENT_ASSET_PATHS = "\"VPinball/Preview Content\"";
-				DEVELOPMENT_TEAM = UKWC4J7BE5;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -587,7 +599,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Visual Pinball would like to use Bluetooth controllers for input.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
@@ -632,25 +644,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		C18B50662E9C6C5B00BF76FE /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.9.20;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		C18B50672E9C6C5B00BF76FE /* ZIPFoundation */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = C18B50662E9C6C5B00BF76FE /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
-			productName = ZIPFoundation;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C11418F92C277D9800582B6F /* Project object */;
 }

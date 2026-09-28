@@ -2,6 +2,9 @@
 
 #pragma once
 
+#include "math/matrix.h"
+#include "physics/collide.h"
+
 class Surface;
 
 class Bumper;

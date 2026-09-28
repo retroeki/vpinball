@@ -11,9 +11,10 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Plunger Handler
 //
-PlungerHandler::PlungerHandler(InputManager* inputManager)
+PlungerHandler::PlungerHandler(InputManager* inputManager, Settings& appSettings)
+   : m_appSettings(appSettings)
 {
-   const Settings& settings = g_app->m_settings;
+   const Settings& settings = m_appSettings;
 
    m_isPullBackAndRetract = settings.GetPlayer_PlungerRetract();
 
@@ -40,7 +41,7 @@ void PlungerHandler::StepOneMillisecond()
    {
       if (sensor->IsActive())
       {
-         m_position = sensor->GetPosition();
+         m_position = sensor->GetRawPosition();
          m_rawVelocity = sensor->GetRawVelocity();
          break;
       }
@@ -72,12 +73,11 @@ float PlungerHandler::GetPosition(float restPos) const
 {
    // Symmetric calibration: 0 is rest, 1 is fully retracted, scale is symmetric along rest position
    // (The maximum forward position is not calibrated, in the negative side)
-   // -1 maps to restPos - (1 - restPos)
+   // -1 maps to restPos - (1 - restPos), clamped at 0 (as the plunger may not go past the frame end)
    //  0 maps to restPos
    //  1 maps to 1
-   // This lead to a range of [2 * restPos - 1, 1] for the plunger position, with 0 being the rest position.
    assert(restPos >= 0.f && restPos <= 1.f);
-   return lerp(restPos, 1.f, m_position);
+   return saturate(lerp(restPos, 1.f, m_position));
 }
 
 bool PlungerHandler::IsPullBackandRetract() const { return m_isPullBackAndRetract; }
@@ -93,9 +93,9 @@ void PlungerHandler::AddSensor(std::unique_ptr<PlungerSensor>& sensor)
    const int sensorIndex = static_cast<int>(m_sensors.size());
    if (sensor)
    {
-      sensor->Save(g_app->m_settings, sensorIndex);
-      g_app->m_settings.SetInput_PlungerSensorCount(sensorIndex + 1, false);
-      g_app->m_settings.Save();
+      sensor->Save(m_appSettings, sensorIndex);
+      m_appSettings.SetInput_PlungerSensorCount(sensorIndex + 1, false);
+      m_appSettings.Save();
    }
    m_sensors.push_back(std::move(sensor));
 }
@@ -124,9 +124,9 @@ void PlungerHandler::RemoveSensor(int index)
                   {
                      switch (Settings::GetRegistry().GetStoreType(propDef->m_type))
                      {
-                     case VPX::Properties::PropertyRegistry::StoreType::Float: g_app->m_settings.Set(idNew, g_app->m_settings.GetFloat(id), false); break;
-                     case VPX::Properties::PropertyRegistry::StoreType::Int: g_app->m_settings.Set(idNew, g_app->m_settings.GetInt(id), false); break;
-                     case VPX::Properties::PropertyRegistry::StoreType::String: g_app->m_settings.Set(idNew, g_app->m_settings.GetString(id), false); break;
+                     case VPX::Properties::PropertyRegistry::StoreType::Float: m_appSettings.Set(idNew, m_appSettings.GetFloat(id), false); break;
+                     case VPX::Properties::PropertyRegistry::StoreType::Int: m_appSettings.Set(idNew, m_appSettings.GetInt(id), false); break;
+                     case VPX::Properties::PropertyRegistry::StoreType::String: m_appSettings.Set(idNew, m_appSettings.GetString(id), false); break;
                      }
                      break;
                   }
@@ -136,8 +136,8 @@ void PlungerHandler::RemoveSensor(int index)
       }
    }
    m_sensors.erase(m_sensors.begin() + index);
-   g_app->m_settings.SetInput_PlungerSensorCount(static_cast<int>(m_sensors.size()), false);
-   g_app->m_settings.Save();
+   m_appSettings.SetInput_PlungerSensorCount(static_cast<int>(m_sensors.size()), false);
+   m_appSettings.Save();
 }
 
 bool PlungerHandler::HasSensor(const std::unique_ptr<PlungerSensor>& sensor) const
@@ -200,8 +200,8 @@ void PlungerHandler::SetExternalPlunger(bool enableOverride, const float velocit
 PlungerSensor::PlungerSensor(InputManager* inputManager)
    : m_positionSensor(std::make_unique<PhysicsSensor>(inputManager, "Plunger position sensor mapping", SensorMapping::Type::Position))
    , m_velocitySensor(std::make_unique<PhysicsSensor>(inputManager, "Plunger velocity sensor mapping", SensorMapping::Type::Velocity))
-   , m_emaPosition(0.008f) // Time constant adjusted for default USB acquisition period at 8.125ms and limited latency
-   , m_emaVelocity(0.008f)
+   , m_emaPosition(0.004f) // Time constant adjusted for default USB acquisition period of 125Hz and limited latency
+   , m_emaVelocity(0.004f)
 {
    PlungerKalmanFilter::Config config;
 
@@ -291,7 +291,7 @@ void PlungerSensor::StepOneMillisecond()
    {
       const float restPos = 0.f;
       const float releaseApex = *std::max_element(m_prevPosition.begin(), m_prevPosition.end());
-      const float hitSpeed = (m_position >= (0.5f + 0.5f * restPos) || m_emaVelocity.Get() >= 0.f) ? 0.f : -max(0.f, releaseApex - restPos) * 100.f / 13.0f;
+      const float hitSpeed = (m_position >= (0.5f + 0.5f * restPos) || m_emaVelocity.Get() >= 0.f) ? 0.f : -max(0.f, releaseApex - restPos) * (100.f / 13.0f);
       PLOGD << std::format(";{:8.5f};{:8.5f};{:8.5f};{:8.5f};{:8.5f};{};{}", //
          m_positionSensor->GetValue(), m_velocitySensor->GetValue(), // Sensors
          m_position, // Estimated position
@@ -332,20 +332,27 @@ float PlungerSensor::GetHitVelocity(float restPos) const
    }
    else
    {
-      // Use the position & speed derived from the position sensor to filter out rest state from plunges
-      if (m_position >= (0.5f + 0.5f * restPos) || m_emaVelocity.Get() >= 0.f)
-         return 0.f;
-
       // Evaluate the velocity by supposing the player did a 'free' release, that is to say the plunger was retracted to a given position then entirely free to move.
-      // 
+      //
       // In this scheme the speed is a consequence of 2 parameters (beside physical constants like spring stiffness, damping,...):
       // . the retracted position when the plunger was released (apex). Measures on real hardware show that the the retracted to extended move last around 50ms, and that the next
       //   oscillation to extended position happens roughly 100ms after the first. This lead to search the apex within the last 100ms
       // . the actual hit position that we guess to be at the park position
       // So we figure the release speed as a fraction of the fire speed property, linearly proportional to the starting distance.
       // The 100/13 factor is a magic conversion factor that matches what is used for keyboard driven plunger.
-      const float releaseApex = *std::max_element(m_prevPosition.begin(), m_prevPosition.end());
-      const float hitSpeed = - max(0.f, releaseApex - restPos) * 100.f / 13.0f;
-      return hitSpeed;
+
+      // Apex of the pull, in sensor units (p.u.: 0 = rest, +1 = fully retracted)
+      const float releaseApexPu = *std::max_element(m_prevPosition.begin(), m_prevPosition.end());
+
+      // If the plunger is not far enough from the release apex (evaluated in p.u.), then we're not in a fire situation
+      if (GetRawPosition() > releaseApexPu - 0.1f)
+         return 0.f;
+
+      // Pull distance in t.u.: the apex mapped to table space is lerp(restPos, 1, releaseApexPu)
+      // (same form as Fire()'s dx = startPos - m_restPos)
+      const float dx = lerp(restPos, 1.f, releaseApexPu) - restPos; // t.u.
+
+      // Impact speed in t.u./s under the spring launch model
+      return -max(0.f, dx) * (100.f / 13.f);
    }
 }

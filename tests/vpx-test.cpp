@@ -10,25 +10,18 @@
 #include <filesystem>
 
 #include "core/VPApp.h"
+#include "core/AppCommands.h"
+#include "core/vpversion.h"
+#include "renderer/Renderer.h"
+#include "renderer/Texture.h"
+
+#include "parts/pintable.h"
+#include "utils/BiffReader.h"
+#include "utils/BiffWriter.h"
 
 #include "plugins/MsgPluginManager.h"
 
 using namespace MsgPI;
-
-static unsigned int onPrepareFrameMsgId = 0;
-
-void AddOnPrepareFrameHandler(msgpi_msg_callback onPrepareFrame, void* context)
-{
-   const auto& msgApi = MsgPluginManager::GetInstance().GetMsgAPI();
-   unsigned int vpxEndpoint = msgApi.GetPluginEndpoint("vpx");
-   msgApi.SubscribeMsg(vpxEndpoint, onPrepareFrameMsgId, onPrepareFrame, context);
-}
-
-void RemoveOnPrepareFrameHandler(msgpi_msg_callback onPrepareFrame)
-{
-   const auto& msgApi = MsgPluginManager::GetInstance().GetMsgAPI();
-   msgApi.UnsubscribeMsg(onPrepareFrameMsgId, onPrepareFrame);
-}
 
 #ifdef ENABLE_BGFX
 bgfx::RendererType::Enum lastBgfxRenderer = bgfx::RendererType::Count;
@@ -38,21 +31,15 @@ bgfx::RendererType::Enum GetLastRenderer()
 }
 #endif
 
-string GetAssetPath()
+std::filesystem::path GetAssetPath()
 {
-   HMODULE hm = nullptr;
-   if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, _T("GetAssetPath"), &hm) == 0)
-      return ""s;
-   string path = GetModulePath<string>(hm);
-   if (path.empty())
-      return path;
-   return path.substr(0, path.find_last_of(_T("\\/"))) + "\\test-assets\\";
+   return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Root, "test-assets");
 }
 
 bool CheckMatchingBitmaps(const string& filePath1, const string& filePath2)
 {
-   auto bmp1 = FileExists(GetAssetPath() + filePath1) ? BaseTexture::CreateFromFile(GetAssetPath() + filePath1) : nullptr;
-   auto bmp2 = FileExists(GetAssetPath() + filePath2) ? BaseTexture::CreateFromFile(GetAssetPath() + filePath2) : nullptr;
+   auto bmp1 = FileExists(GetAssetPath() / filePath1) ? BaseTexture::CreateFromFile(GetAssetPath() / filePath1) : nullptr;
+   auto bmp2 = FileExists(GetAssetPath() / filePath2) ? BaseTexture::CreateFromFile(GetAssetPath() / filePath2) : nullptr;
    bool failed = (!bmp1 || !bmp2 || bmp1->width() != bmp2->width() || bmp1->height() != bmp2->height() || bmp1->m_format != bmp2->m_format);
    if (!failed && ((bmp1->m_format != BaseTexture::SRGB) || (bmp2->m_format != BaseTexture::SRGB)))
    {
@@ -92,11 +79,11 @@ bool CheckMatchingBitmaps(const string& filePath1, const string& filePath2)
          saveDiff = true;
       }
       const string ext = extension_from_path(filePath1);
-      const string diffPath = GetAssetPath() + filePath1.substr(0, filePath1.size() - ext.size() - 1) + "-diff." + ext;
+      const std::filesystem::path diffPath = GetAssetPath() / (filePath1.substr(0, filePath1.size() - ext.size() - 1) + "-diff." + ext);
       if (saveDiff)
       {
          std::shared_ptr<BaseTexture> diff = BaseTexture::Create(bmp1->width(), bmp1->height(), BaseTexture::SRGB);
-         uint8_t* const __restrict diffData = diff->data();
+         uint8_t* const __restrict diffData = (uint8_t*)diff->data();
          for (size_t i = 0; i < dataSize; ++i)
          {
             uint8_t dif = data1[i] > data2[i] ? data1[i] - data2[i] : data2[i] - data1[i];
@@ -118,90 +105,141 @@ bool CheckMatchingBitmaps(const string& filePath1, const string& filePath2)
 
 void CaptureRender(const string& tablePath, const string& screenshotPath)
 {
-   g_pvp->LoadFileName(GetAssetPath() + tablePath, false);
    struct CaptureState
    {
-      int frameIndex;
-      string tmpScreenshotPath;
+      std::filesystem::path tmpScreenshotPath;
       bool done;
-   } state = { 0, GetAssetPath() + screenshotPath, false };
+      bool captureRequested;
+   } state = { GetAssetPath() / screenshotPath, false, false };
    msgpi_msg_callback onPrepareFrame = [](const unsigned int msgId, void* context, void* msgData)
    {
       CaptureState* state = reinterpret_cast<CaptureState*>(context);
-      state->frameIndex++;
-      if (state->frameIndex == 25)
-         g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot(state->tmpScreenshotPath,
-            [state](bool success)
-            {
-               #ifdef ENABLE_BGFX
-               lastBgfxRenderer = bgfx::getRendererType();
-               #endif
-               g_pplayer->SetCloseState(Player::CS_STOP_PLAY);
-               state->done = true;
-            });
+      if (state->captureRequested || g_pplayer->m_overall_frames < 25)
+         return;
+      if (g_pplayer->m_renderer->IsTemporalAccumulationInProgress())
+      {
+         // Wait for the static prerender accumulation to settle, so the screenshot matches the converged
+         // rendering, but bound the wait to avoid stalling if a render probe never finishes accumulating
+         if (g_pplayer->m_overall_frames < 512)
+            return;
+         MESSAGE("Timed out waiting for static prerender accumulation");
+      }
+      state->captureRequested = true;
+      g_pplayer->m_renderer->m_renderDevice->CaptureScreenshot({ g_pplayer->m_playfieldWnd }, { state->tmpScreenshotPath },
+         [state](bool success)
+         {
+#ifdef ENABLE_BGFX
+            lastBgfxRenderer = bgfx::getRendererType();
+#endif
+            g_pplayer->SetCloseState(Player::CS_STOP_PLAY);
+            state->done = true;
+         });
    };
-   AddOnPrepareFrameHandler(onPrepareFrame, &state);
-   g_pvp->DoPlay(0);
-   while (!state.done)
-      g_app->StepMsgLoop();
-   RemoveOnPrepareFrameHandler(onPrepareFrame);
-   PostMessage(g_pvp->GetHwnd(), WM_COMMAND, IDM_CLOSE, 0); // Close the table
-   while (!g_pvp->m_vtable.empty())
-      g_app->StepMsgLoop();
+
+   CComObject<PinTable>* table;
+   CComObject<PinTable>::CreateInstance(&table);
+   table->AddRef();
+   TestFileFeedback feedback;
+   const HRESULT hr = table->LoadGameFromFilename(GetAssetPath() / tablePath, feedback);
+   CHECK(SUCCEEDED(hr));
+   CHECK(feedback.m_isMonotonic);
+   CHECK(feedback.m_lastProgress <= feedback.m_length);
+   LoadProgress loadProgress;
+   auto player = std::make_unique<Player>(table, Player::PlayMode::Play, loadProgress);
+   const unsigned int onPrepareFrameMsgId = player->m_pluginManager.GetMsgAPI().GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_PREPARE_FRAME);
+   player->m_pluginManager.GetMsgAPI().SubscribeMsg(player->m_pluginAPI.GetVPXEndPointId(), onPrepareFrameMsgId, onPrepareFrame, &state);
+   player->GameLoop();
+   player->m_pluginManager.GetMsgAPI().UnsubscribeMsg(onPrepareFrameMsgId, onPrepareFrame, &state);
+   player->m_pluginManager.GetMsgAPI().ReleaseMsgID(onPrepareFrameMsgId);
+   player = nullptr;
+   table->Release();
 }
 
 void ResetVPX()
 {
-   // Stop player
-   if (g_pplayer)
-      g_pplayer->SetCloseState(Player::CS_STOP_PLAY);
-
-   // Close all opened tables
-   size_t nOpenedTables = g_pvp->m_vtable.size();
-   while (nOpenedTables > 0)
-   {
-      PostMessage(g_pvp->GetHwnd(), WM_COMMAND, IDM_CLOSE, 0);
-      while (g_pvp->m_vtable.size() == nOpenedTables)
-         g_app->StepMsgLoop();
-      nOpenedTables = g_pvp->m_vtable.size();
-   }
-
    // Reset settings
-   g_pvp->m_settings.Reset();
-   Settings& settings = g_pvp->m_settings;
+   g_settingsService.GetAppSettings().Reset();
+   Settings& settings = g_settingsService.GetAppSettings();
    settings.SetPlayerVR_AskToTurnOn(2, false);
-   settings.SetPlayer_PlayfieldFullScreen(0, false);
    settings.SetPlayer_PlayfieldWidth(1920, false);
    settings.SetPlayer_PlayfieldHeight(1080, false);
    settings.SetPlayer_NumberOfTimesToShowTouchMessage(0, false);
    settings.SetPlayer_DisableAO(true, false);
 }
 
-
-extern "C" int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPTSTR lpCmdLine, _In_ int nShowCmd)
+PinTable* CreateTestTable()
 {
-   // Initialize the doctest framework
-   doctest::Context context;
-   context.setOption("no-breaks", true); // Disable breaks in the test output
-   context.setOption("out", (GetAssetPath() + "test_results.txt").c_str());
-   context.applyCommandLine(0, nullptr); // TODO Apply command line arguments if any
+   CComObject<PinTable>* table;
+   CComObject<PinTable>::CreateInstance(&table);
+   table->AddRef();
+   return table;
+}
+
+InMemStream SavePartToStream(IEditable* part)
+{
+   InMemStream stream;
+   // GameItem streams start with the raw item type, followed by the BIFF part data
+   const ItemTypeEnum type = part->GetItemType();
+   stream.Write(&type, sizeof(int));
+   BiffWriter writer(&stream, nullptr);
+   part->Save(writer, false);
+   CHECK_FALSE(writer.HasError());
+   return stream;
+}
+
+void LoadPartFromStream(IEditable* part, const InMemStream& stream)
+{
+   // Skip the raw item type that starts every GameItem stream
+   BiffReader reader(stream.Data() + sizeof(int), static_cast<uint32_t>(stream.Size() - sizeof(int)), CURRENT_FILE_FORMAT_VERSION, nullptr, 0);
+   part->Load(reader);
+   CHECK_FALSE(reader.HasError());
+}
+
+bool StreamsEqual(const InMemStream& a, const InMemStream& b)
+{
+   return a.Size() == b.Size() && memcmp(a.Data(), b.Data(), a.Size()) == 0;
+}
+
+std::filesystem::path GetTestTmpDir()
+{
+   const std::filesystem::path dir = GetAssetPath() / "tmp";
+   std::filesystem::create_directories(dir);
+   return dir;
+}
+
+
+#ifndef __STANDALONE__
+extern "C" int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPTSTR lpCmdLine, _In_ int nShowCmd)
+#else
+int main(int argc, const char** argv)
+#endif
+{
+   SDL_SetHint(SDL_HINT_WINDOW_ALLOW_TOPMOST, "0");
+   SDL_InitSubSystem(SDL_INIT_VIDEO);
 
    // Setup the vpx app with blank default settings
    Logger::GetInstance()->Init();
-   VPApp vpx(hInstance);
+   VPApp vpx;
+   CommandLineProcessor cmdLine;
+   const string iniPath = (GetAssetPath() / "VPinball.ini").string();
+   const char* args[] = { "vpx-test", "-ini", iniPath.c_str() };
+   cmdLine.ProcessCommandLine(3, args);
    vpx.InitInstance();
-   const auto& msgApi = MsgPluginManager::GetInstance().GetMsgAPI();
-   onPrepareFrameMsgId = msgApi.GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_PREPARE_FRAME);
 
-   // Run the tests
+   // Initialize the doctest framework and run the tests
+   doctest::Context context;
+   context.setOption("no-breaks", true); // Disable breaks when a test fail (including crash & exceptions)
+   const string outPath = (GetAssetPath() / "test_results.txt").string();
+   context.setOption("out", outPath.c_str());
+#ifndef __STANDALONE__
+   context.applyCommandLine(__argc, __argv);
+#else
+   context.applyCommandLine(argc, argv);
+#endif
    int res = context.run();
 
    // Clean up
-   msgApi.ReleaseMsgID(onPrepareFrameMsgId);
-   PostMessage(g_pvp->GetHwnd(), WM_CLOSE, 0, 0);
-   g_app->MainMsgLoop();
+   SDL_QuitSubSystem(SDL_INIT_VIDEO);
 
-   if (context.shouldExit())
-      return res;
-   return 0;
+   return res;
 }

@@ -8,6 +8,20 @@ extern "C" {
    #include "libswresample/swresample.h"
 }
 
+#ifdef _WIN32
+// As LibAvCodec is fairly heavy, we only load it when used to limit startup time impact
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <tchar.h>
+#define LIBAV_STR_(x) _T(#x)
+#define LIBAV_STR(x) LIBAV_STR_(x)
+#endif
+
 // Wrap in PUP namespace to avoid ODR collision with plugins/flexdmd/actors/LibAv.h
 // which declares an identically-named LibAV::LibAV class with a different member layout.
 // Without this, the linker's COMDAT merge silently picks one class definition and the
@@ -17,14 +31,9 @@ namespace PUP
 namespace LibAV
 {
 
-#ifdef _WIN32
-// As LibAvCodec is fairly heavy, we only load it when used to limit startup time impact
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <tchar.h>
+#ifdef CDECL
+#undef CDECL
 #endif
-
 #ifdef _WIN64
    // Windows x64 always uses standard calling convention (implicit)
    #define CDECL
@@ -86,6 +95,7 @@ public:
    typedef int(CDECL* fn_av_image_get_buffer_size)(enum AVPixelFormat pix_fmt, int width, int height, int align);
    typedef void*(CDECL* fn_av_malloc)(size_t size) av_alloc_size(1);
    typedef int(CDECL* fn_av_samples_get_buffer_size)(int* linesize, int nb_channels, int nb_samples, enum AVSampleFormat sample_fmt, int align);
+   typedef void(CDECL* fn_av_log_set_level)(int level);
 
    typedef void(CDECL* fn_swr_free)(struct SwrContext** s);
    typedef int(CDECL* fn_swr_alloc_set_opts2)(struct SwrContext** ps, const AVChannelLayout* out_ch_layout, enum AVSampleFormat out_sample_fmt, int out_sample_rate, const AVChannelLayout* in_ch_layout, enum AVSampleFormat in_sample_fmt, int in_sample_rate, int log_offset, void* log_ctx);
@@ -130,6 +140,7 @@ public:
    fn_av_image_get_buffer_size _av_image_get_buffer_size = nullptr;
    fn_av_malloc _av_malloc = nullptr;
    fn_av_samples_get_buffer_size _av_samples_get_buffer_size = nullptr;
+   fn_av_log_set_level _av_log_set_level = nullptr;
 
    fn_swr_alloc_set_opts2 _swr_alloc_set_opts2 = nullptr;
    fn_swr_convert _swr_convert = nullptr;
@@ -161,7 +172,7 @@ private:
       #endif
 
       HMODULE hm = nullptr;
-      if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, _T("PluginLoad"), &hm) == 0)
+      if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, _T("PUPPluginLoad"), &hm) == 0)
          return;
       TCHAR path[MAX_PATH];
       if (GetModuleFileName(hm, path, MAX_PATH) == 0)
@@ -171,9 +182,10 @@ private:
       #else
       std::string basepath(path);
       #endif
-      basepath = basepath.substr(0, basepath.find_last_of(_T("\\/"))) + _T('\\');
+      basepath.erase(basepath.find_last_of(_T("\\/")));
+      basepath += _T('\\');
 
-      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avcodec64-61.dll"): _T("avcodec-61.dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avcodec64-") LIBAV_STR(LIBAVCODEC_VERSION_MAJOR) _T(".dll") : _T("avcodec-") LIBAV_STR(LIBAVCODEC_VERSION_MAJOR) _T(".dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (hinstLib)
       {
          _av_packet_alloc = reinterpret_cast<fn_av_packet_alloc>(GetProcAddress(hinstLib, "av_packet_alloc"));
@@ -192,7 +204,7 @@ private:
             && _avcodec_get_name && _avcodec_open2 && _avcodec_parameters_to_context && _avcodec_receive_frame && _avcodec_send_packet;
       }
 
-      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avformat64-61.dll") : _T("avformat-61.dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avformat64-") LIBAV_STR(LIBAVFORMAT_VERSION_MAJOR) _T(".dll") : _T("avformat-") LIBAV_STR(LIBAVFORMAT_VERSION_MAJOR) _T(".dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (hinstLib)
       {
          _av_find_best_stream = reinterpret_cast<fn_av_find_best_stream>(GetProcAddress(hinstLib, "av_find_best_stream"));
@@ -204,7 +216,7 @@ private:
          isLoaded &= _av_find_best_stream && _av_read_frame && _av_seek_frame && _avformat_open_input && _avformat_close_input;
       }
 
-      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avutil64-59.dll") : _T("avutil-59.dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("avutil64-") LIBAV_STR(LIBAVUTIL_VERSION_MAJOR) _T(".dll") : _T("avutil-") LIBAV_STR(LIBAVUTIL_VERSION_MAJOR) _T(".dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (hinstLib)
       {
          _av_get_bytes_per_sample = reinterpret_cast<fn_av_get_bytes_per_sample>(GetProcAddress(hinstLib, "av_get_bytes_per_sample"));
@@ -217,10 +229,11 @@ private:
          _av_image_get_buffer_size = reinterpret_cast<fn_av_image_get_buffer_size>(GetProcAddress(hinstLib, "av_image_get_buffer_size"));
          _av_malloc = reinterpret_cast<fn_av_malloc>(GetProcAddress(hinstLib, "av_malloc"));
          _av_samples_get_buffer_size = reinterpret_cast<fn_av_samples_get_buffer_size>(GetProcAddress(hinstLib, "av_samples_get_buffer_size"));
+         _av_log_set_level = reinterpret_cast<fn_av_log_set_level>(GetProcAddress(hinstLib, "av_log_set_level"));
          isLoaded &= _av_get_bytes_per_sample && _av_fast_malloc && _av_frame_alloc && _av_frame_copy_props && _av_frame_free && _av_free && _av_image_fill_arrays && _av_image_get_buffer_size && _av_malloc && _av_samples_get_buffer_size;
       }
 
-      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("swresample64-5.dll") : _T("swresample-5.dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("swresample64-") LIBAV_STR(LIBSWRESAMPLE_VERSION_MAJOR) _T(".dll") : _T("swresample-") LIBAV_STR(LIBSWRESAMPLE_VERSION_MAJOR) _T(".dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (hinstLib)
       {
          _swr_alloc_set_opts2 = reinterpret_cast<fn_swr_alloc_set_opts2>(GetProcAddress(hinstLib, "swr_alloc_set_opts2"));
@@ -231,7 +244,7 @@ private:
          isLoaded &= _swr_alloc_set_opts2 && _swr_convert && _swr_free && _swr_init && _swr_set_compensation;
       }
 
-      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("swscale64-8.dll") : _T("swscale-8.dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+      hinstLib = LoadLibraryEx((basepath + (x64 ? _T("swscale64-") LIBAV_STR(LIBSWSCALE_VERSION_MAJOR) _T(".dll") : _T("swscale-") LIBAV_STR(LIBSWSCALE_VERSION_MAJOR) _T(".dll"))).c_str(), NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
       if (hinstLib)
       {
          _sws_freeContext = reinterpret_cast<fn_sws_freeContext>(GetProcAddress(hinstLib, "sws_freeContext"));
@@ -273,6 +286,7 @@ private:
       _av_image_get_buffer_size = &av_image_get_buffer_size;
       _av_malloc = &av_malloc;
       _av_samples_get_buffer_size = &av_samples_get_buffer_size;
+      _av_log_set_level = &av_log_set_level;
 
       _swr_alloc_set_opts2 = &swr_alloc_set_opts2;
       _swr_convert = &swr_convert;
@@ -284,6 +298,9 @@ private:
       _sws_getCachedContext = &sws_getCachedContext;
       _sws_scale = &sws_scale;
    #endif
+
+      if (_av_log_set_level)
+         _av_log_set_level(AV_LOG_ERROR);
    }
 
 };

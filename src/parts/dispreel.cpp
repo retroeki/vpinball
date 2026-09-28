@@ -1,46 +1,49 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-#include "renderer/Shader.h"
+#include "dispreel.h"
 
-DispReel::DispReel()
-{
-   m_backglass = true; // DispReel is always located on backdrop
-}
+#include "core/VPApp.h"
+#include "parts/Collection.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/trace.h"
+#include "utils/color.h"
+
 
 DispReel::~DispReel()
 {
-   assert(m_rd == nullptr);
+   assert(m_renderer == nullptr);
 }
 
-DispReel *DispReel::CopyForPlay(PinTable *live_table) const
+DispReel *DispReel::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(DispReel, live_table)
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(DispReel)
    return dst;
 }
 
 // called whenever a new instance of this object is created along with the constructor
-HRESULT DispReel::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT DispReel::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_v1.x = x;
    m_d.m_v1.y = y;
    m_d.m_v2.x = x + getBoxWidth();
    m_d.m_v2.y = y + getBoxHeight();
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
 // set the defaults for the objects persistent data (m_d.*) in case this is a new instance of this object
 // or there is a backwards compatibility issue (e.g. old version of object doesn't contain all the needed fields)
 void DispReel::SetDefaults(const bool fromMouseClick)
 {
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsDispReel_##prop() : Settings::GetDefaultPropsDispReel_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsDispReel_##prop() : Settings::GetDefaultPropsDispReel_##prop##_Default()
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSound, Sound);
-   LinkProp(m_d.m_useImageGrid, TimerEnabled);
+   LinkProp(m_d.m_useImageGrid, UseImageGrid);
    LinkProp(m_d.m_visible, Visible);
-   LinkProp(m_d.m_imagesPerGridRow, UseImageGrid);
+   LinkProp(m_d.m_imagesPerGridRow, ImagesPerRow);
    LinkProp(m_d.m_transparent, Transparent);
    LinkProp(m_d.m_reelcount, ReelCount);
    LinkProp(m_d.m_width, Width);
@@ -50,19 +53,19 @@ void DispReel::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_digitrange, DigitRange);
    LinkProp(m_d.m_updateinterval, UpdateInterval);
    LinkProp(m_d.m_backcolor, BackColor);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
 void DispReel::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsDispReel_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsDispReel_##prop(field, false)
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSound, Sound);
-   LinkProp(m_d.m_useImageGrid, TimerEnabled);
+   LinkProp(m_d.m_useImageGrid, UseImageGrid);
    LinkProp(m_d.m_visible, Visible);
-   LinkProp(m_d.m_imagesPerGridRow, UseImageGrid);
+   LinkProp(m_d.m_imagesPerGridRow, ImagesPerRow);
    LinkProp(m_d.m_transparent, Transparent);
    LinkProp(m_d.m_reelcount, ReelCount);
    LinkProp(m_d.m_width, Width);
@@ -72,8 +75,8 @@ void DispReel::WriteRegDefaults()
    LinkProp(m_d.m_digitrange, DigitRange);
    LinkProp(m_d.m_updateinterval, UpdateInterval);
    LinkProp(m_d.m_backcolor, BackColor);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
@@ -91,84 +94,31 @@ STDMETHODIMP DispReel::InterfaceSupportsErrorInfo(REFIID riid)
    return S_FALSE;
 }
 
-// draw the shape of the object with a solid fill, only used in the editor/UI and not in-game
-void DispReel::UIRenderPass1(Sur * const psur)
-{
-   psur->SetBorderColor(-1, false, 0);
-   psur->SetFillColor(m_d.m_backcolor);
-   psur->SetObject(this);
-
-   // draw background box
-   psur->Rectangle(m_d.m_v1.x, m_d.m_v1.y, m_d.m_v2.x, m_d.m_v2.y);
-
-   // draw n reels in the box (in blue)
-   psur->SetFillColor(RGB(0, 0, 255));
-   for (int i = 0; i < m_d.m_reelcount; ++i)
-   {
-      // set up top corner point
-      const float fi = (float)i;
-      const float x = m_d.m_v1.x + fi*(m_d.m_width + m_d.m_reelspacing) + m_d.m_reelspacing;
-      const float y = m_d.m_v1.y + m_d.m_reelspacing;
-      const float x2 = x + m_d.m_width;
-      const float y2 = y + m_d.m_height;
-
-      // set up points (clockwise)
-      const Vertex2D rgv[4] = { Vertex2D(x, y), Vertex2D(x2, y), Vertex2D(x2, y2), Vertex2D(x, y2) };
-      psur->Polygon(rgv, 4);
-   }
-}
-
-// draw the shape of the object with a black outline (no solid fill), only used in the editor/UI and not in-game
-void DispReel::UIRenderPass2(Sur * const psur)
-{
-   if (!GetPTable()->GetEMReelsEnabled()) return;
-
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetFillColor(-1);
-   psur->SetObject(this);
-   psur->SetObject(nullptr);
-
-   // draw background box
-   psur->Rectangle(m_d.m_v1.x, m_d.m_v1.y, m_d.m_v2.x, m_d.m_v2.y);
-
-   // draw n reels in the box
-   for (int i = 0; i < m_d.m_reelcount; ++i)
-   {
-      // set up top corner point
-      const float fi = (float)i;
-      const float x = m_d.m_v1.x + fi*(m_d.m_width + m_d.m_reelspacing) + m_d.m_reelspacing;
-      const float y = m_d.m_v1.y + m_d.m_reelspacing;
-      const float x2 = x + m_d.m_width;
-      const float y2 = y + m_d.m_height;
-
-      // set up points (clockwise)
-      const Vertex2D rgv[4] = { Vertex2D(x, y), Vertex2D(x2, y), Vertex2D(x2, y2), Vertex2D(x, y2) };
-      psur->Polygon(rgv, 4);
-   }
-}
-
-
-#pragma region Physics
-
-void DispReel::PhysicSetup(PhysicsEngine* physics, const bool isUI)
+void DispReel::PhysicSetup(PhysicsEngine *physics, const bool isUI)
 {
    if (isUI)
    {
-      // FIXME implement UI picking
+      // UI picking quad covering the reel frame (reels have no playfield collider)
+      const float x1 = min(m_d.m_v1.x, m_d.m_v2.x), x2 = max(m_d.m_v1.x, m_d.m_v2.x);
+      const float y1 = min(m_d.m_v1.y, m_d.m_v2.y), y2 = max(m_d.m_v1.y, m_d.m_v2.y);
+      Vertex3Ds *const rgv3d = new Vertex3Ds[4];
+      rgv3d[0] = Vertex3Ds(x1, y1, 0.f); // Winding so that the quad faces up and can be picked from the top-down editor views
+      rgv3d[1] = Vertex3Ds(x1, y2, 0.f);
+      rgv3d[2] = Vertex3Ds(x2, y2, 0.f);
+      rgv3d[3] = Vertex3Ds(x2, y1, 0.f);
+      physics->AddCollider(new Hit3DPoly(this, rgv3d, 4), isUI);
    }
 }
 
-void DispReel::PhysicRelease(PhysicsEngine* physics, const bool isUI) { }
-
-#pragma endregion
+void DispReel::PhysicRelease(PhysicsEngine *physics, const bool isUI) { }
 
 
 #pragma region Rendering
 
-void DispReel::RenderSetup(RenderDevice *device)
+void DispReel::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
 
    // get the render sizes of the objects (reels and frame)
    m_renderwidth = max(0.0f, m_d.m_width / (float)EDITOR_BG_WIDTH);
@@ -256,15 +206,15 @@ void DispReel::RenderSetup(RenderDevice *device)
 
 void DispReel::RenderRelease()
 {
-   assert(m_rd != nullptr);
-   m_rd = nullptr;
+   assert(m_renderer != nullptr);
+   m_renderer = nullptr;
 }
 
 // Called each frame. Checks to see if the update interval has expired and if so, handles the rolling
 // of the reels according to the number of motor steps queued up for each reel
 void DispReel::UpdateAnimation(const float diff_time_msec)
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    bool animated = false;
    while (g_pplayer->m_time_msec >= m_timeNextUpdate)
    {
@@ -288,7 +238,7 @@ void DispReel::UpdateAnimation(const float diff_time_msec)
             m_reelInfo[i].motorOffset = 0;
 
             // play the sound (if any) for each click of the reel
-            if (!m_d.m_szSound.empty() && (m_d.m_szSound != "<None>"))
+            if (!m_d.m_szSound.empty() && (m_d.m_szSound != g_szNoneSelection))
             {
                const BSTR mySoundBSTR = MakeWideBSTR(m_d.m_szSound);
                m_ptable->PlaySound(mySoundBSTR, 0, 1.0f, 0.f, 0.f, 0, VARIANT_FALSE, VARIANT_TRUE, 0.f);
@@ -346,8 +296,8 @@ void DispReel::UpdateAnimation(const float diff_time_msec)
 
 void DispReel::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(m_backglass);
+   assert(m_renderer != nullptr);
+   assert(m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    TRACE_FUNCTION();
@@ -361,23 +311,23 @@ void DispReel::Render(const unsigned int renderMask)
    if (!pin)
       return;
 
-   m_rd->ResetRenderState();
+   m_renderer->m_renderDevice->ResetRenderState();
 
-   m_rd->SetRenderState(RenderState::ZENABLE, RenderState::RS_FALSE);
-   m_rd->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
-   m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+   m_renderer->m_renderDevice->SetRenderState(RenderState::ZENABLE, RenderState::RS_FALSE);
+   m_renderer->m_renderDevice->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
+   m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
 
-   m_rd->m_DMDShader->SetFloat(SHADER_alphaTestValue, (float)(128.0 / 255.0));
-   m_rd->EnableAlphaBlend(false);
+   m_renderer->m_renderDevice->m_DMDShader->SetFloat(ShaderUniform::alphaTestValue, (float)(128.0 / 255.0));
+   m_renderer->m_renderDevice->EnableAlphaBlend(false);
 
-   m_rd->m_DMDShader->SetTechnique(SHADER_TECHNIQUE_basic_noDMD);
+   m_renderer->m_renderDevice->m_DMDShader->SetTechnique(ShaderTechnique::basic_noDMD);
 
    const vec4 c = convertColor(0xFFFFFFFF, 1.f);
-   m_rd->m_DMDShader->SetVector(SHADER_vColor_Intensity, &c);
+   m_renderer->m_renderDevice->m_DMDShader->SetVector(ShaderUniform::vColor_Intensity, &c);
 
-   m_rd->m_DMDShader->SetVector(SHADER_glassArea, 0.f, 0.f, 1.f, 1.f);
+   m_renderer->m_renderDevice->m_DMDShader->SetVector(ShaderUniform::glassArea, 0.f, 0.f, 1.f, 1.f);
 
-   m_rd->m_DMDShader->SetTexture(SHADER_tex_sprite, pin, false, SF_TRILINEAR, SA_REPEAT, SA_REPEAT);
+   m_renderer->m_renderDevice->m_DMDShader->SetTexture(ShaderUniform::tex_sprite, pin, false, SamplerFilter::SF_TRILINEAR, SamplerAddressMode::SA_REPEAT, SamplerAddressMode::SA_REPEAT);
 
    // set up all the reel positions within the object frame
    const float renderspacingx = max(0.0f, m_d.m_reelspacing / (float)EDITOR_BG_WIDTH);
@@ -402,34 +352,31 @@ void DispReel::Render(const unsigned int renderMask)
 
       for (unsigned int i = 0; i < 4; ++i)
       {
-         vertices[i].x =        (vertices[i].x * m_renderwidth  + x1)*2.0f - 1.0f;
-         vertices[i].y = 1.0f - (vertices[i].y * m_renderheight + y1)*2.0f;
+         const Vertex2D clip
+            = m_renderer->BackdropToClip(Vertex2D((vertices[i].x * m_renderwidth + x1) * (float)EDITOR_BG_WIDTH, (vertices[i].y * m_renderheight + y1) * (float)EDITOR_BG_HEIGHT));
+         vertices[i].x = clip.x;
+         vertices[i].y = clip.y;
       }
 
-      m_rd->DrawTexturedQuad(m_rd->m_DMDShader, vertices);
+      m_renderer->m_renderDevice->DrawTexturedQuad(m_renderer->m_renderDevice->m_DMDShader, vertices);
 
       // move to the next reel
       x1 += renderspacingx + m_renderwidth;
    }
 
-   m_rd->m_DMDShader->SetFloat(SHADER_alphaTestValue, 1.0f);
+   m_renderer->m_renderDevice->m_DMDShader->SetFloat(ShaderUniform::alphaTestValue, 1.0f);
 }
 
 #pragma endregion
 
 
-void DispReel::SetObjectPos()
+void DispReel::Translate(const Vertex2D &offset)
 {
-   m_vpinball->SetObjectPosCur(m_d.m_v1.x, m_d.m_v1.y);
-}
+   m_d.m_v1.x += offset.x;
+   m_d.m_v1.y += offset.y;
 
-void DispReel::MoveOffset(const float dx, const float dy)
-{
-   m_d.m_v1.x += dx;
-   m_d.m_v1.y += dy;
-
-   m_d.m_v2.x += dx;
-   m_d.m_v2.y += dy;
+   m_d.m_v2.x += offset.x;
+   m_d.m_v2.y += offset.y;
 }
 
 Vertex2D DispReel::GetCenter() const
@@ -437,142 +384,82 @@ Vertex2D DispReel::GetCenter() const
    return m_d.m_v1;
 }
 
-void DispReel::PutCenter(const Vertex2D& pv)
+void DispReel::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   m_d.m_v1 = pv;
-
-   m_d.m_v2.x = pv.x + getBoxWidth();
-   m_d.m_v2.y = pv.y + getBoxHeight();
+   writer.WriteVector2(FID(VER1), m_d.m_v1);
+   writer.WriteVector2(FID(VER2), m_d.m_v2);
+   writer.WriteInt(FID(CLRB), m_d.m_backcolor);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteBool(FID(TRNS), m_d.m_transparent);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteString(FID(SOUN), m_d.m_szSound);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteFloat(FID(WDTH), m_d.m_width);
+   writer.WriteFloat(FID(HIGH), m_d.m_height);
+   writer.WriteFloat(FID(RCNT), (float)m_d.m_reelcount);
+   writer.WriteFloat(FID(RSPC), m_d.m_reelspacing);
+   writer.WriteFloat(FID(MSTP), (float)m_d.m_motorsteps);
+   writer.WriteFloat(FID(RANG), (float)m_d.m_digitrange);
+   writer.WriteInt(FID(UPTM), m_d.m_updateinterval);
+   writer.WriteBool(FID(UGRD), m_d.m_useImageGrid);
+   writer.WriteBool(FID(VISI), m_d.m_visible);
+   writer.WriteInt(FID(GIPR), m_d.m_imagesPerGridRow);
+   SaveSharedEditableFields(writer);
+   writer.EndObject();
 }
 
-HRESULT DispReel::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
-{
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteVector2(FID(VER1), m_d.m_v1);
-   bw.WriteVector2(FID(VER2), m_d.m_v2);
-   bw.WriteInt(FID(CLRB), m_d.m_backcolor);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteBool(FID(TRNS), m_d.m_transparent);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteString(FID(SOUN), m_d.m_szSound);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteFloat(FID(WDTH), m_d.m_width);
-   bw.WriteFloat(FID(HIGH), m_d.m_height);
-   bw.WriteFloat(FID(RCNT), (float)m_d.m_reelcount);
-   bw.WriteFloat(FID(RSPC), m_d.m_reelspacing);
-   bw.WriteFloat(FID(MSTP), (float)m_d.m_motorsteps);
-   bw.WriteFloat(FID(RANG), (float)m_d.m_digitrange);
-   bw.WriteInt(FID(UPTM), m_d.m_updateinterval);
-   bw.WriteBool(FID(UGRD), m_d.m_useImageGrid);
-   bw.WriteBool(FID(VISI), m_d.m_visible);
-   bw.WriteInt(FID(GIPR), m_d.m_imagesPerGridRow);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
-}
-
-HRESULT DispReel::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void DispReel::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool DispReel::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch (id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(VER1): pbr->GetVector2(m_d.m_v1); break;
-   case FID(VER2): pbr->GetVector2(m_d.m_v2); break;
-   case FID(WDTH): pbr->GetFloat(m_d.m_width); break;
-   case FID(HIGH): pbr->GetFloat(m_d.m_height); break;
-   case FID(CLRB): pbr->GetInt(m_d.m_backcolor); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(TRNS): pbr->GetBool(m_d.m_transparent); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(RCNT):
-   {
-      float reel;
-      pbr->GetFloat(reel);
-      m_d.m_reelcount = (int)reel;
-      break;
-   }
-   case FID(RSPC): pbr->GetFloat(m_d.m_reelspacing); break;
-   case FID(MSTP):
-   {
-      float motorsteps;
-      pbr->GetFloat(motorsteps);
-      m_d.m_motorsteps = (int)motorsteps;
-      break;
-   }
-   case FID(SOUN): pbr->GetString(m_d.m_szSound); break;
-   case FID(UGRD): pbr->GetBool(m_d.m_useImageGrid); break;
-   case FID(VISI): pbr->GetBool(m_d.m_visible); break;
-   case FID(GIPR): pbr->GetInt(m_d.m_imagesPerGridRow); break;
-   case FID(RANG):
-   {
-      float dig;
-      pbr->GetFloat(dig);
-      m_d.m_digitrange = (int)dig;
-      break;
-   }
-   case FID(UPTM): pbr->GetInt(m_d.m_updateinterval); break;
-   case FID(FONT): //!! deprecated, only here to support loading of old tables
-   {
-#ifndef __STANDALONE__
-      IFont *pIFont;
-      FONTDESC fd;
-      fd.cbSizeofstruct = sizeof(FONTDESC);
-      fd.lpstrName = (LPOLESTR)(L"Times New Roman");
-      fd.cySize.int64 = 260000;
-      //fd.cySize.Lo = 0;
-      fd.sWeight = FW_BOLD;
-      fd.sCharset = 0;
-      fd.fItalic = 0;
-      fd.fUnderline = 0;
-      fd.fStrikethrough = 0;
-      OleCreateFontIndirect(&fd, IID_IFont, (void **)&pIFont);
-
-      IPersistStream * ips;
-      pIFont->QueryInterface(IID_IPersistStream, (void **)&ips);
-
-      ips->Load(pbr->m_pistream);
-
-      pIFont->Release();
-#else
-      // https://github.com/freezy/VisualPinball.Engine/blob/master/VisualPinball.Engine/VPT/Font.cs#L25
-
-      unsigned char data[255];
-      pbr->ReadBytes(data, 3);
-      pbr->ReadBytes(data, 1); // Italic
-      pbr->ReadBytes(data, 2); // Weight
-      pbr->ReadBytes(data, 4); // Size
-      pbr->ReadBytes(data, 1); // nameLen
-      pbr->ReadBytes(data, data[0]); // name
-#endif
-      break;
-   }
-   default: ISelect::LoadToken(id, pbr); break;
-   }
-   return true;
-}
-
-HRESULT DispReel::InitPostLoad()
-{
-   return S_OK;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(VER1): m_d.m_v1 = reader.AsVector2(); break;
+         case FID(VER2): m_d.m_v2 = reader.AsVector2(); break;
+         case FID(WDTH): m_d.m_width = reader.AsFloat(); break;
+         case FID(HIGH): m_d.m_height = reader.AsFloat(); break;
+         case FID(CLRB): m_d.m_backcolor = reader.AsInt(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(TRNS): m_d.m_transparent = reader.AsBool(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(RCNT):
+         {
+            float reel;
+            reel = reader.AsFloat();
+            m_d.m_reelcount = (int)reel;
+            break;
+         }
+         case FID(RSPC): m_d.m_reelspacing = reader.AsFloat(); break;
+         case FID(MSTP):
+         {
+            float motorsteps;
+            motorsteps = reader.AsFloat();
+            m_d.m_motorsteps = (int)motorsteps;
+            break;
+         }
+         case FID(SOUN): m_d.m_szSound = reader.AsString(); break;
+         case FID(UGRD): m_d.m_useImageGrid = reader.AsBool(); break;
+         case FID(VISI): m_d.m_visible = reader.AsBool(); break;
+         case FID(GIPR): m_d.m_imagesPerGridRow = reader.AsInt(); break;
+         case FID(RANG):
+         {
+            float dig;
+            dig = reader.AsFloat();
+            m_d.m_digitrange = (int)dig;
+            break;
+         }
+         case FID(UPTM): m_d.m_updateinterval = reader.AsInt(); break;
+         case FID(FONT): reader.AsFontDescriptor(); break; //!! deprecated, only here to support loading of old tables
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
 }
 
 // The following methods provide the interface to the object through both the editor
@@ -629,8 +516,6 @@ STDMETHODIMP DispReel::put_Height(float newVal)
 STDMETHODIMP DispReel::get_X(float *pVal)
 {
    *pVal = GetX();
-   m_vpinball->SetStatusBarUnitInfo(string(), true);
-
    return S_OK;
 }
 
@@ -788,7 +673,7 @@ STDMETHODIMP DispReel::AddValue(LONG Value)
    const bool bNegative = (Value < 0);
 
    // ensure a positive number
-   long val = labs(Value);
+   int val = labs(Value);
 
    // get the base of this reel
    const int valbase = m_d.m_digitrange + 1;
@@ -816,7 +701,7 @@ STDMETHODIMP DispReel::AddValue(LONG Value)
 STDMETHODIMP DispReel::SetValue(LONG Value)
 {
    // ensure a positive number
-   long val = labs(Value);
+   int val = labs(Value);
 
    // get the base of this reel
    const int valbase = m_d.m_digitrange + 1;

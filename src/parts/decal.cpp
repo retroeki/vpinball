@@ -3,48 +3,41 @@
 // implementation of the Decal class.
 
 #include "core/stdafx.h" 
+#include "decal.h"
 
-#ifndef __STANDALONE__
-#include "vpinball.h"
-#endif
-
+#include "core/VPApp.h"
+#include "renderer/Renderer.h"
 #include "renderer/Shader.h"
+#include "renderer/trace.h"
+
 
 #define AUTOLEADING (tm.tmAscent - tm.tmInternalLeading/4)
 
-Decal::Decal()
-{
-}
-
 Decal::~Decal()
 {
-   assert(m_rd == nullptr);
-   SAFE_RELEASE(m_pIFont);
+   assert(m_renderer == nullptr);
 }
 
-Decal *Decal::CopyForPlay(PinTable *live_table) const
+Decal *Decal::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Decal, live_table)
-#ifndef __STANDALONE__
-   m_pIFont->Clone(&dst->m_pIFont);
-#endif
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Decal)
    dst->EnsureSize();
    return dst;
 }
 
-HRESULT Decal::Init(PinTable * const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT Decal::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
+   m_wzName = L"Decal"sv;
    SetDefaults(fromMouseClick);
    m_d.m_vCenter.x = x;
    m_d.m_vCenter.y = y;
    EnsureSize();
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
 void Decal::SetDefaults(const bool fromMouseClick)
 {
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsDecal_##prop() : Settings::GetDefaultPropsDecal_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsDecal_##prop() : Settings::GetDefaultPropsDecal_##prop##_Default()
    LinkProp(m_d.m_width, Width);
    LinkProp(m_d.m_height, Height);
    LinkProp(m_d.m_rotation, Rotation);
@@ -54,30 +47,27 @@ void Decal::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_text, Text);
    LinkProp(m_d.m_color, Color);
    LinkProp(m_d.m_verticalText, VerticalText);
-#ifndef __STANDALONE__
-   SAFE_RELEASE(m_pIFont);
-   FONTDESC fd;
-   fd.cbSizeofstruct = sizeof(FONTDESC);
+   LinkProp(m_d.m_sizingtype, Sizing);
+
    float fontSize;
-   string fontName;
    LinkProp(fontSize, FontSize);
-   LinkProp(fontName, FontName);
-   LinkProp(fd.sWeight, FontWeight);
-   LinkProp(fd.sCharset, FontCharSet);
-   LinkProp(fd.fItalic, FontItalic);
-   LinkProp(fd.fUnderline, FontUnderline);
-   LinkProp(fd.fStrikethrough, FontStrikeThrough);
-   fd.cySize.int64 = (LONGLONG)(fontSize * 10000.0f);
-   fd.lpstrName = (LPOLESTR)MakeWide(fontName);
-   OleCreateFontIndirect(&fd, IID_IFont, (void **)&m_pIFont);
-   delete [] fd.lpstrName;
-#endif
+   LinkProp(m_d.m_font.name, FontName);
+   LinkProp(m_d.m_font.weight, FontWeight);
+   LinkProp(m_d.m_font.charset, FontCharSet);
+
+   bool fItalic, fUnderline, fStrikethrough;
+   LinkProp(fItalic, FontItalic);
+   LinkProp(fUnderline, FontUnderline);
+   LinkProp(fStrikethrough, FontStrikeThrough);
+
+   m_d.m_font.size = (uint32_t)(fontSize * 10000.0f);
+   m_d.m_font.attributes = (fItalic ? 0x02 : 0x00) | (fUnderline ? 0x04 : 0x00) | (fStrikethrough ? 0x08 : 0x00);
 #undef LinkProp
 }
 
 void Decal::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsDecal_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsDecal_##prop(field, false)
    LinkProp(m_d.m_width, Width);
    LinkProp(m_d.m_height, Height);
    LinkProp(m_d.m_rotation, Rotation);
@@ -87,118 +77,35 @@ void Decal::WriteRegDefaults()
    LinkProp(m_d.m_text, Text);
    LinkProp(m_d.m_color, Color);
    LinkProp(m_d.m_verticalText, VerticalText);
-#ifndef __STANDALONE__
-   if (m_pIFont)
-   {
-      FONTDESC fd;
-      fd.cbSizeofstruct = sizeof(FONTDESC);
-      m_pIFont->get_Size(&fd.cySize);
-      m_pIFont->get_Name((BSTR*)&fd.lpstrName);
-      m_pIFont->get_Weight(&fd.sWeight);
-      m_pIFont->get_Charset(&fd.sCharset);
-      m_pIFont->get_Italic(&fd.fItalic);
-      m_pIFont->get_Underline(&fd.fUnderline);
-      m_pIFont->get_Strikethrough(&fd.fStrikethrough);
-      const float fontSize = (float)(fd.cySize.int64 / 10000.0);
-      const string fontName = MakeString((BSTR)fd.lpstrName);
-      SysFreeString((BSTR)fd.lpstrName);
+   LinkProp(m_d.m_sizingtype, Sizing);
 
-      LinkProp(fontSize, FontSize);
-      LinkProp(fontName, FontName);
-      LinkProp(fd.sWeight, FontWeight);
-      LinkProp(fd.sCharset, FontCharSet);
-      LinkProp(fd.fItalic, FontItalic);
-      LinkProp(fd.fUnderline, FontUnderline);
-      LinkProp(fd.fStrikethrough, FontStrikeThrough);
-   }
-#endif
+   const float fontSize = (float)(m_d.m_font.size / 10000.0);
+   const bool fItalic = (m_d.m_font.attributes & 0x02) != 0;
+   const bool fUnderline = (m_d.m_font.attributes & 0x04) != 0;
+   const bool fStrikethrough = (m_d.m_font.attributes & 0x08) != 0;
+
+   LinkProp(fontSize, FontSize);
+   LinkProp(m_d.m_font.name, FontName);
+   LinkProp(m_d.m_font.weight, FontWeight);
+   LinkProp(m_d.m_font.charset, FontCharSet);
+   LinkProp(fItalic, FontItalic);
+   LinkProp(fUnderline, FontUnderline);
+   LinkProp(fStrikethrough, FontStrikeThrough);
 #undef LinkProp
 }
 
 
-void Decal::UIRenderPass1(Sur * const psur)
+string Decal::GetFontName() const
 {
-   if (!(m_backglass && !GetPTable()->GetDecalsEnabled()))
-   {
-      psur->SetBorderColor(-1, false, 0);
-      psur->SetFillColor(m_ptable->RenderSolid() ? RGB(0, 0, 255) : -1);
-      psur->SetObject(this);
-
-      const float halfwidth = m_realwidth/*m_d.m_width*/ * 0.5f;
-      const float halfheight = m_realheight/*m_d.m_height*/ * 0.5f;
-
-      const float radangle = ANGTORAD(m_d.m_rotation);
-      const float sn = sinf(radangle);
-      const float cs = cosf(radangle);
-
-      const Vertex2D rgv[4] = {
-         Vertex2D(m_d.m_vCenter.x + sn*halfheight - cs*halfwidth,
-         m_d.m_vCenter.y - cs*halfheight - sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x + sn*halfheight + cs*halfwidth,
-         m_d.m_vCenter.y - cs*halfheight + sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x - sn*halfheight + cs*halfwidth,
-         m_d.m_vCenter.y + cs*halfheight + sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x - sn*halfheight - cs*halfwidth,
-         m_d.m_vCenter.y + cs*halfheight - sn*halfwidth) };
-
-      psur->Polygon(rgv, 4);
-   }
-}
-
-void Decal::UIRenderPass2(Sur * const psur)
-{
-   if (!(m_backglass && !GetPTable()->GetDecalsEnabled()))
-   {
-      psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-      psur->SetFillColor(-1);
-      psur->SetObject(this);
-      psur->SetObject(nullptr);
-
-      const float halfwidth = m_realwidth * 0.5f;
-      const float halfheight = m_realheight * 0.5f;
-
-      const float radangle = ANGTORAD(m_d.m_rotation);
-      const float sn = sinf(radangle);
-      const float cs = cosf(radangle);
-
-      const Vertex2D rgv[4] = {
-         Vertex2D(m_d.m_vCenter.x + sn*halfheight - cs*halfwidth,
-         m_d.m_vCenter.y - cs*halfheight - sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x + sn*halfheight + cs*halfwidth,
-         m_d.m_vCenter.y - cs*halfheight + sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x - sn*halfheight + cs*halfwidth,
-         m_d.m_vCenter.y + cs*halfheight + sn*halfwidth),
-
-         Vertex2D(m_d.m_vCenter.x - sn*halfheight - cs*halfwidth,
-         m_d.m_vCenter.y + cs*halfheight - sn*halfwidth) };
-
-      psur->Polygon(rgv, 4);
-   }
-}
-
-string Decal::GetFontName()
-{
-   if(m_pIFont)
-   {
-      BSTR bstr;
-      /*HRESULT hr =*/ m_pIFont->get_Name(&bstr);
-      const string fontName = MakeString(bstr);
-      SysFreeString(bstr);
-      return fontName;
-   }
-   return string();
+   return m_d.m_font.name;
 }
 
 void Decal::GetTextSize(int * const px, int * const py)
 {
 #ifndef __STANDALONE__
    const int len = (int)m_d.m_text.length();
-   const HFONT hFont = GetFont();
+   LOGFONT lf = m_d.m_font.ToLogFont();
+   const HFONT hFont = CreateFontIndirect(&lf);
    constexpr int alignment = DT_LEFT;
 
    const CClientDC clientDC(nullptr);
@@ -218,7 +125,7 @@ void Decal::GetTextSize(int * const px, int * const py)
          rcOut.top = 0;		//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing;
          rcOut.right = 0x1;
          rcOut.bottom = 0x1;
-         clientDC.DrawText(m_d.m_text.c_str()+i, 1, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+         ::DrawText(clientDC.GetHDC(), m_d.m_text.c_str() + i, 1, &rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
 
          *px = max(*px, (int)rcOut.right);
       }
@@ -232,7 +139,7 @@ void Decal::GetTextSize(int * const px, int * const py)
       rcOut.top = 0;			//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing;
       rcOut.right = 0x1;
       rcOut.bottom = 0x1;
-      clientDC.DrawText(m_d.m_text.c_str(), len, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+      ::DrawText(clientDC.GetHDC(), m_d.m_text.c_str(), len, &rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
 
       *px = rcOut.right;
    }
@@ -246,12 +153,12 @@ void Decal::GetTextSize(int * const px, int * const py)
 float Decal::GetDepth(const Vertex3Ds& viewDir) const
 {
    const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y);
-   return !m_backglass ? (viewDir.x * m_d.m_vCenter.x + viewDir.y * m_d.m_vCenter.y + viewDir.z*height) : 0.f;
+   return !m_desktopBackdrop ? (viewDir.x * m_d.m_vCenter.x + viewDir.y * m_d.m_vCenter.y + viewDir.z * height) : 0.f;
 }
 
 void Decal::UpdateBounds()
 {
-   if (m_backglass)
+   if (m_desktopBackdrop)
       m_boundingSphereCenter.Set(0.f, 0.f, 0.f);
    else
    {
@@ -260,130 +167,95 @@ void Decal::UpdateBounds()
    }
 }
 
-void Decal::SetObjectPos()
+void Decal::GetEditorQuad(Vertex2D rgv[4]) const
 {
-   m_vpinball->SetObjectPosCur(m_d.m_vCenter.x, m_d.m_vCenter.y);
+   const float halfwidth = m_realwidth * 0.5f;
+   const float halfheight = m_realheight * 0.5f;
+
+   const float radangle = ANGTORAD(m_d.m_rotation);
+   const float sn = sinf(radangle);
+   const float cs = cosf(radangle);
+
+   rgv[0] = Vertex2D(m_d.m_vCenter.x + sn * halfheight - cs * halfwidth, m_d.m_vCenter.y - cs * halfheight - sn * halfwidth);
+   rgv[1] = Vertex2D(m_d.m_vCenter.x + sn * halfheight + cs * halfwidth, m_d.m_vCenter.y - cs * halfheight + sn * halfwidth);
+   rgv[2] = Vertex2D(m_d.m_vCenter.x - sn * halfheight + cs * halfwidth, m_d.m_vCenter.y + cs * halfheight + sn * halfwidth);
+   rgv[3] = Vertex2D(m_d.m_vCenter.x - sn * halfheight - cs * halfwidth, m_d.m_vCenter.y + cs * halfheight - sn * halfwidth);
 }
+
+void Decal::PhysicSetup(PhysicsEngine *physics, const bool isUI)
+{
+   if (isUI)
+   {
+      // UI picking quad covering the decal (decals have no playfield collider)
+      EnsureSize();
+      Vertex2D quad[4];
+      GetEditorQuad(quad);
+      const float height = m_desktopBackdrop ? 0.f : (m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y) + 0.2f);
+      Vertex3Ds *const rgv3d = new Vertex3Ds[4];
+      for (int i = 0; i < 4; i++)
+         rgv3d[i] = Vertex3Ds(quad[3 - i].x, quad[3 - i].y, height); // Reversed winding so that the quad faces up and can be picked from the top-down editor views
+      physics->AddCollider(new Hit3DPoly(this, rgv3d, 4), isUI);
+   }
+}
+
+void Decal::PhysicRelease(PhysicsEngine *physics, const bool isUI) { }
 
 void Decal::Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter)
 {
-   ISelect::Rotate(ang, pvCenter, useElementCenter);
+   IEditable::Rotate(ang, pvCenter, useElementCenter);
 
    m_d.m_rotation += ang;
 }
 
-HRESULT Decal::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
+void Decal::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteVector2(FID(VCEN), m_d.m_vCenter);
-   bw.WriteFloat(FID(WDTH), m_d.m_width);
-   bw.WriteFloat(FID(HIGH), m_d.m_height);
-   bw.WriteFloat(FID(ROTA), m_d.m_rotation);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteString(FID(SURF), m_d.m_szSurface);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteString(FID(TEXT), m_d.m_text);
-   bw.WriteInt(FID(TYPE), m_d.m_decaltype);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteInt(FID(COLR), m_d.m_color);
-   bw.WriteInt(FID(SIZE), m_d.m_sizingtype);
-
-   bw.WriteBool(FID(VERT), m_d.m_verticalText);
-
-   bw.WriteBool(FID(BGLS), m_backglass);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(FONT));
-#ifndef __STANDALONE__
-   IPersistStream * ips;
-   m_pIFont->QueryInterface(IID_IPersistStream, (void **)&ips);
-   ips->Save(pstm, TRUE);
-   SAFE_RELEASE_NO_RCC(ips);
-#endif
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
+   writer.WriteVector2(FID(VCEN), m_d.m_vCenter);
+   writer.WriteFloat(FID(WDTH), m_d.m_width);
+   writer.WriteFloat(FID(HIGH), m_d.m_height);
+   writer.WriteFloat(FID(ROTA), m_d.m_rotation);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteString(FID(SURF), m_d.m_szSurface);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteString(FID(TEXT), m_d.m_text);
+   writer.WriteInt(FID(TYPE), m_d.m_decaltype);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteInt(FID(COLR), m_d.m_color);
+   writer.WriteInt(FID(SIZE), m_d.m_sizingtype);
+   writer.WriteBool(FID(VERT), m_d.m_verticalText);
+   writer.WriteBool(FID(BGLS), m_desktopBackdrop);
+   SaveSharedEditableFields(writer);
+   writer.WriteFontDescriptor(FID(FONT), m_d.m_font);
+   writer.EndObject();
 }
 
-HRESULT Decal::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Decal::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool Decal::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch (id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(VCEN): pbr->GetVector2(m_d.m_vCenter); break;
-   case FID(WDTH): pbr->GetFloat(m_d.m_width); break;
-   case FID(HIGH): pbr->GetFloat(m_d.m_height); break;
-   case FID(ROTA): pbr->GetFloat(m_d.m_rotation); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(SURF): pbr->GetString(m_d.m_szSurface); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(TEXT): pbr->GetString(m_d.m_text); break;
-   case FID(TYPE): pbr->GetInt(&m_d.m_decaltype); break;
-   case FID(COLR): pbr->GetInt(m_d.m_color); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(SIZE): pbr->GetInt(&m_d.m_sizingtype); break;
-   case FID(VERT): pbr->GetBool(m_d.m_verticalText); break;
-   case FID(BGLS): pbr->GetBool(m_backglass); break;
-   case FID(FONT):
-   {
-#ifndef __STANDALONE__
-      if (!m_pIFont)
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
       {
-         FONTDESC fd;
-         fd.cbSizeofstruct = sizeof(FONTDESC);
-         fd.lpstrName = (LPOLESTR)(L"Arial");
-         fd.cySize.int64 = 142500;
-         fd.sWeight = FW_NORMAL;
-         fd.sCharset = 0;
-         fd.fItalic = 0;
-         fd.fUnderline = 0;
-         fd.fStrikethrough = 0;
-         OleCreateFontIndirect(&fd, IID_IFont, (void **)&m_pIFont);
-      }
-
-      IPersistStream * ips;
-      m_pIFont->QueryInterface(IID_IPersistStream, (void **)&ips);
-      ips->Load(pbr->m_pistream);
-      SAFE_RELEASE_NO_RCC(ips);
-
-#else
-      // https://github.com/freezy/VisualPinball.Engine/blob/master/VisualPinball.Engine/VPT/Font.cs#L25
-
-      unsigned char data[255];
-      pbr->ReadBytes(data, 3);
-      pbr->ReadBytes(data, 1); // Italic
-      pbr->ReadBytes(data, 2); // Weight
-      pbr->ReadBytes(data, 4); // Size
-      pbr->ReadBytes(data, 1); // nameLen
-      pbr->ReadBytes(data, data[0]); // name
-#endif
-      break;
-   }
-   default: ISelect::LoadToken(id, pbr); break;
-   }
-   return true;
-}
-
-HRESULT Decal::InitPostLoad()
-{
+         switch (tag)
+         {
+         case FID(VCEN): m_d.m_vCenter = reader.AsVector2(); break;
+         case FID(WDTH): m_d.m_width = reader.AsFloat(); break;
+         case FID(HIGH): m_d.m_height = reader.AsFloat(); break;
+         case FID(ROTA): m_d.m_rotation = reader.AsFloat(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(SURF): m_d.m_szSurface = reader.AsString(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(TEXT): m_d.m_text = reader.AsString(); break;
+         case FID(TYPE): m_d.m_decaltype = static_cast<DecalType>(reader.AsInt()); break;
+         case FID(COLR): m_d.m_color = reader.AsInt(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(SIZE): m_d.m_sizingtype = static_cast<SizingType>(reader.AsInt()); break;
+         case FID(VERT): m_d.m_verticalText = reader.AsBool(); break;
+         case FID(BGLS): m_desktopBackdrop = reader.AsBool(); break;
+         case FID(FONT): m_d.m_font = reader.AsFontDescriptor(); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
    EnsureSize();
-
-   return S_OK;
 }
 
 void Decal::EnsureSize()
@@ -400,12 +272,7 @@ void Decal::EnsureSize()
       int sizex, sizey;
       GetTextSize(&sizex, &sizey);
 
-      CY cy;
- #ifndef __STANDALONE__
-      m_pIFont->get_Size(&cy);
- #endif
-
-      double rh = (double)cy.Lo * (1.0 / 2545.0);
+      double rh = (double)m_d.m_font.size * (1.0 / 2545.0);
 
       if (m_d.m_verticalText)
          rh *= (double)m_d.m_text.length();
@@ -419,22 +286,18 @@ void Decal::EnsureSize()
 
       if (m_d.m_decaltype == DecalImage)
       {
-         Texture * const pin = m_ptable->GetImage(m_d.m_szImage);
+         // m_ptable is not set yet during the early Load/Init/CopyForPlay calls; RenderSetup recomputes once it is
+         Texture * const pin = m_ptable ? m_ptable->GetImage(m_d.m_szImage) : nullptr;
          m_realwidth = m_realheight;
          if (pin)
             m_realwidth *= (float)((double)pin->m_width / (double)pin->m_height);
       }
       else
       {
-         CY cy;
-#ifndef __STANDALONE__
-         m_pIFont->get_Size(&cy);
-#endif
-
          int sizex, sizey;
          GetTextSize(&sizex, &sizey);
 
-         double rh = (double)cy.Lo * (1.0 / 2545.0);
+         double rh = (double)m_d.m_font.size * (1.0 / 2545.0);
 
          if (m_d.m_verticalText)
          {
@@ -451,67 +314,24 @@ void Decal::EnsureSize()
    }
 }
 
-HFONT Decal::GetFont()
-{
-#ifndef __STANDALONE__
-   LOGFONT lf = {};
-   lf.lfHeight = -72;
-   lf.lfCharSet = DEFAULT_CHARSET;
-   lf.lfQuality = NONANTIALIASED_QUALITY;
-
-   BSTR bstr;
-   /*HRESULT hr =*/m_pIFont->get_Name(&bstr);
-   WideCharToMultiByteNull(CP_ACP, 0, bstr, -1, lf.lfFaceName, std::size(lf.lfFaceName), nullptr, nullptr);
-   SysFreeString(bstr);
-
-   BOOL bl;
-   (void)m_pIFont->get_Bold(&bl);
-
-   lf.lfWeight = bl ? FW_BOLD : FW_NORMAL;
-
-   (void)m_pIFont->get_Italic(&bl);
-
-   lf.lfItalic = (BYTE)bl;
-
-   const HFONT hFont = CreateFontIndirect(&lf);
-
-   return hFont;
-#else
-   return 0L;
-#endif
-}
-
-
-#pragma region Physics
-
-void Decal::PhysicSetup(PhysicsEngine* physics, const bool isUI)
-{
-   if (isUI)
-   {
-      // FIXME implement UI picking
-   }
-}
-
-void Decal::PhysicRelease(PhysicsEngine* physics, const bool isUI) { }
-
-#pragma endregion
-
 
 #pragma region Rendering
 
-void Decal::RenderSetup(RenderDevice *device)
+void Decal::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
 
+   EnsureSize();
    UpdateBounds();
-   
+
 #ifndef __STANDALONE__
    if (m_d.m_decaltype == DecalText)
    {
       RECT rcOut = { };
       const int len = (int)m_d.m_text.length();
-      const HFONT hFont = GetFont();
+      LOGFONT lf = m_d.m_font.ToLogFont();
+      const HFONT hFont = CreateFontIndirect(&lf);
       int alignment = DT_LEFT;
 
       const CClientDC clientDC(nullptr);
@@ -529,10 +349,10 @@ void Decal::RenderSetup(RenderDevice *device)
          for (int i = 0; i < len; i++)
          {
             rcOut.left = 0;
-            rcOut.top = 0;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing;
+            rcOut.top = 0;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing
             rcOut.right = 1;
             rcOut.bottom = 1;
-            clientDC.DrawText(m_d.m_text.c_str()+i, 1, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+            ::DrawText(clientDC.GetHDC(), m_d.m_text.c_str() + i, 1, &rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
             maxwidth = max(maxwidth, (int)rcOut.right);
          }
 
@@ -544,10 +364,10 @@ void Decal::RenderSetup(RenderDevice *device)
       else
       {
          rcOut.left = 0;
-         rcOut.top = 0;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing;
+         rcOut.top = 0;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing
          rcOut.right = 1;
          rcOut.bottom = 1;
-         clientDC.DrawText(m_d.m_text.c_str(), len, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
+         ::DrawText(clientDC.GetHDC(), m_d.m_text.c_str(), len, &rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK | DT_CALCRECT);
 
          charheight = m_realheight;
       }
@@ -598,9 +418,9 @@ void Decal::RenderSetup(RenderDevice *device)
       {
          for (int i = 0; i < len; i++)
          {
-            rcOut.top = AUTOLEADING * i;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing;
+            rcOut.top = AUTOLEADING * i;//-tm.tmInternalLeading + 2; // Leave a pixel for anti-aliasing
             rcOut.bottom = rcOut.top + 100;
-            dc.DrawText(m_d.m_text.c_str()+i, 1, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK);
+            dc.DrawText(m_d.m_text.c_str() + i, 1, rcOut, alignment | DT_NOCLIP | DT_NOPREFIX | DT_WORDBREAK);
          }
       }
       else
@@ -644,15 +464,15 @@ void Decal::RenderSetup(RenderDevice *device)
    const float sn = sinf(radangle);
    const float cs = cosf(radangle);
 
-   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_rd, 4);
+   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, 4);
    Vertex3D_NoTex2 *vertices;
    vertexBuffer->Lock(vertices);
-   const float z = m_backglass ? 0.f : (height + 0.2f);
+   const float z = m_desktopBackdrop ? 0.f : (height + 0.2f);
    int renderWidth, renderHeight;
-   g_pplayer->m_renderer->GetRenderSize(renderWidth, renderHeight);
-   const float xmult = m_backglass ? ((float)renderWidth * (float)(1.0 / EDITOR_BG_WIDTH)) : 1.f;
-   const float ymult = m_backglass ? ((float)renderHeight * (float)(1.0 / EDITOR_BG_HEIGHT)) : 1.f;
-   const float offs = m_backglass ? 0.5f : 0.f;
+   m_renderer->GetRenderSize(renderWidth, renderHeight);
+   const float xmult = m_desktopBackdrop ? ((float)renderWidth * (float)(1.0 / EDITOR_BG_WIDTH)) : 1.f;
+   const float ymult = m_desktopBackdrop ? ((float)renderHeight * (float)(1.0 / EDITOR_BG_HEIGHT)) : 1.f;
+   const float offs = m_desktopBackdrop ? 0.5f : 0.f;
 
    vertices[0].x = (m_d.m_vCenter.x + sn*(halfheight + leading) - cs*halfwidth)*xmult-offs;
    vertices[0].y = (m_d.m_vCenter.y - cs*(halfheight + leading) - sn*halfwidth)*ymult-offs;
@@ -697,25 +517,25 @@ void Decal::RenderSetup(RenderDevice *device)
 
 void Decal::RenderRelease()
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    m_textImg = nullptr;
    m_meshBuffer = nullptr;
-   m_rd = nullptr;
+   m_renderer = nullptr;
 }
 
 void Decal::UpdateAnimation(const float diff_time_msec)
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
 }
 
 void Decal::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    TRACE_FUNCTION();
 
-   if (m_backglass && !GetPTable()->GetDecalsEnabled())
+   if (m_desktopBackdrop && !GetPTable()->GetDecalsEnabled())
       return;
 
    if (!m_d.m_visible)
@@ -723,59 +543,59 @@ void Decal::Render(const unsigned int renderMask)
 
    //!! should just check if material has no opacity enabled, but this is crucial for HV setup performance like-is
    const Material *const mat = m_ptable->GetMaterial(m_d.m_szMaterial);
-   if (!(   (!isDynamicOnly && (m_backglass || !mat->m_bOpacityActive)) // Static prerendering
-         || (!isStaticOnly && (!m_backglass && mat->m_bOpacityActive)))) // Not prerendered part pass
+   if (!(   (!isDynamicOnly && (m_desktopBackdrop || !mat->m_bOpacityActive)) // Static prerendering
+         || (!isStaticOnly && (!m_desktopBackdrop && mat->m_bOpacityActive)))) // Not prerendered part pass
       return;
 
-   m_rd->ResetRenderState();
+   m_renderer->m_renderDevice->ResetRenderState();
 
-   m_rd->m_basicShader->SetMaterial(mat);
+   m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat);
 
    if (m_d.m_decaltype != DecalImage)
    {
-      if (!m_backglass)
-         m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_with_texture, *mat, false);
+      if (!m_desktopBackdrop)
+         m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_with_texture, *mat, false);
       else
-         m_rd->m_basicShader->SetTechnique(SHADER_TECHNIQUE_bg_decal_with_texture);
-      m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, m_textImg.get());
+         m_renderer->m_renderDevice->m_basicShader->SetTechnique(ShaderTechnique::bg_decal_with_texture);
+      m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, m_textImg.get());
    }
    else
    {
       Texture *const pin = m_ptable->GetImage(m_d.m_szImage);
       if (pin)
       {
-         if (!m_backglass)
-            m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
+         if (!m_desktopBackdrop)
+            m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
          else
-            m_rd->m_basicShader->SetTechnique(SHADER_TECHNIQUE_bg_decal_with_texture);
+            m_renderer->m_renderDevice->m_basicShader->SetTechnique(ShaderTechnique::bg_decal_with_texture);
          // Set texture to mirror, so the alpha state of the texture blends correctly to the outside
-         m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, pin, false, SF_TRILINEAR, SA_MIRROR, SA_MIRROR);
-         m_rd->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
+         m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, pin, false, SamplerFilter::SF_TRILINEAR, SamplerAddressMode::SA_MIRROR, SamplerAddressMode::SA_MIRROR);
+         m_renderer->m_renderDevice->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
       }
       else
       {
-         if (!m_backglass)
-            m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_without_texture, *mat);
+         if (!m_desktopBackdrop)
+            m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_without_texture, *mat);
          else
-            m_rd->m_basicShader->SetTechnique(SHADER_TECHNIQUE_bg_decal_without_texture);
+            m_renderer->m_renderDevice->m_basicShader->SetTechnique(ShaderTechnique::bg_decal_without_texture);
       }
    }
 
-   m_rd->EnableAlphaBlend(false);
+   m_renderer->m_renderDevice->EnableAlphaBlend(false);
 
-   if (m_backglass)
+   if (m_desktopBackdrop)
    {
-      m_rd->SetRenderStateDepthBias(0.0f);
+      m_renderer->m_renderDevice->SetRenderStateDepthBias(0.0f);
       static constexpr vec4 staticColor { 1.0f, 1.0f, 1.0f, 1.0f };
-      m_rd->m_basicShader->SetVector(SHADER_cBase_Alpha, &staticColor);
-      g_pplayer->m_renderer->UpdateDesktopBackdropShaderMatrix(true, false, false);
-      m_rd->DrawMesh(m_rd->m_basicShader, !m_backglass, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLESTRIP, 0, 4);
-      g_pplayer->m_renderer->UpdateBasicShaderMatrix();
+      m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::cBase_Alpha, &staticColor);
+      m_renderer->UpdateDesktopBackdropShaderMatrix(true, false, false);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, !m_desktopBackdrop, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLESTRIP, 0, 4);
+      m_renderer->UpdateBasicShaderMatrix();
    }
    else
    {
-      m_rd->SetRenderStateDepthBias(-5.f);
-      m_rd->DrawMesh(m_rd->m_basicShader, !m_backglass, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLESTRIP, 0, 4);
+      m_renderer->m_renderDevice->SetRenderStateDepthBias(-5.f);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, !m_desktopBackdrop, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLESTRIP, 0, 4);
    }
 }
 
@@ -847,8 +667,6 @@ STDMETHODIMP Decal::put_Height(float newVal)
 STDMETHODIMP Decal::get_X(float *pVal)
 {
    *pVal = m_d.m_vCenter.x;
-   m_vpinball->SetStatusBarUnitInfo(string(), true);
-
    return S_OK;
 }
 
@@ -950,14 +768,32 @@ STDMETHODIMP Decal::put_Material(BSTR newVal)
 
 STDMETHODIMP Decal::get_Font(IFontDisp **pVal)
 {
-   m_pIFont->QueryInterface(IID_IFontDisp, (void **)pVal);
+#ifndef __STANDALONE__
+   IFont* pIFont;
+   FONTDESC oleFD = m_d.m_font.ToOLEFontDesc();
+   OleCreateFontIndirect(&oleFD, IID_IFont, (void **)&pIFont);
+   delete[] oleFD.lpstrName;
+   const HRESULT hr = pIFont->QueryInterface(IID_IFontDisp, (void **)pVal);
+   pIFont->Release();
+   return hr;
+#else
    return S_OK;
+#endif
 }
 
 STDMETHODIMP Decal::putref_Font(IFontDisp *pFont)
 {
    //We know that our own property browser gives us the same pointer
-   SetDirtyDraw();
+#ifndef __STANDALONE__
+   IFont* pIFont;
+   if (SUCCEEDED(pFont->QueryInterface(IID_IFont, (void**)&pIFont)))
+   {
+       m_d.m_font.FromOLEFont(pIFont);
+       pIFont->Release();
+   }
+#endif
+   if (PinTable *const table = GetPTable())
+      table->SetDirtyDraw();
    EnsureSize();
 
    return S_OK;

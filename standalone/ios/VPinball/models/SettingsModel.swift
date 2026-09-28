@@ -1,12 +1,10 @@
 import SwiftUI
 
+@MainActor
 class SettingsModel: ObservableObject {
     // General
 
-    @Published var haptics: Bool = false
     @Published var renderingModeOverride: Bool = false
-    @Published var viewMode: VPinballViewMode = .desktopFSS
-    @Published var resetLogOnPlay: Bool = false
 
     // External DMD
 
@@ -33,14 +31,13 @@ class SettingsModel: ObservableObject {
     func load() {
         // General
 
-        haptics = vpinballManager.loadValue(.standalone, "Haptics", true)
-        renderingModeOverride = (vpinballManager.loadValue(.standalone, "RenderingModeOverride", 2) == 2)
+        renderingModeOverride = (vpinballManager.loadValue(.standalone, "RenderingModeOverride", -1) == 2)
 
         // External DMD
 
         if vpinballManager.loadValue(.pluginDMDUtil, "DMDServer", false) {
             externalDMD = .dmdServer
-        } else if vpinballManager.loadValue(.pluginDMDUtil, "ZeDMDWiFi", false) {
+        } else if vpinballManager.loadValue(.pluginDMDUtil, "ZeDMDWiFiEnabled", false) {
             externalDMD = .zedmdWiFi
         } else {
             externalDMD = .none
@@ -50,50 +47,30 @@ class SettingsModel: ObservableObject {
         dmdServerPort = vpinballManager.loadValue(.pluginDMDUtil, "DMDServerPort", 6789)
         zedmdWiFiAddr = vpinballManager.loadValue(.pluginDMDUtil, "ZeDMDWiFiAddr", "zedmd-wifi.local")
 
-        // Display
-
-        viewMode = VPinballViewMode(rawValue: vpinballManager.loadValue(.player, "BGSet", VPinballViewMode.desktopFSS.rawValue)) ?? .desktopFSS
-
         // Performance
 
         maxTexDimensionIndex = VPinballMaxTexDimension(rawValue: vpinballManager.loadValue(.player,
                                                                                            "MaxTexDimension",
-                                                                                           1024))
+                                                                                           3072))
             .flatMap { VPinballMaxTexDimension.all.firstIndex(of: $0) } ?? 0
 
         // Web Server
 
         webServer = vpinballManager.loadValue(.standalone, "WebServer", false)
         webServerPort = vpinballManager.loadValue(.standalone, "WebServerPort", 2112)
-
-        // Advanced
-
-        resetLogOnPlay = vpinballManager.loadValue(.standalone, "ResetLogOnPlay", true)
     }
 
     func reset() {
         load()
     }
 
-    func handleHaptics() {
-        vpinballManager.saveValue(.standalone, "Haptics", haptics)
-    }
-
     func handleRenderingModeOverride() {
         vpinballManager.saveValue(.standalone, "RenderingModeOverride", renderingModeOverride ? 2 : -1)
     }
 
-    func handleViewMode() {
-        vpinballManager.saveValue(.player, "BGSet", viewMode.rawValue)
-    }
-
-    func handleResetLogOnPlay() {
-        vpinballManager.saveValue(.standalone, "ResetLogOnPlay", resetLogOnPlay)
-    }
-
     func handleExternalDMD() {
         vpinballManager.saveValue(.pluginDMDUtil, "DMDServer", externalDMD == .dmdServer)
-        vpinballManager.saveValue(.pluginDMDUtil, "ZeDMDWiFi", externalDMD == .zedmdWiFi)
+        vpinballManager.saveValue(.pluginDMDUtil, "ZeDMDWiFiEnabled", externalDMD == .zedmdWiFi)
         vpinballManager.saveValue(.pluginDMDUtil, "Enable", externalDMD != .none)
     }
 
@@ -111,16 +88,12 @@ class SettingsModel: ObservableObject {
 
     func handleWebServer() {
         vpinballManager.saveValue(.standalone, "WebServer", webServer)
-        Task {
-            vpinballManager.updateWebServer()
-        }
+        vpinballManager.updateWebServer()
     }
 
     func handleWebServerPort() {
         vpinballManager.saveValue(.standalone, "WebServerPort", Int(webServerPort))
-        Task {
-            vpinballManager.updateWebServer()
-        }
+        vpinballManager.updateWebServer()
     }
 
     func handleMaxTexDimension() {

@@ -2,6 +2,16 @@
 
 #include "core/stdafx.h"
 
+#include "imgui/imgui.h"
+#include "parts/bumper.h"
+#include "parts/Collection.h"
+#include "parts/gate.h"
+#include "parts/hittarget.h"
+#include "parts/spinner.h"
+#include "parts/surface.h"
+#include "parts/trigger.h"
+
+
 // Ported at: VisualPinball.Unity/VisualPinball.Unity/VPT/Bumper/BumperCollider.cs
 
 BumperHitCircle::BumperHitCircle(Bumper* const pBumper, const Vertex2D& c, const float r, const float zlow, const float zhigh)
@@ -89,7 +99,7 @@ void LineSegSlingshot::Collide(const CollisionEvent& coll)
          m_obj->FireGroupEvent(DISPID_SurfaceEvents_Slingshot);
          m_TimeReset = g_pplayer->m_time_msec + 100;
 
-         g_pplayer->m_pininput.PlayRumble(0.15f, 0.1f, 100);
+         g_pplayer->m_pininput.PlaySlingshotRumble();
       }
    }
 }
@@ -156,6 +166,7 @@ HitGate::HitGate(Gate* const pgate, const float height)
    m_gateMover.m_pgate = pgate;
    m_gateMover.m_open = false;
    m_gateMover.m_forcedMove = false;
+   m_gateMover.m_hitDirection = false;
    m_twoWay = false;
 }
 

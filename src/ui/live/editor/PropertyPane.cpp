@@ -1,7 +1,8 @@
 #include "core/stdafx.h"
-
 #include "PropertyPane.h"
+
 #include "imgui/imgui_stdlib.h"
+#include "ui/live/LiveUI.h"
 
 namespace VPX::EditorUI
 {
@@ -51,21 +52,23 @@ void PropertyPane::PropertyLabel(const string& label)
    m_syncPos = ImVec2(pos.x + xWidth + xWidth, pos.y);
 }
 
-void PropertyPane::Header(const string& typeName, const std::function<string()>& getName, const std::function<void(const string&)>& setName)
+void PropertyPane::Header(const string& typeName, const std::function<wstring()>& getName, const std::function<void(const wstring&)>& setName)
 {
    ImGui::NewLine();
    LiveUI::CenteredText(typeName);
    ImGui::BeginDisabled(m_table->m_liveBaseTable); // Do not edit name of live objects as it would break the script
    PropertyLabel("Name"s);
-   if (string name = getName(); ImGui::InputText("##Name", &name))
-      setName(name);
+   const wstring wname = getName();
+   string name = MakeString(wname);
+   if ( ImGui::InputText("##Name", &name))
+      setName(MakeWString(name));
    ImGui::EndDisabled();
    ImGui::Separator();
 }
 
 void PropertyPane::EditableHeader(const string& typeName, IEditable* editable)
 {
-   Header(typeName, [editable]() { return editable->GetName(); }, [editable](const string& v) { editable->SetName(v); });
+   Header(typeName, [editable]() { return editable->GetWName(); }, [editable](const wstring& v) { editable->SetName(v); });
 }
 
 void PropertyPane::Separator(const string& label) const
@@ -178,6 +181,12 @@ void PropertyPane::ConvertUnit(Unit from, Unit& to, float& value, int& nDecimalA
 
    default: to = from; break;
    }
+}
+
+void PropertyPane::ResolveUnit(Unit from, Unit& to, int& nDecimalAdjust)
+{
+   float value = 0.f;
+   ConvertUnit(from, to, value, nDecimalAdjust);
 }
 
 const char* PropertyPane::GetUnitLabel(Unit unit)

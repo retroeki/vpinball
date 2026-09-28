@@ -26,9 +26,9 @@ namespace PUP {
      AlphaSort=0 is Randomize checked
 */
 
-static const string emptyString;
+static const std::filesystem::path emptyPath;
 
-PUPPlaylist::PUPPlaylist(PUPManager* manager, const string& szFolder, const string& szDescription, bool randomize, int restSeconds, float volume, int priority)
+PUPPlaylist::PUPPlaylist(PUPManager* manager, const std::filesystem::path& szFolder, const string& szDescription, bool randomize, int restSeconds, float volume, int priority)
 {
    m_szFolder = szFolder;
    m_szDescription = szDescription;
@@ -38,30 +38,33 @@ PUPPlaylist::PUPPlaylist(PUPManager* manager, const string& szFolder, const stri
    m_priority = priority;
    m_lastIndex = 0;
 
-   if (StrCompareNoCase(szFolder, "PUPOverlays"s))
+   if (StrCompareNoCase(szFolder.string(), "PUPOverlays"s))
       m_function = PUPPlaylist::Function::Overlays;
-   else if (StrCompareNoCase(szFolder, "PUPFrames"s))
+   else if (StrCompareNoCase(szFolder.string(), "PUPFrames"s))
       m_function = PUPPlaylist::Function::Frames;
-   else if (StrCompareNoCase(szFolder, "PUPAlphas"s))
+   else if (StrCompareNoCase(szFolder.string(), "PUPAlphas"s))
       m_function = PUPPlaylist::Function::Alphas;
-   else if (StrCompareNoCase(szFolder, "PuPShapes"s))
+   else if (StrCompareNoCase(szFolder.string(), "PuPShapes"s))
       m_function = PUPPlaylist::Function::Shapes;
    else
       m_function = PUPPlaylist::Function::Default;
 
-   m_szBasePath = find_case_insensitive_directory_path(manager->GetPath() + szFolder);
+   m_szBasePath = find_case_insensitive_directory_path(manager->GetPath() / szFolder);
    if (m_szBasePath.empty()) {
-      LOGE("Playlist folder not found: %s", szFolder.c_str());
+      LOGE("Playlist folder not found: " + szFolder.string());
       return;
    }
 
    std::error_code ec;
-   for (auto iter = std::filesystem::directory_iterator(m_szBasePath, ec);
-        !ec && iter != std::filesystem::directory_iterator(); ++iter) {
+   for (auto iter = std::filesystem::recursive_directory_iterator(m_szBasePath, ec);
+        !ec && iter != std::filesystem::recursive_directory_iterator(); iter.increment(ec)) {
       if (iter->is_regular_file(ec)) {
-         string szFilename = iter->path().filename().string();
-         if (!szFilename.empty() && szFilename[0] != '.') {
-            m_files.push_back(szFilename);
+         std::filesystem::path szFilename = iter->path().lexically_relative(m_szBasePath);
+         if (!szFilename.empty() && szFilename != ".") {
+            // Only top level files take part in the playlist rotation, files in subfolders
+            // can still be requested explicitly (e.g. LabelSet with playlist\subdir\file.png)
+            if (szFilename.parent_path().empty())
+               m_files.push_back(szFilename);
             m_fileMap[lowerCase(szFilename)] = szFilename;
          }
       }
@@ -78,23 +81,23 @@ PUPPlaylist* PUPPlaylist::CreateFromCSV(PUPManager* manager, const string& line)
 {
    vector<string> parts = parse_csv_line(line);
    if (parts.size() != 7) {
-      LOGE("Invalid playlist: %s", line.c_str());
+      LOGE("Invalid playlist: " + line);
       return nullptr;
    }
 
-   string szFolderPath = find_case_insensitive_directory_path(manager->GetPath() + parts[1]);
+   std::filesystem::path szFolderPath = find_case_insensitive_directory_path(manager->GetPath() / parts[1]);
    if (szFolderPath.empty()) {
-      LOGE("Playlist folder not found: %s", parts[1].c_str());
+      LOGE("Playlist folder not found: " + parts[1]);
       return nullptr;
    }
 
    bool hasFiles = false;
    std::error_code ec;
    for (auto iter = std::filesystem::directory_iterator(szFolderPath, ec);
-        !ec && iter != std::filesystem::directory_iterator(); ++iter) {
+        !ec && iter != std::filesystem::directory_iterator(); iter.increment(ec)) {
       if (iter->is_regular_file(ec)) {
-         string szFilename = iter->path().filename().string();
-         if (!szFilename.empty() && szFilename[0] != '.') {
+         std::filesystem::path szFilename = iter->path().filename();
+         if (!szFilename.empty() && szFilename != ".") {
             hasFiles = true;
             break;
          }
@@ -103,14 +106,12 @@ PUPPlaylist* PUPPlaylist::CreateFromCSV(PUPManager* manager, const string& line)
 
    if (!hasFiles) {
       // TODO add to a pup pack audit, we log as info as not a big deal.
-      LOGI("Playlist folder %s is empty",szFolderPath.c_str());
+      LOGW("Playlist folder " + szFolderPath.string() + " is empty");
    }
 
-   string szFolder = std::filesystem::path(szFolderPath).parent_path().filename().string();
-
    PUPPlaylist* pPlaylist = new PUPPlaylist(
-      manager,
-      szFolder,
+      manager, //
+      szFolderPath.filename(), // Subfolder
       parts[2], // Description
       (string_to_int(parts[3], 0) == 1), // Randomize
       string_to_int(parts[4], 0), // Rest seconds
@@ -120,16 +121,16 @@ PUPPlaylist* PUPPlaylist::CreateFromCSV(PUPManager* manager, const string& line)
    return pPlaylist;
 }
 
-const string& PUPPlaylist::GetPlayFile(const string& szFilename)
+std::filesystem::path PUPPlaylist::GetPlayFile(const std::filesystem::path& szFilename)
 {
-   ankerl::unordered_dense::map<string, string>::const_iterator it = m_fileMap.find(lowerCase(szFilename));
-   return it != m_fileMap.end() ? it->second : emptyString;
+   ankerl::unordered_dense::map<std::filesystem::path, std::filesystem::path>::const_iterator it = m_fileMap.find(lowerCase(szFilename));
+   return it != m_fileMap.end() ? it->second : emptyPath;
 }
 
-const string& PUPPlaylist::GetNextPlayFile()
+const std::filesystem::path& PUPPlaylist::GetNextPlayFile()
 {
    if (!m_randomize) {
-      const string& file = m_files[m_lastIndex];
+      const std::filesystem::path& file = m_files[m_lastIndex];
       if (++m_lastIndex >= (int)m_files.size())
          m_lastIndex = 0;
       return file;
@@ -137,24 +138,36 @@ const string& PUPPlaylist::GetNextPlayFile()
    return m_files[rand() % m_files.size()];
 }
 
-string PUPPlaylist::GetPlayFilePath(const string& szFilename)
+std::filesystem::path PUPPlaylist::GetPlayFilePath(const std::filesystem::path& szFilename)
 {
-   if (m_files.empty())
-      return emptyString;
-
    if (!szFilename.empty()) {
-      ankerl::unordered_dense::map<string, string>::const_iterator it = m_fileMap.find(lowerCase(szFilename));
+      ankerl::unordered_dense::map<std::filesystem::path, std::filesystem::path>::const_iterator it = m_fileMap.find(lowerCase(szFilename));
       if (it != m_fileMap.end())
-         return m_szBasePath + it->second;
+         return m_szBasePath / it->second;
       else
-         return emptyString;
+         return emptyPath;
    }
-   else
-      return m_szBasePath + GetNextPlayFile();
+
+   if (m_files.empty())
+      return emptyPath;
+
+   return m_szBasePath / GetNextPlayFile();
+}
+
+bool PUPPlaylist::IsResting() const
+{
+   if (m_restSeconds <= 0 || m_lastPlayed == 0)
+      return false;
+   return (SDL_GetTicks() - m_lastPlayed) < (uint64_t)m_restSeconds * 1000;
+}
+
+void PUPPlaylist::MarkPlayed()
+{
+   m_lastPlayed = SDL_GetTicks();
 }
 
 string PUPPlaylist::ToString() const {
-   return "folder=" + m_szFolder +
+   return "folder=" + m_szFolder.string() +
       ", description=" + m_szDescription +
       ", randomize=" + (m_randomize ? "true" : "false") +
       ", restSeconds=" + std::to_string(m_restSeconds) +

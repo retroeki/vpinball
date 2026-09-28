@@ -2,7 +2,8 @@
 
 #pragma once
 
-#include "../PlotData.h"
+#include "InGameUIPage.h"
+#include "ui/live/PlotData.h"
 
 namespace VPX::InGameUI
 {
@@ -19,16 +20,18 @@ public:
    bool IsPlayerPauseAllowed() const override { return false; }
 
 private:
+   void BuildPage() override;
    InputManager& GetInput() const { return m_player->m_pininput; }
    void AppendPlot();
 
+   unsigned int m_notificationId = 0;
+
    PlotData m_nudgeXPlot;
    PlotData m_nudgeYPlot;
-   PlotData m_nudgeXRawPlot[2];
-   PlotData m_nudgeYRawPlot[2];
+   PlotData m_cabXPlot;
+   PlotData m_cabYPlot;
 
    uint32_t m_resetTimestampMs = 0;
-   int2 m_sensorAcqPeriod[2];
 };
 
 }

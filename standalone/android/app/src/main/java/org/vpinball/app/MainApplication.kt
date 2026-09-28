@@ -19,11 +19,8 @@ class MainApplication : Application() {
 
         SDL.setupJNI()
         SDL.initialize()
-        SDL.setContext(this)
 
         VPinballManager.initialize(this)
-        VPinballManager.startup()
-        TableManager.initialize(this)
     }
 
     private fun loadNativeLibraries() {
@@ -33,9 +30,11 @@ class MainApplication : Application() {
         System.loadLibrary("freeimage")
         System.loadLibrary("pinmame")
         System.loadLibrary("altsound")
+        System.loadLibrary("winevbs")
         System.loadLibrary("dmdutil")
         System.loadLibrary("dof")
         System.loadLibrary("pupdmd")
+        System.loadLibrary("vni")
         System.loadLibrary("avcodec")
         System.loadLibrary("avdevice")
         System.loadLibrary("avfilter")

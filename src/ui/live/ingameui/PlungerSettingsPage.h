@@ -2,6 +2,9 @@
 
 #pragma once
 
+#include "InGameUIPage.h"
+#include "ui/live/PlotData.h"
+
 namespace VPX::InGameUI
 {
 
@@ -17,6 +20,8 @@ public:
    bool IsPlayerPauseAllowed() const override { return false; }
 
 private:
+   void BuildPage() override;
+
    InputManager& GetInput() const { return m_player->m_pininput; }
    void AppendPlot();
 

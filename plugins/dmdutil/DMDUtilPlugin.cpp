@@ -1,12 +1,15 @@
 // license:GPLv3+
 
 #include <cstdlib>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <charconv>
+#include <format>
 #include <algorithm>
 #include <vector>
 
+#include "plugins/ColorSpace.h"
 #include "plugins/VPXPlugin.h"
 #include "plugins/ControllerPlugin.h"
 #include "plugins/LoggingPlugin.h"
@@ -32,37 +35,33 @@ extern "C" bool GetReelImage(int* width, int* height, uint64_t* version, std::ve
 using namespace std;
 
 namespace DMDUtilPlugin {
-   
+
+using namespace PinballPlugin::Controller;
+
 static const MsgPluginAPI* msgApi = nullptr;
 static uint32_t endpointId;
-
 static unsigned int onGameStartId;
-static unsigned int onGameEndId;
-static unsigned int onDmdSrcChangedId;
-static unsigned int getDmdSrcMsgId;
 
-static std::mutex sourceMutex;
-static std::thread updateThread;
-static DisplaySrcId selectedDmdId = {};
-static bool isRunning = false;
+static std::unique_ptr<CtrlItemConsumer<DisplaySrcId>> dmdSource;
+static std::unique_ptr<class DMDUtilDispatcher> dmdDispatcher;
 
-static DMDUtil::DMD* pDmd = nullptr;
-
-static uint8_t tintR;
-static uint8_t tintG;
-static uint8_t tintB;
-
-MSGPI_BOOL_VAL_SETTING(zeDMDProp, "ZeDMD", "ZeDMD", "", true, true);
+MSGPI_BOOL_VAL_SETTING(zeDMDProp, "ZeDMD", "ZeDMD", "", true, false);
 MSGPI_STRING_VAL_SETTING(zeDMDDeviceFolderProp, "ZeDMDDevice", "ZeDMDDevice", "", true, "", 1024);
 MSGPI_BOOL_VAL_SETTING(zeDMDDebugFolderProp, "ZeDMDDebug", "ZeDMDDebug", "", true, false);
 MSGPI_INT_VAL_SETTING(zeDMDBrightnessFolderProp, "ZeDMDBrightness", "ZeDMDBrightness", "", true, -1, 1000, -1);
-MSGPI_BOOL_VAL_SETTING(zeDMDWifiProp, "ZeDMDWiFi", "ZeDMDWiFi", "", true, false);
+MSGPI_BOOL_VAL_SETTING(zeDMDWiFiEnabledProp, "ZeDMDWiFiEnabled", "ZeDMDWiFiEnabled", "", true, false);
 MSGPI_STRING_VAL_SETTING(zeDMDWiFiAddrFolderProp, "ZeDMDWiFiAddr", "ZeDMDWiFiAddr", "", true, "zedmd-wifi.local", 1024);
-MSGPI_BOOL_VAL_SETTING(pixelcadeProp, "Pixelcade", "Pixelcade", "", true, true);
+MSGPI_BOOL_VAL_SETTING(zeDMDSPIEnabledProp, "ZeDMDSPIEnabled", "ZeDMDSPIEnabled", "", true, false);
+MSGPI_INT_VAL_SETTING(zeDMDSPISpeedProp, "ZeDMDSPISpeed", "ZeDMDSPISpeed", "", true, 0, 100000000, 72000000);
+MSGPI_INT_VAL_SETTING(zeDMDSPIFramePauseProp, "ZeDMDSPIFramePause", "ZeDMDSPIFramePause", "", true, 0, 1000, 2);
+MSGPI_INT_VAL_SETTING(zeDMDSPIWidthProp, "ZeDMDSPIWidth", "ZeDMDSPIWidth", "", true, 0, 1000, 128);
+MSGPI_INT_VAL_SETTING(zeDMDSPIHeightProp, "ZeDMDSPIHeight", "ZeDMDSPIHeight", "", true, 0, 1000, 32);
+MSGPI_BOOL_VAL_SETTING(pixelcadeProp, "Pixelcade", "Pixelcade", "", true, false);
 MSGPI_STRING_VAL_SETTING(pixelcadeDeviceProp, "PixelcadeDevice", "PixelcadeDevice", "", true, "", 1024);
+MSGPI_BOOL_VAL_SETTING(pin2dmdProp, "PIN2DMD", "PIN2DMD", "", true, false);
 MSGPI_BOOL_VAL_SETTING(dmdServerFolderProp, "DMDServer", "DMDServer", "", true, false);
 MSGPI_STRING_VAL_SETTING(dmdServerAddrFolderProp, "DMDServerAddr", "DMDServerAddr", "", true, "localhost", 1024);
-MSGPI_INT_VAL_SETTING(dmdServerPortFolderProp, "DMDServerPort", "DMDServerPort", "", true, 0, 1000, 6789);
+MSGPI_INT_VAL_SETTING(dmdServerPortFolderProp, "DMDServerPort", "DMDServerPort", "", true, 0, 65535, 6789);
 
 MSGPI_BOOL_VAL_SETTING(findDisplaysProp, "FindDisplays", "FindDisplays", "", true, true);
 MSGPI_BOOL_VAL_SETTING(dumpDMDTxtProp, "DumpDMDTxt", "DumpDMDTxt", "", true, false);
@@ -72,45 +71,13 @@ MSGPI_INT_VAL_SETTING(lumTintGProp, "LumTintG", "LumTintG", "", true, 0, 255, DM
 MSGPI_INT_VAL_SETTING(lumTintBProp, "LumTintB", "LumTintB", "", true, 0, 255, DMDUTIL_TINT_B);
 
 
-LPI_USE();
-#define LOGD LPI_LOGD
-#define LOGI LPI_LOGI
-#define LOGW LPI_LOGW
-#define LOGE LPI_LOGE
+LPI_USE_CPP();
+#define LOGD DMDUtilPlugin::LPI_LOGD_CPP
+#define LOGI DMDUtilPlugin::LPI_LOGI_CPP
+#define LOGW DMDUtilPlugin::LPI_LOGW_CPP
+#define LOGE DMDUtilPlugin::LPI_LOGE_CPP
 
-LPI_IMPLEMENT
-
-void DMDUTILCALLBACK OnDMDUtilLog(DMDUtil_LogLevel logLevel, const char* format, va_list args)
-{
-#ifndef _DEBUG
-   // libdmdutil debug relays are dropped by the host logger in release; skip the double
-   // vsnprintf format instead of building a string that will be discarded.
-   if (logLevel == DMDUtil_LogLevel_DEBUG)
-      return;
-#endif
-   va_list args_copy;
-   va_copy(args_copy, args);
-   int size = vsnprintf(nullptr, 0, format, args_copy);
-   va_end(args_copy);
-   if (size > 0) {
-      char* const buffer = static_cast<char*>(malloc(size + 1));
-      vsnprintf(buffer, size + 1, format, args);
-      switch(logLevel) {
-         case DMDUtil_LogLevel_INFO:
-            LOGI("%s", buffer);
-            break;
-         case DMDUtil_LogLevel_DEBUG:
-            LOGD("%s", buffer);
-            break;
-         case DMDUtil_LogLevel_ERROR:
-            LOGE("%s", buffer);
-            break;
-         default:
-            break;
-      }
-      free(buffer);
-   }
-}
+LPI_IMPLEMENT_CPP // Implement shared log support
 
 // Frames pushed through libdmdutil must fit DMD::Update.data (256*64*3) and
 // the dmdserver/ZeDMD size caps.
@@ -161,205 +128,254 @@ static void FitRGB24(const std::vector<uint8_t>& src, const int srcW, const int 
    }
 }
 
-static void RescanSources(const bool quiet);
-
-static void UpdateThread()
+class DMDUtilDispatcher
 {
-   // Create the device on this background thread: FindDisplays runs
-   // ConnectDMDServer synchronously, and an unreachable dmdserver host blocks
-   // on the TCP connect for the full kernel timeout (~2 minutes). Doing this
-   // in the game-start broadcast handler froze table loading for that long.
-   // Note: a close during such a hang is covered by the app-side process kill.
-   if (!pDmd)
+public:
+   DMDUtilDispatcher()
    {
-      DMDUtil::DMD* const dmd = new DMDUtil::DMD();
+      DMDUtil::Config* pConfig = DMDUtil::Config::GetInstance();
+      pConfig->SetLogCallback(OnDMDUtilLog);
+      pConfig->SetZeDMD(zeDMDProp_Val);
+      pConfig->SetZeDMDDevice(zeDMDDeviceFolderProp_Get());
+      pConfig->SetZeDMDDebug(zeDMDDebugFolderProp_Get());
+      pConfig->SetZeDMDBrightness(zeDMDBrightnessFolderProp_Val);
+      pConfig->SetZeDMDWiFiEnabled(zeDMDWiFiEnabledProp_Val);
+      pConfig->SetZeDMDWiFiAddr(zeDMDWiFiAddrFolderProp_Get());
+      pConfig->SetZeDMDSpiEnabled(zeDMDSPIEnabledProp_Val);
+      pConfig->SetZeDMDSpiSpeed(zeDMDSPISpeedProp_Val);
+      pConfig->SetZeDMDSpiFramePause(zeDMDSPIFramePauseProp_Val);
+      pConfig->SetZeDMDWidth(zeDMDSPIWidthProp_Val);
+      pConfig->SetZeDMDHeight(zeDMDSPIHeightProp_Val);
+      pConfig->SetPixelcade(pixelcadeProp_Val);
+      pConfig->SetPixelcadeDevice(pixelcadeDeviceProp_Get());
+      pConfig->SetPIN2DMD(pin2dmdProp_Val);
+      pConfig->SetDMDServer(dmdServerFolderProp_Val);
+      pConfig->SetDMDServerAddr(dmdServerAddrFolderProp_Get());
+      pConfig->SetDMDServerPort(dmdServerPortFolderProp_Val);
+
+      m_updateThread = std::thread(&DMDUtilDispatcher::UpdateThread, this);
+   }
+
+   ~DMDUtilDispatcher()
+   {
+      m_isRunning = false;
+      if (m_updateThread.joinable())
+         m_updateThread.join();
+   }
+
+private:
+   void UpdateThread()
+   {
+      // Create the device on this background thread: FindDisplays runs
+      // ConnectDMDServer synchronously, and an unreachable dmdserver host blocks
+      // on the TCP connect for the full kernel timeout (~2 minutes). Doing this
+      // on the plugin API thread froze table loading for that long.
+      // Note: a close during such a hang is covered by the app-side process kill.
+      m_pDmd = std::make_unique<DMDUtil::DMD>();
 
       if (findDisplaysProp_Val)
-          dmd->FindDisplays();
+         m_pDmd->FindDisplays();
 
       if (dumpDMDTxtProp_Val)
-          dmd->DumpDMDTxt();
+         m_pDmd->DumpDMDTxt();
 
       if (dumpDMDRawProp_Val)
-          dmd->DumpDMDRaw();
+         m_pDmd->DumpDMDRaw();
 
-      tintR = static_cast<uint8_t>(lumTintRProp_Val);
-      tintG = static_cast<uint8_t>(lumTintGProp_Val);
-      tintB = static_cast<uint8_t>(lumTintBProp_Val);
-
-      pDmd = dmd;
-   }
-
-   int lastFrameID = 0;
-   uint64_t lastReelVersion = 0;
-   int idleTicks = 0;
-   std::vector<uint8_t> reelImage, reelScaled, reelFlat;
-   while (isRunning && pDmd)
-   {
-      // Fixed update at 60 FPS
-      std::this_thread::sleep_for(std::chrono::microseconds(16666));
-
-      bool needRescan = false;
+      m_lastFrameID = 0;
+      while (m_isRunning)
       {
-      std::lock_guard<std::mutex> lock(sourceMutex);
+         // Fixed update at 60 FPS
+         // TODO the dispatch should be done at the refesh rate of the target display
+         std::this_thread::sleep_for(std::chrono::microseconds(16666));
 
-      if (selectedDmdId.id.id == 0)
-      {
-         // Poll for late/missed source publications (see RescanSources).
-         if (++idleTicks >= 120) { // ~2s
-            idleTicks = 0;
-            needRescan = true;
-         }
-         // No DMD display source on the bus (EM tables): stream the composited
-         // score-reel image instead. The version counter only changes when a
-         // displayed reel value changes, so this is idle most ticks.
-         int reelW = 0, reelH = 0;
-         uint64_t reelVersion = 0;
-         if (GetReelImage(&reelW, &reelH, &reelVersion, &reelImage)
-            && reelVersion != lastReelVersion && reelW > 0 && reelH > 0
-            && reelImage.size() >= (size_t)reelW * reelH * 4)
-         {
-            lastReelVersion = reelVersion;
-            // RGBA -> RGB24, alpha composited over black (a physical DMD is opaque):
-            // opaque digits stay bright, the translucent surround collapses to dark.
-            const size_t px = (size_t)reelW * reelH;
-            reelFlat.resize(px * 3);
-            for (size_t i = 0; i < px; ++i)
+         const bool hasSource = dmdSource->With(
+            [this](const std::vector<DisplaySrcId>& items)
             {
-               const unsigned a = reelImage[i * 4 + 3];
-               reelFlat[i * 3 + 0] = (uint8_t)((reelImage[i * 4 + 0] * a) / 255);
-               reelFlat[i * 3 + 1] = (uint8_t)((reelImage[i * 4 + 1] * a) / 255);
-               reelFlat[i * 3 + 2] = (uint8_t)((reelImage[i * 4 + 2] * a) / 255);
-            }
-            int outW = 0, outH = 0;
-            FitRGB24(reelFlat, reelW, reelH, reelScaled, outW, outH);
-            pDmd->UpdateRGB24Data(reelScaled.data(), (uint16_t)outW, (uint16_t)outH);
-         }
-      }
-      }
-      if (needRescan)
-      {
-         RescanSources(true); // quiet: logs only when a source is found
-         continue;
-      }
+               if (items.empty())
+                  return false;
+               ProcessFrame(items.front());
+               return true;
+            });
 
-      std::lock_guard<std::mutex> lock(sourceMutex);
-
-      if (selectedDmdId.id.id == 0)
-         continue;
-
-      const DisplayFrame frame = selectedDmdId.GetRenderFrame(selectedDmdId.id);
-      if (lastFrameID == frame.frameId)
-         continue;
-      lastFrameID = frame.frameId;
-
-      switch(selectedDmdId.frameFormat) {
-         case CTLPI_DISPLAY_FORMAT_LUM32F:
-         {
-            const float* const __restrict luminanceData = static_cast<const float*>(frame.frame);
-            uint8_t* const __restrict rgb24Data = (uint8_t*)malloc(selectedDmdId.width * selectedDmdId.height * 3);
-
-            for (unsigned int i = 0; i < selectedDmdId.width * selectedDmdId.height; ++i) {
-                const float lum = luminanceData[i];
-                rgb24Data[i * 3    ] = (uint8_t)(lum * tintR);
-                rgb24Data[i * 3 + 1] = (uint8_t)(lum * tintG);
-                rgb24Data[i * 3 + 2] = (uint8_t)(lum * tintB);
-            }
-
-            pDmd->UpdateRGB24Data(rgb24Data, selectedDmdId.width, selectedDmdId.height);
-            free(rgb24Data);
-         }
-         break;
-
-         case CTLPI_DISPLAY_FORMAT_SRGB888:
-            pDmd->UpdateRGB24Data(static_cast<const uint8_t*>(frame.frame), selectedDmdId.width, selectedDmdId.height);
-            break;
-
-         case CTLPI_DISPLAY_FORMAT_SRGB565:
-            pDmd->UpdateRGB16Data((const uint16_t*)frame.frame, selectedDmdId.width, selectedDmdId.height);
-            break;
+         // No DMD display source on the bus (EM tables): stream the composited score-reel image instead
+         if (!hasSource)
+            ProcessReelImage();
       }
    }
-   isRunning = false;
-}
 
-// Query the bus and (re)select the display source to stream. Called from the
-// ON_SRC_CHG broadcast AND polled from the update thread while no source is
-// selected: a publisher's change broadcast can arrive nested inside another
-// broadcast (e.g. AlphaDMD publishing from within libpinmame's seg-change
-// broadcast), in which case the GET query here reaches no subscribers and the
-// source would otherwise stay unselected until some unrelated re-broadcast.
-static void RescanSources(const bool quiet)
+   void ProcessReelImage()
+   {
+      // The version counter only changes when a displayed reel value changes, so this is idle most ticks
+      int reelW = 0, reelH = 0;
+      uint64_t reelVersion = 0;
+      if (!GetReelImage(&reelW, &reelH, &reelVersion, nullptr) || reelVersion == m_lastReelVersion || reelW <= 0 || reelH <= 0)
+         return;
+      if (!GetReelImage(&reelW, &reelH, &reelVersion, &m_reelImage) || reelW <= 0 || reelH <= 0 || m_reelImage.size() < (size_t)reelW * reelH * 4)
+         return;
+      m_lastReelVersion = reelVersion;
+      // RGBA -> RGB24, alpha composited over black (a physical DMD is opaque):
+      // opaque digits stay bright, the translucent surround collapses to dark.
+      const size_t px = (size_t)reelW * reelH;
+      m_reelFlat.resize(px * 3);
+      for (size_t i = 0; i < px; ++i)
+      {
+         const unsigned a = m_reelImage[i * 4 + 3];
+         m_reelFlat[i * 3 + 0] = (uint8_t)((m_reelImage[i * 4 + 0] * a) / 255);
+         m_reelFlat[i * 3 + 1] = (uint8_t)((m_reelImage[i * 4 + 1] * a) / 255);
+         m_reelFlat[i * 3 + 2] = (uint8_t)((m_reelImage[i * 4 + 2] * a) / 255);
+      }
+      int outW = 0, outH = 0;
+      FitRGB24(m_reelFlat, reelW, reelH, m_reelScaled, outW, outH);
+      m_pDmd->UpdateRGB24Data(m_reelScaled.data(), (uint16_t)outW, (uint16_t)outH);
+   }
+
+   void ProcessFrame(const DisplaySrcId& dmdSource)
+   {
+      const DisplayFrame frame = dmdSource.GetRenderFrame(dmdSource.callContext);
+      if (m_lastFrameID == frame.frameId)
+         return;
+      m_lastFrameID = frame.frameId;
+
+      switch (dmdSource.frameFormat)
+      {
+      case CTLPI_DISPLAY_FORMAT_LUM32F:
+      {
+         const float* const __restrict luminanceData = static_cast<const float*>(frame.frame);
+         uint8_t* const __restrict rgb24Data = new uint8_t[dmdSource.width * dmdSource.height * 3];
+
+         const uint32_t tintR = (uint32_t)lumTintRProp_Val;
+         const uint32_t tintG = (uint32_t)lumTintGProp_Val;
+         const uint32_t tintB = (uint32_t)lumTintBProp_Val;
+
+         // LUM32F is a linear luminance while UpdateRGB24Data seems to take gamma encoded components,
+         // at least the SRGB888 case below shows this by handing it a frame unconverted. So encode once
+         // per dot, then apply the (also gamma encoded) tint
+         // FIXME to be verified if the SRGB888 is really the reference, or if now both cases are wrong
+         const unsigned int wh = dmdSource.width * dmdSource.height;
+         for (unsigned int i = 0; i < wh; ++i)
+         {
+            const uint32_t lum = VPXColorSpace::LinearToSRGB(luminanceData[i]);
+            rgb24Data[i * 3    ] = (uint8_t)((lum * tintR + 127u) / 255u);
+            rgb24Data[i * 3 + 1] = (uint8_t)((lum * tintG + 127u) / 255u);
+            rgb24Data[i * 3 + 2] = (uint8_t)((lum * tintB + 127u) / 255u);
+         }
+
+         m_pDmd->UpdateRGB24Data(rgb24Data, dmdSource.width, dmdSource.height);
+         delete[] rgb24Data;
+      }
+      break;
+
+      case CTLPI_DISPLAY_FORMAT_SRGB888: m_pDmd->UpdateRGB24Data(static_cast<const uint8_t*>(frame.frame), dmdSource.width, dmdSource.height); break;
+
+      case CTLPI_DISPLAY_FORMAT_SRGB565: m_pDmd->UpdateRGB16Data((const uint16_t*)frame.frame, dmdSource.width, dmdSource.height); break;
+      }
+   }
+
+   static void DMDUTILCALLBACK OnDMDUtilLog(DMDUtil_LogLevel logLevel, const char* format, va_list args)
+   {
+#ifndef _DEBUG
+      // libdmdutil debug relays are dropped by the host logger in release; skip the double
+      // vsnprintf format instead of building a string that will be discarded.
+      if (logLevel == DMDUtil_LogLevel_DEBUG)
+         return;
+#endif
+      va_list args_copy;
+      va_copy(args_copy, args);
+      int size = vsnprintf(nullptr, 0, format, args_copy);
+      va_end(args_copy);
+      if (size > 0)
+      {
+         string buffer(size + 1, '\0');
+         vsnprintf(buffer.data(), size + 1, format, args);
+         buffer.pop_back(); // remove null terminator
+         switch (logLevel)
+         {
+         case DMDUtil_LogLevel_INFO: LOGI(buffer); break;
+         case DMDUtil_LogLevel_DEBUG: LOGD(buffer); break;
+         case DMDUtil_LogLevel_ERROR: LOGE(buffer); break;
+         default: break;
+         }
+      }
+   }
+
+   std::unique_ptr<DMDUtil::DMD> m_pDmd;
+   std::thread m_updateThread;
+   bool m_isRunning = true;
+   int m_lastFrameID = 0;
+   uint64_t m_lastReelVersion = 0;
+   std::vector<uint8_t> m_reelImage, m_reelScaled, m_reelFlat;
+};
+
+
+static void SelectSource(std::vector<DisplaySrcId>& items)
 {
-   DisplaySrcId newDmdId = {};
-
-   GetDisplaySrcMsg getSrcMsg = { 1024, 0, new DisplaySrcId[1024] };
-   msgApi->BroadcastMsg( endpointId, getDmdSrcMsgId, &getSrcMsg);
-
    bool foundDMD = false;
+   DisplaySrcId newDmdId = { };
+
+   // Skip video monitor sources of pinball/video hybrids like Baby Pac-Man or Granny
+   // and the Gators, which are flagged as CRT displays and are not meant for DMD
+   // devices. Also skip sources larger than libdmdutil's update buffers, which are
+   // fixed at 256x64 pixels and overflowed by larger frames (vpinball/libdmdutil#65).
+   constexpr unsigned int maxPixels = 256 * 64;
+   auto isSupported = [](const DisplaySrcId& src)
+   {
+      if ((src.hardware & CTLPI_DISPLAY_HARDWARE_FAMILY_MASK) == CTLPI_DISPLAY_HARDWARE_CRT_DISPLAY)
+      {
+         LOGI(std::format("Display source of {}x{} pixels is a video display and cannot be shown on DMD devices, skipping it", src.width, src.height));
+         return false;
+      }
+      if ((unsigned int)src.width * src.height > maxPixels)
+      {
+         LOGW(std::format("Display source of {}x{} pixels exceeds the size supported by libdmdutil and cannot be shown on DMD devices, skipping it", src.width, src.height));
+         return false;
+      }
+      return true;
+   };
 
    // Select the largest color display
-   for (unsigned int i = 0; i < getSrcMsg.count; i++) {
-      if (getSrcMsg.entries[i].frameFormat != CTLPI_DISPLAY_FORMAT_LUM32F) {
-          if (getSrcMsg.entries[i].width > newDmdId.width) {
-              newDmdId = getSrcMsg.entries[i];
-              foundDMD = true;
-          }
+   for (const DisplaySrcId& src : items)
+   {
+      if (src.frameFormat != CTLPI_DISPLAY_FORMAT_LUM32F && isSupported(src))
+      {
+         if (src.width > newDmdId.width)
+         {
+            newDmdId = src;
+            foundDMD = true;
+         }
       }
    }
 
    // Defaults to the largest monochrome display
-   if (!foundDMD) {
-      for (unsigned int i = 0; i < getSrcMsg.count; i++) {
-         if (getSrcMsg.entries[i].frameFormat == CTLPI_DISPLAY_FORMAT_LUM32F) {
-             if (getSrcMsg.entries[i].width > newDmdId.width) {
-               newDmdId = getSrcMsg.entries[i];
+   if (!foundDMD)
+   {
+      for (const DisplaySrcId& src : items)
+      {
+         if (src.frameFormat == CTLPI_DISPLAY_FORMAT_LUM32F && isSupported(src))
+         {
+            if (src.width > newDmdId.width)
+            {
+               newDmdId = src;
                foundDMD = true;
             }
          }
       }
    }
 
-   delete[] getSrcMsg.entries;
-
-   std::lock_guard<std::mutex> lock(sourceMutex);
-   selectedDmdId = newDmdId;
-
+   items.clear();
    if (foundDMD)
-      LOGI("DMD Source Changed: format=%d, width=%d, height=%d", newDmdId.frameFormat, newDmdId.width, newDmdId.height);
-   else if (!quiet)
-      LOGI("DMD Source Changed: no display source on the bus (EM reel fallback applies if a reel image is active)");
+      items.push_back(newDmdId);
 }
 
-static void onDmdSrcChanged(const unsigned int msgId, void* userData, void* msgData)
-{
-   RescanSources(false);
-}
-
-// The update thread runs for the whole game session (not just while a bus DMD
+// The dispatcher runs for the whole game session (not just while a bus DMD
 // source exists): EM reel tables never publish a display source, and their
-// score is streamed via the GetReelImage fallback in UpdateThread.
+// score is streamed via the GetReelImage fallback of the update thread.
 static void onGameStart(const unsigned int msgId, void* userData, void* msgData)
 {
    // Device creation (and its potentially slow network connect) happens at the
-   // top of UpdateThread, never on this (game) thread.
-   isRunning = true;
-   if (!updateThread.joinable())
-      updateThread = std::thread(UpdateThread);
-}
-
-static void onGameEnd(const unsigned int msgId, void* userData, void* msgData)
-{
-   isRunning = false;
-   if (updateThread.joinable())
-      updateThread.join();
-   delete pDmd;
-   pDmd = nullptr;
-   // Drop the source selection: its GetRenderFrame callback dangles once the
-   // publishing plugin tears down, and the next game's thread starts before
-   // any onDmdSrcChanged fires.
-   std::lock_guard<std::mutex> lock(sourceMutex);
-   selectedDmdId = {};
+   // top of the update thread, never on this (game) thread.
+   if (dmdDispatcher == nullptr)
+      dmdDispatcher = std::make_unique<DMDUtilDispatcher>();
 }
 
 }
@@ -373,18 +389,20 @@ MSGPI_EXPORT void MSGPIAPI DMDUtilPluginLoad(const uint32_t sessionId, const Msg
 
    LPISetup(endpointId, msgApi); // Request and setup shared login API
 
-   msgApi->SubscribeMsg(endpointId, onGameStartId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_START), onGameStart, nullptr);
-   msgApi->SubscribeMsg(endpointId, onGameEndId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_END), onGameEnd, nullptr);
-   msgApi->SubscribeMsg(endpointId, onDmdSrcChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_DISPLAY_ON_SRC_CHG_MSG), onDmdSrcChanged, nullptr);
-
    msgApi->RegisterSetting(endpointId, &zeDMDProp);
    msgApi->RegisterSetting(endpointId, &zeDMDDeviceFolderProp);
    msgApi->RegisterSetting(endpointId, &zeDMDDebugFolderProp);
    msgApi->RegisterSetting(endpointId, &zeDMDBrightnessFolderProp);
-   msgApi->RegisterSetting(endpointId, &zeDMDWifiProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDWiFiEnabledProp);
    msgApi->RegisterSetting(endpointId, &zeDMDWiFiAddrFolderProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDSPIEnabledProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDSPISpeedProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDSPIFramePauseProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDSPIWidthProp);
+   msgApi->RegisterSetting(endpointId, &zeDMDSPIHeightProp);
    msgApi->RegisterSetting(endpointId, &pixelcadeProp);
    msgApi->RegisterSetting(endpointId, &pixelcadeDeviceProp);
+   msgApi->RegisterSetting(endpointId, &pin2dmdProp);
    msgApi->RegisterSetting(endpointId, &dmdServerFolderProp);
    msgApi->RegisterSetting(endpointId, &dmdServerAddrFolderProp);
    msgApi->RegisterSetting(endpointId, &dmdServerPortFolderProp);
@@ -396,35 +414,32 @@ MSGPI_EXPORT void MSGPIAPI DMDUtilPluginLoad(const uint32_t sessionId, const Msg
    msgApi->RegisterSetting(endpointId, &lumTintGProp);
    msgApi->RegisterSetting(endpointId, &lumTintBProp);
 
-   getDmdSrcMsgId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_DISPLAY_GET_SRC_MSG);
+   dmdSource = std::make_unique<CtrlItemConsumer<DisplaySrcId>>(
+      msgApi, endpointId, CTLPI_DISPLAY_GET_SRC_MSG, CTLPI_DISPLAY_ON_SRC_CHG_MSG,
+      [](std::vector<DisplaySrcId>& items) { SelectSource(items); },
+      []() { },
+      []() { dmdSource->With([](const std::vector<DisplaySrcId>& items) {
+            if (items.empty())
+            {
+               LOGI("No DMD source selected");
+               return;
+            }
+            const DisplaySrcId& dmdSrc = items.front();
+            LOGI(std::format("DMD source selected [endpointId={}.{}, {}x{} fmt={}]", dmdSrc.id.endpointId, dmdSrc.id.resId, dmdSrc.width, dmdSrc.height, dmdSrc.frameFormat));
+            if (dmdDispatcher == nullptr)
+               dmdDispatcher = std::make_unique<DMDUtilDispatcher>();
+         }); });
+   dmdSource->Subscribe();
 
-   DMDUtil::Config* pConfig = DMDUtil::Config::GetInstance();
-   pConfig->SetLogCallback(OnDMDUtilLog);
-   pConfig->SetZeDMD(zeDMDProp_Val);
-   pConfig->SetZeDMDDevice(zeDMDDeviceFolderProp_Get());
-   pConfig->SetZeDMDDebug(zeDMDDebugFolderProp_Get());
-   pConfig->SetZeDMDBrightness(zeDMDBrightnessFolderProp_Val);
-   pConfig->SetZeDMDWiFiEnabled(zeDMDWifiProp_Val);
-   pConfig->SetZeDMDWiFiAddr(zeDMDWiFiAddrFolderProp_Get());
-   pConfig->SetPixelcade(pixelcadeProp_Val);
-   pConfig->SetPixelcadeDevice(pixelcadeDeviceProp_Get());
-   pConfig->SetDMDServer(dmdServerFolderProp_Val);
-   pConfig->SetDMDServerAddr(dmdServerAddrFolderProp_Get());
-   pConfig->SetDMDServerPort(dmdServerPortFolderProp_Val);
+   msgApi->SubscribeMsg(endpointId, onGameStartId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_START), onGameStart, nullptr);
 }
 
 MSGPI_EXPORT void MSGPIAPI DMDUtilPluginUnload()
 {
-   onGameEnd(onGameEndId, nullptr, nullptr);
-
-   msgApi->UnsubscribeMsg(onGameStartId, onGameStart);
-   msgApi->UnsubscribeMsg(onGameEndId, onGameEnd);
-   msgApi->UnsubscribeMsg(onDmdSrcChangedId, onDmdSrcChanged);
-
+   msgApi->UnsubscribeMsg(onGameStartId, onGameStart, nullptr);
    msgApi->ReleaseMsgID(onGameStartId);
-   msgApi->ReleaseMsgID(onGameEndId);
-   msgApi->ReleaseMsgID(onDmdSrcChangedId);
-   msgApi->ReleaseMsgID(getDmdSrcMsgId);
-
+   dmdDispatcher = nullptr;
+   dmdSource->Unsubscribe();
+   dmdSource = nullptr;
    msgApi = nullptr;
 }

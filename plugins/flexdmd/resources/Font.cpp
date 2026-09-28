@@ -1,4 +1,7 @@
 #include "Font.h"
+
+#include <format>
+
 #include "AssetManager.h"
 
 namespace Flex {
@@ -185,7 +188,7 @@ void Font::DrawCharacter(Flex::SurfaceGraphics* pGraphics, char character, char 
          static int s_missingCharLogCount = 0;
          if (s_missingCharLogCount < 10) {
             s_missingCharLogCount++;
-            LOGD("Missing character 0x%02X replaced by ' '", character);
+            LOGD(std::format("Missing character {:#04X} replaced by ' '", character));
          }
          m_pBitmapFont->SetCharacter(character, m_pBitmapFont->GetCharacter(' '));
          DrawCharacter(pGraphics, character, previousCharacter, x, y);

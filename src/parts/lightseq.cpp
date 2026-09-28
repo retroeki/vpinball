@@ -1,58 +1,60 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include "lightseq.h"
 
-LightSeq *LightSeq::CopyForPlay(PinTable *live_table) const
+#include "core/VPApp.h"
+#include "parts/Collection.h"
+#include "parts/flasher.h"
+#include "parts/light.h"
+#include "parts/primitive.h"
+
+
+LightSeq *LightSeq::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(LightSeq, live_table)
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(LightSeq)
    return dst;
 }
 
-HRESULT LightSeq::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT LightSeq::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_v.x = x;
    m_d.m_v.y = y;
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
 void LightSeq::SetDefaults(const bool fromMouseClick)
 {
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsLightSeq_##prop() : Settings::GetDefaultPropsLightSeq_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsLightSeq_##prop() : Settings::GetDefaultPropsLightSeq_##prop##_Default()
    string tmp;
    LinkProp(m_d.m_updateinterval, UpdateInterval);
    LinkProp(tmp, Collection); 
    m_d.m_wzCollection = MakeWString(tmp);
    LinkProp(m_d.m_vCenter.x, CenterX);
    LinkProp(m_d.m_vCenter.y, CenterY);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
 void LightSeq::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsLightSeq_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsLightSeq_##prop(field, false)
    LinkProp(m_d.m_updateinterval, UpdateInterval);
    string tmp = MakeString(m_d.m_wzCollection);
    LinkProp(tmp, Collection);
    LinkProp(m_d.m_vCenter.x, CenterX);
    LinkProp(m_d.m_vCenter.y, CenterY);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
-void LightSeq::SetObjectPos()
+void LightSeq::Translate(const Vertex2D& offset)
 {
-   m_vpinball->SetObjectPosCur(m_d.m_v.x, m_d.m_v.y);
-}
-
-void LightSeq::MoveOffset(const float dx, const float dy)
-{
-   m_d.m_v.x += dx;
-   m_d.m_v.y += dy;
+   m_d.m_v.x += offset.x;
+   m_d.m_v.y += offset.y;
 }
 
 Vertex2D LightSeq::GetCenter() const
@@ -60,92 +62,10 @@ Vertex2D LightSeq::GetCenter() const
    return m_d.m_v;
 }
 
-void LightSeq::PutCenter(const Vertex2D& pv)
-{
-   m_d.m_v = pv;
-}
-
-// draws the shape of the object with a solid fill, only used in the editor/UI and not in-game
-void LightSeq::UIRenderPass1(Sur * const psur)
-{
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this);
-
-   for (int i = 0; i < 8; ++i)
-   {
-      psur->SetFillColor((i % 2 == 0) ? RGB(255, 0, 0) : RGB(128, 0, 0));
-      const float angle = (float)((M_PI*2.0) / 8.0)*(float)i;
-      const float sn = sinf(angle);
-      const float cs = cosf(angle);
-      psur->Ellipse(m_d.m_v.x + sn*12.0f, m_d.m_v.y - cs*12.0f, 4.0f);
-   }
-
-   psur->SetFillColor(RGB(255, 0, 0));
-   psur->Ellipse(m_d.m_v.x, m_d.m_v.y - 3.0f, 4.0f);
-}
-
-// draws the shape of the object with a black outline (no solid fill), only used in the editor/UI and not in-game
-void LightSeq::UIRenderPass2(Sur * const psur)
-{
-   psur->SetFillColor(-1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-
-   psur->SetObject(this);
-
-   psur->Ellipse(m_d.m_v.x, m_d.m_v.y, 18.0f);
-
-   for (int i = 0; i < 8; ++i)
-   {
-      const float angle = (float)((M_PI*2.0) / 8.0)*(float)i;
-      const float sn = sinf(angle);
-      const float cs = cosf(angle);
-      psur->Ellipse(m_d.m_v.x + sn*12.0f, m_d.m_v.y - cs*12.0f, 4.0f);
-   }
-
-   psur->Ellipse(m_d.m_v.x, m_d.m_v.y - 3.0f, 4.0f);
-
-   RenderOutline(psur);
-}
-
-// draws the little center marker which is a cross with the usual LS circles on it
-void LightSeq::RenderOutline(Sur * const psur)
-{
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject((ISelect *)this);
-
-   psur->Line(m_d.m_vCenter.x - 10.0f, m_d.m_vCenter.y, m_d.m_vCenter.x + 10.0f, m_d.m_vCenter.y);
-   psur->Line(m_d.m_vCenter.x, m_d.m_vCenter.y - 10.0f, m_d.m_vCenter.x, m_d.m_vCenter.y + 10.0f);
-
-   for (int i = 0; i < 8; ++i)
-   {
-      psur->SetFillColor((i % 2 == 0) ? RGB(255, 0, 0) : RGB(128, 0, 0));
-      const float angle = (float)((M_PI*2.0) / 8.0)*(float)i;
-      const float sn = sinf(angle);
-      const float cs = cosf(angle);
-      psur->Ellipse(m_d.m_vCenter.x + sn*7.0f, m_d.m_vCenter.y - cs*7.0f, 2.0f);
-   }
-
-   psur->SetFillColor(RGB(255, 0, 0));
-   psur->Ellipse(m_d.m_vCenter.x, m_d.m_vCenter.y - 2.5f, 2.0f);
-}
-
-void LightSeq::PhysicSetup(PhysicsEngine* physics, const bool isUI)
-{
-   if (isUI)
-   {
-      // FIXME implement UI picking
-   }
-}
-
-void LightSeq::PhysicRelease(PhysicsEngine* physics, const bool isUI)
-{
-}
-
 #pragma region Rendering
 
-void LightSeq::RenderSetup(RenderDevice *device)
+void LightSeq::RenderSetup(Renderer *renderer)
 {
-   // zero pointers as a safe guard
    m_pcollection = nullptr;
    m_pgridData = nullptr;
    // no animation in progress
@@ -160,15 +80,13 @@ void LightSeq::RenderSetup(RenderDevice *device)
    m_queue.Head = 0;
    m_queue.Tail = 0;
 
-   // get the number of collections available
-   int size = m_ptable->m_vcollection.size();
-   for (int i = 0; i < size; ++i)
+   for (auto pcol : m_ptable->GetCollections())
    {
       // is the name of this collection the one we are to use?
-      if (m_ptable->m_vcollection[i].m_wzName == m_d.m_wzCollection)
+      if (pcol->m_wzName == m_d.m_wzCollection)
       {
          // yep, set a pointer to this sub-collection
-         m_pcollection = m_ptable->m_vcollection.ElementAt(i);
+         m_pcollection = pcol;
          break;
       }
    }
@@ -191,7 +109,7 @@ void LightSeq::RenderSetup(RenderDevice *device)
    m_GridYCenterAdjust = abs(m_lightSeqGridHeight / 2 - (int)m_GridYCenter);
 
    // allocate the grid for this sequence
-   m_pgridData = new short[m_lightSeqGridHeight*m_lightSeqGridWidth];
+   m_pgridData = new short[m_lightSeqGridHeight * m_lightSeqGridWidth];
    /*if (m_pgridData == nullptr)
    {
       // make the entire collection (for the sequencer) invalid and bomb out
@@ -199,16 +117,16 @@ void LightSeq::RenderSetup(RenderDevice *device)
       return;
    }
    else*/
-      memset((void *)m_pgridData, 0, m_lightSeqGridHeight*m_lightSeqGridWidth * sizeof(short));
+   memset((void*)m_pgridData, 0, m_lightSeqGridHeight * m_lightSeqGridWidth * sizeof(short));
 
-   // get the number of elements (objects) in the collection (referenced by m_visel)
-   size = m_pcollection->m_visel.size();
+   // get the number of elements (objects) in the collection
+   const int size = static_cast<int>(m_pcollection->GetParts().size());
 
    // go though the collection and get the coordinates of all the lights
    for (int i = 0; i < size; ++i)
    {
       // get the type of object
-      const ItemTypeEnum type = m_pcollection->m_visel[i].GetIEditable()->GetItemType();
+      const ItemTypeEnum type = m_pcollection->GetParts()[i]->GetItemType();
       // must be a light, flasher, prim
       if (type == eItemLight || type == eItemFlasher || type == eItemPrimitive)
       {
@@ -216,35 +134,35 @@ void LightSeq::RenderSetup(RenderDevice *device)
 
          if (type == eItemLight)
          {
-             // process a light
-             Light* const pLight = (Light*)m_pcollection->m_visel.ElementAt(i);
-             pLight->get_X(&x);
-             pLight->get_Y(&y);
+            // process a light
+            Light* const pLight = (Light*)m_pcollection->GetParts()[i];
+            pLight->get_X(&x);
+            pLight->get_Y(&y);
 
-             if (pLight->m_backglass)
-             {
-                 // if the light is on the backglass then scale up its Y position
-                 y *= 2.666f; // 2 little devils ;-)
-             }
+            if (pLight->m_desktopBackdrop)
+            {
+               // if the light is on the backglass then scale up its Y position
+               y *= 2.666f; // 2 little devils ;-)
+            }
          }
-         else if(type == eItemFlasher)
+         else if (type == eItemFlasher)
          {
-             Flasher* const pFlasher = (Flasher*)m_pcollection->m_visel.ElementAt(i);
-             pFlasher->get_X(&x);
-             pFlasher->get_Y(&y);             
+            Flasher* const pFlasher = (Flasher*)m_pcollection->GetParts()[i];
+            pFlasher->get_X(&x);
+            pFlasher->get_Y(&y);
          }
-         else if (type == eItemPrimitive)
+         else //if (type == eItemPrimitive)
          {
-             Primitive* const pPrimitive = (Primitive*)m_pcollection->m_visel.ElementAt(i);
-             pPrimitive->get_X(&x);
-             pPrimitive->get_Y(&y);
+            Primitive* const pPrimitive = (Primitive*)m_pcollection->GetParts()[i];
+            pPrimitive->get_X(&x);
+            pPrimitive->get_Y(&y);
          }
 
          // scale down to suit the size of the light sequence grid
          const unsigned int ix = (int)(x * (float)(1.0 / LIGHTSEQGRIDSCALE));
          const unsigned int iy = (int)(y * (float)(1.0 / LIGHTSEQGRIDSCALE));
          // if on the playfield
-         if ( /*(ix >= 0) &&*/ (ix < (unsigned int)m_lightSeqGridWidth) && //>=0 handled by unsigned int
+         if (/*(ix >= 0) &&*/ (ix < (unsigned int)m_lightSeqGridWidth) && //>=0 handled by unsigned int
             /*(iy >= 0) &&*/ (iy < (unsigned int)m_lightSeqGridHeight)) //>=0 handled by unsigned int
          {
             const int gridIndex = iy * m_lightSeqGridWidth + ix;
@@ -356,70 +274,48 @@ STDMETHODIMP LightSeq::InterfaceSupportsErrorInfo(REFIID riid)
    return S_FALSE;
 }
 
-HRESULT LightSeq::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
+void LightSeq::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteVector2(FID(VCEN), m_d.m_v);
-   bw.WriteWideString(FID(COLC), m_d.m_wzCollection);
-   bw.WriteFloat(FID(CTRX), m_d.m_vCenter.x);
-   bw.WriteFloat(FID(CTRY), m_d.m_vCenter.y);
-   bw.WriteInt(FID(UPTM), m_d.m_updateinterval);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteBool(FID(BGLS), m_backglass);
-   
-   ISelect::SaveData(pstm, hcrypthash);
-   
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
+   writer.WriteVector2(FID(VCEN), m_d.m_v);
+   writer.WriteWideString(FID(COLC), m_d.m_wzCollection);
+   writer.WriteFloat(FID(CTRX), m_d.m_vCenter.x);
+   writer.WriteFloat(FID(CTRY), m_d.m_vCenter.y);
+   writer.WriteInt(FID(UPTM), m_d.m_updateinterval);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteBool(FID(BGLS), m_desktopBackdrop);
+   SaveSharedEditableFields(writer);
+   writer.EndObject();
 }
 
-HRESULT LightSeq::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void LightSeq::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool LightSeq::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch(id)
-   {
-       case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-       case FID(VCEN): pbr->GetVector2(m_d.m_v); break;
-       case FID(COLC): pbr->GetWideString(m_d.m_wzCollection); break;
-       case FID(CTRX): pbr->GetFloat(m_d.m_vCenter.x); break;
-       case FID(CTRY): pbr->GetFloat(m_d.m_vCenter.y); break;
-       case FID(UPTM): pbr->GetInt(m_d.m_updateinterval); break;
-       case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-       case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-       case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-       case FID(BGLS): pbr->GetBool(m_backglass); break;
-       default:
-       {
-           ISelect::LoadToken(id, pbr);
-           break;
-       }
-   }
-   return true;
-}
-
-HRESULT LightSeq::InitPostLoad()
-{
-   return S_OK;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(VCEN): m_d.m_v = reader.AsVector2(); break;
+         case FID(COLC): m_d.m_wzCollection = reader.AsWideString(); break;
+         case FID(CTRX): m_d.m_vCenter.x = reader.AsFloat(); break;
+         case FID(CTRY): m_d.m_vCenter.y = reader.AsFloat(); break;
+         case FID(UPTM): m_d.m_updateinterval = reader.AsInt(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(BGLS): m_desktopBackdrop = reader.AsBool(); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
 }
 
 STDMETHODIMP LightSeq::get_Collection(BSTR *pVal)
 {
-   *pVal = SysAllocString(m_d.m_wzCollection.c_str());
+   *pVal = SysAllocStringLen(m_d.m_wzCollection.c_str(), static_cast<UINT>(m_d.m_wzCollection.length()));
    return S_OK;
 }
 
@@ -437,7 +333,8 @@ STDMETHODIMP LightSeq::get_CenterX(float *pVal)
 
 STDMETHODIMP LightSeq::put_CenterX(float newVal)
 {
-   if ((newVal < 0.f) || (newVal >= (float)EDITOR_BG_WIDTH))
+   const float maxX = (m_ptable != nullptr) ? (m_ptable->m_right - m_ptable->m_left) : (float)EDITOR_BG_WIDTH;
+   if ((newVal < 0.f) || (newVal >= maxX))
       return E_FAIL;
    
    SetX(newVal);
@@ -452,7 +349,8 @@ STDMETHODIMP LightSeq::get_CenterY(float *pVal)
 
 STDMETHODIMP LightSeq::put_CenterY(float newVal)
 {
-   if ((newVal < 0.f) || (newVal >= (float)(2 * EDITOR_BG_WIDTH)))
+   const float maxY = (m_ptable != nullptr) ? (m_ptable->m_bottom - m_ptable->m_top) : (float)(2 * EDITOR_BG_WIDTH);
+   if ((newVal < 0.f) || (newVal >= maxY))
       return E_FAIL;
    
    SetY(newVal);
@@ -545,13 +443,13 @@ STDMETHODIMP LightSeq::StopPlay()
    // Reset lights back to original state
    if (m_pcollection != nullptr)
    {
-      const int size = m_pcollection->m_visel.size();
+      const int size = static_cast<int>(m_pcollection->GetParts().size());
       for (int i = 0; i < size; ++i)
       {
-         const ItemTypeEnum type = m_pcollection->m_visel[i].GetIEditable()->GetItemType();
+         const ItemTypeEnum type = m_pcollection->GetParts()[i]->GetItemType();
          if (type == eItemLight)
          {
-            Light * const pLight = (Light *)m_pcollection->m_visel.ElementAt(i);
+            Light * const pLight = (Light *)m_pcollection->GetParts()[i];
             float state;
             pLight->get_State(&state);
             pLight->m_lockedByLS = false;
@@ -560,12 +458,12 @@ STDMETHODIMP LightSeq::StopPlay()
          else if (type == eItemFlasher) 
          {
              //just set not used by light sequencer to not render
-             Flasher* const pFlasher = (Flasher*)m_pcollection->m_visel.ElementAt(i); 
+             Flasher* const pFlasher = (Flasher*)m_pcollection->GetParts()[i]; 
              pFlasher->m_lockedByLS = false;
          }
          else if (type == eItemPrimitive) 
          {
-             Primitive* const pPrimitive = (Primitive*)m_pcollection->m_visel.ElementAt(i);
+             Primitive* const pPrimitive = (Primitive*)m_pcollection->GetParts()[i];
              pPrimitive->m_lockedByLS = false;
          }
       }
@@ -1442,7 +1340,7 @@ bool LightSeq::ProcessTracer(_tracer * const pTracer, const LightState State)
       // process the random type of effect
       case eSeqRandom: {
          // get the number of elements in this
-         const float size = (float)m_pcollection->m_visel.size();
+         const float size = static_cast<float>(m_pcollection->GetParts().size());
          // randomly pick n elements and invert their state
          for (int i = 0; i < pTracer->length; ++i)
          {
@@ -1594,7 +1492,7 @@ void LightSeq::SetAllLightsToState(const LightState State)
 {
    if (m_pcollection != nullptr)
    {
-      const int size = m_pcollection->m_visel.size();
+      const int size = static_cast<int>(m_pcollection->GetParts().size());
       for (int i = 0; i < size; ++i)
          SetElementToState(i, State);
    }
@@ -1602,25 +1500,25 @@ void LightSeq::SetAllLightsToState(const LightState State)
 
 void LightSeq::SetElementToState(const int index, const LightState State)
 {
-   if (m_pcollection->m_visel.empty())
+   if (m_pcollection->GetParts().empty())
       return;
 
-   const ItemTypeEnum type = m_pcollection->m_visel[index].GetIEditable()->GetItemType();
+   const ItemTypeEnum type = m_pcollection->GetParts()[index]->GetItemType();
    if (type == eItemLight)
    {
-      Light* const pLight = (Light*)m_pcollection->m_visel.ElementAt(index);
+      Light* const pLight = (Light*)m_pcollection->GetParts()[index];
       pLight->m_lockedByLS = true;
       pLight->setInPlayState((float)State);
    }
    else if (type == eItemFlasher) 
    {
-      Flasher* const pFlasher = (Flasher*)m_pcollection->m_visel.ElementAt(index);
+      Flasher* const pFlasher = (Flasher*)m_pcollection->GetParts()[index];
       pFlasher->m_lockedByLS = true;
       pFlasher->setInPlayState(State != LightStateOff);
    }
    else if (type == eItemPrimitive) 
    {
-      Primitive* const pPrimitive = (Primitive*)m_pcollection->m_visel.ElementAt(index);
+      Primitive* const pPrimitive = (Primitive*)m_pcollection->GetParts()[index];
       pPrimitive->m_lockedByLS = true;
       pPrimitive->setInPlayState(State != LightStateOff);
    }
@@ -1650,23 +1548,23 @@ LightState LightSeq::GetElementState(const int index) const
    // just in case the element isn't a compatible object
    LightState rc = LightStateOff;
 
-   if (m_pcollection->m_visel.empty())
+   if (m_pcollection->GetParts().empty())
       return rc;
 
-   const ItemTypeEnum type = m_pcollection->m_visel[index].GetIEditable()->GetItemType();
+   const ItemTypeEnum type = m_pcollection->GetParts()[index]->GetItemType();
    if (type == eItemLight)
    {
-       const Light* const pLight = (Light *)m_pcollection->m_visel.ElementAt(index);
+       const Light* const pLight = (Light *)m_pcollection->GetParts()[index];
        rc = pLight->m_inPlayState == 0.f ? LightStateOff : (pLight->m_inPlayState == 2.f ? LightStateBlinking : LightStateOn); // backwards compatibility, 0=Off, (0..1]=On, 2=Blinking
    }
    else if (type == eItemFlasher)
    {
-       const Flasher* const pFlasher = (Flasher*)m_pcollection->m_visel.ElementAt(index);
+       const Flasher* const pFlasher = (Flasher*)m_pcollection->GetParts()[index];
        rc = pFlasher->m_inPlayState ? LightStateOn : LightStateOff;
    }
    else if (type == eItemPrimitive)
    {
-       const Primitive* const pPrimitive = (Primitive*)m_pcollection->m_visel.ElementAt(index);
+       const Primitive* const pPrimitive = (Primitive*)m_pcollection->GetParts()[index];
        rc = pPrimitive->m_inPlayState ? LightStateOn : LightStateOff;
    }
 

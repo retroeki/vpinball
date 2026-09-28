@@ -123,6 +123,11 @@ public:
       return SensorMapping(eventManager, mappingHandler, m_deviceId, m_axisId, m_type, m_deadZone, m_scale, m_limit);
    }
 
+   SensorMapping WithScale(float scale) const
+   {
+      return SensorMapping(m_eventManager, m_mappingHandler, m_deviceId, m_axisId, m_type, m_deadZone, scale, m_limit);
+   }
+
    void SetAxisPosition(uint64_t timestampNs, float value)
    {
       int updateDelayMs = static_cast<int>(timestampNs - m_rawValueTimestampNs) / 1000000;
@@ -179,17 +184,17 @@ public:
 private:
    void UpdateValue()
    {
-      m_value = m_rawValue;
+      float value = m_rawValue;
       if (m_deadZone > 0.f)
       {
-         if (m_value < -m_deadZone)
-            m_value = (m_value + m_deadZone) / (1.f - m_deadZone);
-         else if (m_value > m_deadZone)
-            m_value = (m_value - m_deadZone) / (1.f - m_deadZone);
+         if (value < -m_deadZone)
+            value = (value + m_deadZone) / (1.f - m_deadZone);
+         else if (value > m_deadZone)
+            value = (value - m_deadZone) / (1.f - m_deadZone);
          else
-            m_value = 0.f;
+            value = 0.f;
       }
-      m_value = clamp(m_value * m_scale, -m_limit, m_limit);
+      m_value = clamp(value, -m_limit, m_limit) * m_scale;
    }
 
    uint16_t m_deviceId;

@@ -1,16 +1,17 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "GraphicSettingsPage.h"
+
+#include "renderer/Renderer.h"
+#include "ui/live/LiveUI.h"
 
 namespace VPX::InGameUI
 {
 
 GraphicSettingsPage::GraphicSettingsPage()
-   : InGameUIPage("Graphic Settings"s, ""s, SaveMode::Both)
+   : InGameUIPage("Graphics Settings"s, ""s, SaveMode::Both)
 {
-   BuildPage();
 }
 
 void GraphicSettingsPage::Close(bool isBackwardAnimation)
@@ -32,8 +33,6 @@ void GraphicSettingsPage::OnStaticRenderDirty()
 
 void GraphicSettingsPage::BuildPage()
 {
-   ClearItems();
-
 #if defined(ENABLE_DX9)
    constexpr bool isDX9 = true;
    constexpr bool isOpenGL = false;
@@ -55,11 +54,14 @@ void GraphicSettingsPage::BuildPage()
    AddItem(std::make_unique<InGameUIItem>( //
       VPX::Properties::EnumPropertyDef(*Settings::GetPlayer_BGSet_Property(), m_player->m_ptable->GetViewMode()), //
       [this]() { return (int)m_player->m_ptable->GetViewMode(); }, // Live
-      [this](Settings& settings) { return (int)settings.GetPlayer_BGSet(); }, // Stored
+      [this](const Settings& settings) { return (int)settings.GetPlayer_BGSet(); }, // Stored
       [this](int, int v)
       {
          m_player->m_ptable->SetViewSetupOverride((ViewSetupID)v);
+         m_player->SetCabinetAutoFitMode(g_settingsService.GetActiveSettings().GetPlayer_CabinetAutofitMode());
+         m_player->SetCabinetAutoFitPos(g_settingsService.GetActiveSettings().GetPlayer_CabinetAutofitPos());
          OnStaticRenderDirty();
+         RequestRebuild();
       },
       [](Settings& settings) { settings.ResetPlayer_BGSet(); }, //
       [this](int v, Settings& settings, bool asTableOverride)
@@ -68,31 +70,54 @@ void GraphicSettingsPage::BuildPage()
          m_player->m_ptable->SetViewSetupOverride(ViewSetupID::BG_INVALID);
       }));
 
+   if (m_player->m_ptable->GetViewMode() == ViewSetupID::BG_FULLSCREEN)
+   {
+      AddItem(std::make_unique<InGameUIItem>(
+         Settings::m_propPlayer_CabinetAutofitMode, //
+         [this]() { return m_player->GetCabinetAutoFitMode(); }, // Live
+         [this](int, int v)
+         {
+            m_player->SetCabinetAutoFitMode(v);
+            if (v != 0)
+               OnStaticRenderDirty();
+         }));
+      if (m_player->GetCabinetAutoFitMode() == 1)
+      {
+         AddItem(std::make_unique<InGameUIItem>(
+            Settings::m_propPlayer_CabinetAutofitPos, 100.f, "%4.1f %%"s, //
+            [this]() { return m_player->GetCabinetAutoFitPos(); },
+            [this](float, float v)
+            {
+               m_player->SetCabinetAutoFitPos(v);
+               OnStaticRenderDirty();
+            }));
+      }
+   }
+
+
    //////////////////////////////////////////////////////////////////////////////////////////////////
 
    AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Graphics backend"s));
 
 #ifdef ENABLE_BGFX
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
-   bgfx::RendererType::Enum supportedRenderers[bgfx::RendererType::Count];
-   if (const int nRendererSupported = bgfx::getSupportedRenderers(bgfx::RendererType::Count, supportedRenderers); nRendererSupported > 1)
+   #if defined(ENABLE_XR) && BX_PLATFORM_ANDROID
+   if (m_player->IsVR())
+      AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Info, "The graphics backend is selected by the VR runtime: " + string(bgfx::getRendererName(bgfx::getRendererType()))));
+   else
+   #endif
+   if (vector<string> renderers = RenderDevice::GetSelectableBackendNames(); !renderers.empty())
    {
-      static const string bgfxRendererNames[bgfx::RendererType::Count + 1]
-         = { "Noop"s, "Agc"s, "Direct3D11"s, "Direct3D12"s, "Gnm"s, "Metal"s, "Nvn"s, "OpenGLES"s, "OpenGL"s, "Vulkan"s, "Default"s };
-      vector<string> renderers;
-      for (int i = 0; i < nRendererSupported; i++)
-         if (supportedRenderers[i] != bgfx::RendererType::Noop)
-#ifdef _DEBUG
-            if (supportedRenderers[i] != bgfx::RendererType::Direct3D12)
-#endif
-               renderers.push_back(bgfxRendererNames[supportedRenderers[i]]);
+      // "Default" first: an unset or unknown GfxBackend resolves to index 0 below (max(0, -1)), so without
+      // it the dialog would show the first backend as selected.
+      renderers.insert(renderers.begin(), "Default"s);
       AddItem(std::make_unique<InGameUIItem>(
          VPX::Properties::EnumPropertyDef(""s, ""s, "Graphics Backend"s, ""s, false, 0, 0, renderers),
-         [this, renderers]() { return max(0, FindIndexOf(renderers, m_player->m_ptable->m_settings.GetPlayer_GfxBackend())); }, // Live
-         [this, renderers](Settings& settings) { return max(0, FindIndexOf(renderers, settings.GetPlayer_GfxBackend())); }, // Stored (same)
+         [this, renderers]() { return max(0, FindIndexOf(renderers, g_settingsService.GetActiveSettings().GetPlayer_GfxBackend())); }, // Live
+         [this, renderers](const Settings& settings) { return max(0, FindIndexOf(renderers, settings.GetPlayer_GfxBackend())); }, // Stored (same)
          [this, renderers](int, int v)
          {
-            m_player->m_ptable->m_settings.SetPlayer_GfxBackend(renderers[v], false);
+            g_settingsService.GetActiveSettings().SetPlayer_GfxBackend(renderers[v], false);
             m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
          },
          [](Settings&) { /* Nothing to do as this is directly persisted for the time being */ },
@@ -105,11 +130,11 @@ void GraphicSettingsPage::BuildPage()
    AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Display synchronization"s));
 
    // Sync modes:
-   // - Hardware Synchronization (Hardware VSync)
-   // - Hardware Synchronization (Adaptive Vsync)
-   // - Hardware Synchronization (Frame Pacing) => 'fake' multithreading where VSYNC is done on an ancillary thread while continuously syncing game logic/rendering
-   // - Synchronize to display FPS (Software VSync)
-   // - Synchronize to user selected FPS
+   // - Hardware VSync
+   // - Adaptive Vsync (hardware or software): hardware VSync if not late
+   // - Frame Pacing: produce frames at a pace that correspond to the GPU rendering to limit input and display latency (not blocking on GPU flip, not filling GPU frame in flight queue)
+   // - Software VSync: synchronize to display FPS
+   // - User selected FPS
    // Sync: None / VSync / Adaptive VSync / Frame Paced VSync
    // Limit FPS: None / Display / User
    constexpr bool adaptiveVSyncSupported = isDX9 || isOpenGL;
@@ -118,74 +143,76 @@ void GraphicSettingsPage::BuildPage()
          "Select how frame generation is synchronized to display refresh rate.\nHardware synchronization is recommended for smoother gameplay.\nVSync stands for 'Vertical Synchronization'."s,
          false, 0, 0,
          vector { "Hardware VSync"s,
-#if defined(ENABLE_DX9) || defined(ENABLE_OPENGL)
-            "Hardware Adaptive VSync"s, "Hardware Frame Paced VSync"s,
+#if defined(ENABLE_OPENGL)
+            "Hardware Adaptive VSync"s,
+#elif defined(ENABLE_DX9)
+            "Software Adaptive VSync"s,
 #endif
-            "Software VSync"s, "Custom FPS"s, "No synchronization"s }),
+            "Frame Pacing"s, "Software VSync"s, "Custom FPS"s, "No synchronization"s }),
       [this]()
       {
          switch (m_player->GetVideoSyncMode())
          {
          case VideoSyncMode::VSM_VSYNC: return 0;
          case VideoSyncMode::VSM_ADAPTIVE_VSYNC: return 1;
-         case VideoSyncMode::VSM_FRAME_PACING: return 2;
+         case VideoSyncMode::VSM_FRAME_PACING: return adaptiveVSyncSupported ? 2 : 1;
          case VideoSyncMode::VSM_NONE:
             if (m_player->GetTargetRefreshRate() == m_player->m_playfieldWnd->GetRefreshRate())
-               return adaptiveVSyncSupported ? 3 : 1; // Main display refresh rate => Software VSync
+               return adaptiveVSyncSupported ? 3 : 2; // Main display refresh rate => Software VSync
             if (m_player->GetTargetRefreshRate() == 10000.f)
-               return adaptiveVSyncSupported ? 5 : 3; // No synchronization
-            return adaptiveVSyncSupported ? 4 : 2; // Custom FPS
+               return adaptiveVSyncSupported ? 5 : 4; // No synchronization
+            return adaptiveVSyncSupported ? 4 : 3; // Custom FPS
          default: assert(false); return 0;
          }
       }, // Live
-      [this](Settings& settings)
+      [this](const Settings& settings)
       {
          switch (settings.GetPlayer_SyncMode())
          {
          case VideoSyncMode::VSM_VSYNC: return 0;
          case VideoSyncMode::VSM_ADAPTIVE_VSYNC: return 1;
-         case VideoSyncMode::VSM_FRAME_PACING: return 2;
+         case VideoSyncMode::VSM_FRAME_PACING: return adaptiveVSyncSupported ? 2 : 1;
          case VideoSyncMode::VSM_NONE:
             if (settings.GetPlayer_MaxFramerate() == m_player->m_playfieldWnd->GetRefreshRate())
-               return adaptiveVSyncSupported ? 3 : 1; // Main display refresh rate => Software VSync
+               return adaptiveVSyncSupported ? 3 : 2; // Main display refresh rate => Software VSync
             if (settings.GetPlayer_MaxFramerate() == 10000.f)
-               return adaptiveVSyncSupported ? 5 : 3; // No synchronization
-            return adaptiveVSyncSupported ? 4 : 2; // Custom FPS
+               return adaptiveVSyncSupported ? 5 : 4; // No synchronization
+            return adaptiveVSyncSupported ? 4 : 3; // Custom FPS
          default: assert(false); return 0;
          }
       }, // Stored
       [this](int, int v)
       {
          if (!adaptiveVSyncSupported && v > 0)
-            v += 2;
+            v += 1;
          switch (v)
          {
-         case 0:
+         case 0: // Hardware VSync
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_VSYNC);
             m_player->SetTargetRefreshRate(10000.f);
             break;
-         case 1:
+         case 1: // Adaptive Sync
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_ADAPTIVE_VSYNC);
             m_player->SetTargetRefreshRate(10000.f);
             break;
-         case 2:
+         case 2: // Frame Pacing
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_FRAME_PACING);
             m_player->SetTargetRefreshRate(10000.f);
             break;
-         case 3:
+         case 3: // Software VSync
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_NONE);
             m_player->SetTargetRefreshRate(m_player->m_playfieldWnd->GetRefreshRate());
             break;
-         case 4:
+         case 4: // Custom FPS
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_NONE);
             m_player->SetTargetRefreshRate(roundf(2.f * m_player->m_playfieldWnd->GetRefreshRate()));
             break;
-         case 5:
+         case 5: // No synchronization
             m_player->SetVideoSyncMode(VideoSyncMode::VSM_NONE);
             m_player->SetTargetRefreshRate(10000.f);
             break;
          }
-         BuildPage();
+         RequestRebuild();
          if (isDX9 || isOpenGL)
             m_notificationId = m_player->m_liveUI->PushNotification("Note that some changes will only be applied after restarting the player."s, 3000, m_notificationId);
       },
@@ -208,7 +235,7 @@ void GraphicSettingsPage::BuildPage()
             roundf(m_player->m_playfieldWnd->GetRefreshRate() - 1.f)),
          1.f, "%4.1f", //
          [this]() { return m_player->GetTargetRefreshRate(); }, // Live
-         [this](Settings& settings) { return settings.GetPlayer_MaxFramerate(); }, // Stored
+         [this](const Settings& settings) { return settings.GetPlayer_MaxFramerate(); }, // Stored
          [this](float, float v) { m_player->SetTargetRefreshRate(v == m_player->m_playfieldWnd->GetRefreshRate() ? v - 0.1f : v); }, // The player would interpret this as software VSync
          [](Settings&) { /* Nothing to do, as save is handled by the main combo */ }, [](float, Settings&, bool) { /* Nothing to do, as save is handled by the main combo */ }));
    }
@@ -217,18 +244,13 @@ void GraphicSettingsPage::BuildPage()
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_MaxPrerenderedFrames, "%4d Frames"s, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_MaxPrerenderedFrames(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_MaxPrerenderedFrames(); }, //
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_MaxPrerenderedFrames(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_MaxPrerenderedFrames(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 #endif
-
-   AddItem(std::make_unique<InGameUIItem>( //
-      Settings::m_propPlayer_VisualLatencyCorrection, "%4d ms"s, //
-      [this]() { return m_player->m_renderer->m_renderDevice->GetVisualLatencyCorrection(); }, //
-      [this](int, int v) { m_player->m_renderer->m_renderDevice->SetVisualLatencyCorrection(v); }));
 
 
    //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -238,21 +260,21 @@ void GraphicSettingsPage::BuildPage()
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_AAFactor, 100.f, "%4.1f %%"s, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_AAFactor(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_AAFactor(); }, //
       [this](float, float v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_AAFactor(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_AAFactor(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
-#ifdef ENABLE_OPENGL
+#if defined(ENABLE_OPENGL) || defined(ENABLE_BGFX)
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_MSAASamples, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_MSAASamples(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_MSAASamples(); }, //
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_MSAASamples(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_MSAASamples(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 #endif
@@ -288,13 +310,13 @@ void GraphicSettingsPage::BuildPage()
          vector { "Disabled"s, "Static"s, "Dynamic"s }),
       [this]()
       {
-         if (m_player->m_ptable->m_settings.GetPlayer_DisableAO())
+         if (g_settingsService.GetActiveSettings().GetPlayer_DisableAO())
             return 0;
-         if (m_player->m_ptable->m_settings.GetPlayer_DynamicAO())
+         if (g_settingsService.GetActiveSettings().GetPlayer_DynamicAO())
             return 2;
          return 1;
       }, // Live
-      [this](Settings& settings)
+      [this](const Settings& settings)
       {
          if (settings.GetPlayer_DisableAO())
             return 0;
@@ -304,10 +326,10 @@ void GraphicSettingsPage::BuildPage()
       }, // Stored
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.ResetPlayer_DisableAO();
-         m_player->m_ptable->m_settings.ResetPlayer_DynamicAO();
-         m_player->m_ptable->m_settings.SetPlayer_DisableAO(v == 0, false);
-         m_player->m_ptable->m_settings.SetPlayer_DynamicAO(v == 2, false);
+         g_settingsService.GetActiveSettings().ResetPlayer_DisableAO();
+         g_settingsService.GetActiveSettings().ResetPlayer_DynamicAO();
+         g_settingsService.GetActiveSettings().SetPlayer_DisableAO(v == 0, false);
+         g_settingsService.GetActiveSettings().SetPlayer_DynamicAO(v == 2, false);
       },
       [](Settings&) { /* Nothing to do as this is directly persisted for the time being */ },
       [](int, Settings&, bool) { /* Nothing to do as this is directly persisted for the time being */ }));
@@ -316,20 +338,20 @@ void GraphicSettingsPage::BuildPage()
    // Maybe setup a combo with a few preset values ?
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_MaxTexDimension, "%4d"s, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_MaxTexDimension(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_MaxTexDimension(); }, //
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_MaxTexDimension(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_MaxTexDimension(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>(
       Settings::m_propPlayer_PFReflection, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_PFReflection(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_PFReflection(); }, //
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_PFReflection(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_PFReflection(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
@@ -337,10 +359,10 @@ void GraphicSettingsPage::BuildPage()
    // Maybe setup a combo with a few preset values ?
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_AlphaRampAccuracy, "%4d"s, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_AlphaRampAccuracy(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_AlphaRampAccuracy(); }, //
       [this](int, int v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_AlphaRampAccuracy(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_AlphaRampAccuracy(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
@@ -352,30 +374,32 @@ void GraphicSettingsPage::BuildPage()
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_HDRGlobalExposure, 1.f, "%4.2f"s, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_HDRGlobalExposure(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_HDRGlobalExposure(); }, //
       [this](float, float v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_HDRGlobalExposure(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_HDRGlobalExposure(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
+#if defined(ENABLE_BGFX)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_CompressTextures, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_CompressTextures(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_CompressTextures(); }, //
       [this](bool v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_CompressTextures(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_CompressTextures(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
+#endif
 
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_UseNVidiaAPI, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_UseNVidiaAPI(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_UseNVidiaAPI(); }, //
       [this](bool v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_UseNVidiaAPI(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_UseNVidiaAPI(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 
@@ -399,10 +423,10 @@ void GraphicSettingsPage::BuildPage()
    // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_SoftwareVertexProcessing, //
-      [this]() { return m_player->m_ptable->m_settings.GetPlayer_SoftwareVertexProcessing(); }, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_SoftwareVertexProcessing(); }, //
       [this](bool v)
       {
-         m_player->m_ptable->m_settings.SetPlayer_SoftwareVertexProcessing(v, false);
+         g_settingsService.GetActiveSettings().SetPlayer_SoftwareVertexProcessing(v, false);
          m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
       }));
 #endif
@@ -430,6 +454,42 @@ void GraphicSettingsPage::BuildPage()
       Settings::m_propPlayer_BallTrailStrength, 1.f, "%4.2f"s, //
       [this]() { return m_player->m_renderer->m_ballTrailStrength; }, //
       [this](float, float v) { m_player->m_renderer->m_ballTrailStrength = v; }));
+
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayer_OverwriteBallImage, //
+      [this]() { return m_player->m_renderer->m_overwriteBallImages; }, //
+      [this](bool v) { 
+         m_player->m_renderer->m_overwriteBallImages = v;
+         if (m_player->m_renderer->m_overwriteBallImages)
+         {
+            m_player->m_renderer->m_ballImage = BaseTexture::CreateFromFile(g_settingsService.GetActiveSettings().GetPlayer_BallImage(), g_settingsService.GetActiveSettings().GetPlayer_MaxTexDimension());
+            m_player->m_renderer->m_decalImage = BaseTexture::CreateFromFile(g_settingsService.GetActiveSettings().GetPlayer_DecalImage(), g_settingsService.GetActiveSettings().GetPlayer_MaxTexDimension());
+         }
+         RequestRebuild();
+      }));
+
+   if (m_player->m_renderer->m_overwriteBallImages)
+   {
+      // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
+      AddItem(std::make_unique<InGameUIItem>(
+         Settings::m_propPlayer_BallImage, //
+         [this]() { return g_settingsService.GetActiveSettings().GetPlayer_BallImage(); }, //
+         [this](const string&, const string& v)
+         {
+            g_settingsService.GetActiveSettings().SetPlayer_BallImage(v, false);
+            m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
+         }));
+
+      // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
+      AddItem(std::make_unique<InGameUIItem>(
+         Settings::m_propPlayer_DecalImage, //
+         [this]() { return g_settingsService.GetActiveSettings().GetPlayer_DecalImage(); }, //
+         [this](const string&, const string& v)
+         {
+            g_settingsService.GetActiveSettings().SetPlayer_DecalImage(v, false);
+            m_notificationId = m_player->m_liveUI->PushNotification("This change will be applied after restarting the player."s, 3000, m_notificationId);
+         }));
+   }
 }
 
 }

@@ -1,22 +1,16 @@
 // license:GPLv3+
 
-// interface for the HitTarget class.
-
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/MeshBuffer.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
 #include "unordered_dense.h"
 
-// Indices for RotAndTra:
-//     RotX = 0
-//     RotY = 1
-//     RotZ = 2
-//     TraX = 3
-//     TraY = 4
-//     TraZ = 5
-//  ObjRotX = 6
-//  ObjRotY = 7
-//  ObjRotZ = 8
 
 class HitTargetData final : public BaseProperty
 {
@@ -25,8 +19,6 @@ public:
    Vertex3Ds m_vSize;
    float m_rotZ;
    TargetType m_targetType;
-
-   TimerDataRoot m_tdr;
 
    float m_elasticityFalloff;
    float m_dropSpeed;
@@ -49,24 +41,24 @@ class HitTarget :
    public IConnectionPointContainerImpl<HitTarget>,
    public IProvideClassInfo2Impl<&CLSID_HitTarget, &DIID_IHitTargetEvents, &LIBID_VPinballLib>,
 
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
 
    static constexpr float DROP_TARGET_LIMIT = 52.0f;
 
-   HitTarget();
+   HitTarget() { m_d.m_depthBias = 0.0f; m_d.m_reflectionEnabled = true; }
    virtual ~HitTarget();
 
    BEGIN_COM_MAP(HitTarget)
@@ -85,7 +77,7 @@ public:
        CONNECTION_POINT_ENTRY(DIID_IHitTargetEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(HitTarget, eItemHitTarget, TARGET, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(HitTarget, eItemHitTarget, TARGET)
 
    DECLARE_REGISTRY_RESOURCEID(IDR_HITTARGET)
 
@@ -156,16 +148,16 @@ public:
    STDMETHOD(get_HitThreshold)(/*[out, retval]*/ float *pVal);
 
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
 
    void WriteRegDefaults() final;
 
    float GetDepth(const Vertex3Ds& viewDir) const final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemHitTarget; }
+
+   bool IsConstCollidable() const final { return false; }
+   bool IsCollidable() const final { return !m_d.m_isDropped; }
 
    void SetDefaultPhysics(const bool fromMouseClick) final;
    void ExportMesh(ObjLoader& loader) final;
@@ -173,11 +165,13 @@ public:
    void GenerateMesh(vector<Vertex3D_NoTex2> &buf);
    void TransformVertices();
    void SetMeshType(const TargetType type);
-   void UpdateStatusBarInfo() final;
 
    HitTargetData m_d;
 
-   bool m_hitEvent;
+   bool m_hitEvent = false;
+
+   // Fills 'edges' with pairs of 2D vertices forming the editor wireframe of the target mesh.
+   void GetEditorWireframe(vector<Vertex2D> &edges) const;
 
 private:
    void UpdateTarget();
@@ -185,25 +179,20 @@ private:
    void AddHitEdge(class PhysicsEngine *physics, ankerl::unordered_dense::set<std::pair<unsigned, unsigned>> &addedEdges, const unsigned i, const unsigned j, const Vertex3Ds &vi,
       const Vertex3Ds &vj, const bool setHitObject, const bool isUI);
 
-   PinTable        *m_ptable = nullptr;
-
-   RenderDevice    *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    const Vertex3D_NoTex2 *m_vertices = nullptr; // pointer just to the existing hittargets hardcoded in arrays
    const WORD      *m_indices = nullptr; // dto.
    unsigned int     m_numVertices = 0;
    unsigned int     m_numIndices = 0;
    std::shared_ptr<MeshBuffer> m_meshBuffer;
 
-   PropertyPane *m_propVisual = nullptr;
-   PropertyPane *m_propPosition = nullptr;
-
    vector<HitObject*> m_vhoCollidable; // Objects to that may be collide selectable
 
    // Vertices for editor display & hit shape
    vector<Vertex3Ds> m_hitUIVertices;
    vector<Vertex3D_NoTex2> m_transformedVertices;
-   uint32_t m_timeStamp;
-   float m_moveAnimationOffset;
-   bool  m_moveAnimation;
-   bool  m_moveDown;
+   uint32_t m_timeStamp = 0;
+   float m_moveAnimationOffset = 0.0f;
+   bool  m_moveAnimation = false;
+   bool  m_moveDown = true;
 };

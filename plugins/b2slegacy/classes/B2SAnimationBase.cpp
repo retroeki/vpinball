@@ -39,22 +39,14 @@ B2SAnimationBase::B2SAnimationBase(
       m_lightsStateAtAnimationEnd = eLightsStateAtAnimationEnd_InvolvedLightsOff;
    m_animationStopBehaviour = animationStopBehaviour;
    if (m_animationStopBehaviour == eAnimationStopBehaviour_Undefined)
-      m_animationStopBehaviour = eAnimationStopBehaviour_StopImmediatelly;
+      m_animationStopBehaviour = eAnimationStopBehaviour_StopImmediately;
    m_lockInvolvedLamps = lockInvolvedLamps;
    m_hideScoreDisplays = hideScoreDisplays;
    m_bringToFront = bringToFront;
    m_randomStart = randomStart;
    m_randomQuality = randomQuality;
 
-   m_slowDown = 1;
-   m_wouldBeStarted = false;
-   m_stopMeLater = false;
-
    m_pRunningAnimations = RunningAnimationsCollection::GetInstance();
-
-   m_finishedListener = nullptr;
-
-   m_pSwitchTimer = nullptr;
 }
 
 B2SAnimationBase::~B2SAnimationBase()

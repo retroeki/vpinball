@@ -4,8 +4,6 @@
 #include <cstdio>
 #include <algorithm>	// sort
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 
 // Very slim version, just to make it compile & run w/o RDE.
@@ -131,7 +129,7 @@ namespace rde
          va_list args;
          va_start(args, fmt);
          char buff[sizeof(BlackBoxMessage)] = {};
-         _vsnprintf_s(buff, sizeof(buff) - 1, fmt, args);
+         _vsnprintf_s(buff, std::size(buff) - 1, fmt, args);
          va_end(args);
          AddMessage(buff);
       }

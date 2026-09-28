@@ -1,13 +1,18 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-#include "core/vpversion.h"
 #include "WebServer.h"
 
+#include "core/FileLocator.h"
+#include "core/VPApp.h"
+#include "core/vpversion.h"
+#include "parts/pintable.h"
+#include "ui/live/LiveUI.h"
+
 #include "VPinballLib.h"
+#include "ZipUtils.h"
 
 #include <nlohmann/json.hpp>
-#include <zip.h>
 #include <chrono>
 #include <sstream>
 #include <iomanip>
@@ -36,11 +41,13 @@ namespace {
    constexpr int STATUS_METHOD_NOT_ALLOWED = 405;
    constexpr int STATUS_CONFLICT = 409;
    constexpr int STATUS_INTERNAL_SERVER_ERROR = 500;
+
+   constexpr size_t MAX_UPLOAD_SIZE = size_t(2) * 1024 * 1024 * 1024; // 2GB
 }
 
 std::mutex WebServer::s_logMutex;
-vector<struct mg_connection*> WebServer::s_logConnections;
-vector<struct mg_connection*> WebServer::s_statusConnections;
+vector<unsigned long> WebServer::s_logConnections;
+vector<unsigned long> WebServer::s_statusConnections;
 std::deque<string> WebServer::s_recentLogs;
 WebServer* WebServer::s_instance = nullptr;
 int64_t WebServer::s_lastUpdateTimestamp = 0;
@@ -76,6 +83,8 @@ void WebServer::EventHandler(struct mg_connection *c, int ev, void *ev_data)
          webServer->LogStream(c, hm);
       else if (mg_match(hm->uri, mg_str("/rename"), NULL))
          webServer->Rename(c, hm);
+      else if (mg_match(hm->uri, mg_str("/move"), NULL))
+         webServer->Move(c, hm);
       else if (mg_match(hm->uri, mg_str("/setroot"), NULL))
          webServer->SetRoot(c, hm);
       else if (mg_match(hm->uri, mg_str("/getroot"), NULL))
@@ -86,22 +95,30 @@ void WebServer::EventHandler(struct mg_connection *c, int ev, void *ev_data)
          string uri(hm->uri.buf, hm->uri.len);
          if (!uri.empty() && uri.front() == '/') uri.erase(0, 1);
 
-         std::filesystem::path webBase = std::filesystem::path(g_pvp->m_myPath) / "assets" / "web";
+         std::filesystem::path webBase = std::filesystem::path(g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Assets)) / "web";
          std::filesystem::path asset = uri.empty() ? webBase / "vpx.html" : webBase / uri;
 
-         if (!uri.empty() && std::filesystem::exists(asset))
+         std::error_code ec;
+         if (!uri.empty() && std::filesystem::exists(asset, ec))
             mg_http_serve_file(c, hm, asset.string().c_str(), &opts);
          else
             mg_http_serve_file(c, hm, (webBase / "vpx.html").string().c_str(), &opts);
       }
    }
+   else if (ev == MG_EV_WAKEUP) {
+      const struct mg_str* data = (struct mg_str*)ev_data;
+      if (c->is_websocket)
+         mg_ws_send(c, data->buf, data->len, WEBSOCKET_OP_TEXT);
+      else
+         mg_send(c, data->buf, data->len);
+   }
    else if (ev == MG_EV_CLOSE) {
       std::lock_guard<std::mutex> lock(s_logMutex);
-      auto logIt = std::find(s_logConnections.begin(), s_logConnections.end(), c);
+      auto logIt = std::find(s_logConnections.begin(), s_logConnections.end(), c->id);
       if (logIt != s_logConnections.end())
          s_logConnections.erase(logIt);
 
-      auto statusIt = std::find(s_statusConnections.begin(), s_statusConnections.end(), c);
+      auto statusIt = std::find(s_statusConnections.begin(), s_statusConnections.end(), c->id);
       if (statusIt != s_statusConnections.end())
          s_statusConnections.erase(statusIt);
    }
@@ -182,18 +199,21 @@ void WebServer::Start()
    // location once complete, so anything left here is from an interrupted
    // transfer and must not linger as a hidden orphan.
    std::error_code sweepEc;
-   std::filesystem::remove_all(BuildPrefPath(".uploading"), sweepEc);
+   std::filesystem::remove_all(BuildTablePath(".uploading"), sweepEc);
 
    const auto addrPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>("Standalone"s, "WebServerAddr"s, ""s, ""s, false, "0.0.0.0"s));
    const auto portPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>("Standalone"s, "WebServerPort"s, ""s, ""s, false, INT_MIN, INT_MAX, 2112));
-   const string addr = g_pvp->m_settings.GetString(addrPropId);
-   const int port = g_pvp->m_settings.GetInt(portPropId);
+   const string addr = g_settingsService.GetAppSettings().GetString(addrPropId);
+   const int port = g_settingsService.GetAppSettings().GetInt(portPropId);
 
    string bindUrl = "http://" + addr + ':' + std::to_string(port);
 
    PLOGI.printf("Starting web server at %s", bindUrl.c_str());
 
    mg_mgr_init(&m_mgr);
+   if (!mg_wakeup_init(&m_mgr)) {
+      PLOGE.printf("Unable to create the web server wakeup pipe, log and status streaming will not be delivered");
+   }
 
    SetLastUpdate();
 
@@ -250,7 +270,7 @@ void WebServer::Stop()
 void WebServer::Update()
 {
    const auto serverPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>("Standalone"s, "WebServer"s, ""s, ""s, false, false));
-   bool enabled = g_pvp->m_settings.GetBool(serverPropId);
+   bool enabled = g_settingsService.GetAppSettings().GetBool(serverPropId);
 
    if (enabled && !m_run)
       Start();
@@ -270,7 +290,7 @@ void WebServer::RefreshUrl()
       return;
 
    const auto portPropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::IntPropertyDef>("Standalone"s, "WebServerPort"s, ""s, ""s, false, INT_MIN, INT_MAX, 2112));
-   const int port = g_pvp->m_settings.GetInt(portPropId);
+   const int port = g_settingsService.GetAppSettings().GetInt(portPropId);
 
    const string ip = GetIPAddress();
    if (!ip.empty())
@@ -302,7 +322,7 @@ void WebServer::Status(struct mg_connection *c, struct mg_http_message* hm)
 
    {
       std::lock_guard<std::mutex> lock(s_logMutex);
-      s_statusConnections.push_back(c);
+      s_statusConnections.push_back(c->id);
    }
 
    BroadcastStatus();
@@ -320,9 +340,10 @@ void WebServer::Assets(struct mg_connection *c, struct mg_http_message* hm)
          return;
       }
 
-      std::filesystem::path fullPath = std::filesystem::path(g_pvp->m_myPath) / "assets" / assetPath;
+      std::filesystem::path fullPath = std::filesystem::path(g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Assets)) / assetPath;
 
-      if (std::filesystem::exists(fullPath) && std::filesystem::is_regular_file(fullPath)) {
+      std::error_code ec;
+      if (std::filesystem::is_regular_file(fullPath, ec)) {
          struct mg_http_serve_opts opts = {};
          mg_http_serve_file(c, hm, fullPath.string().c_str(), &opts);
       }
@@ -346,7 +367,7 @@ void WebServer::Files(struct mg_connection *c, struct mg_http_message* hm)
 
    PLOGD.printf("Retrieving file list: q=%s", q.c_str());
 
-   string path = BuildPrefPath(q.c_str());
+   string path = BuildTablePath(q.c_str());
    if (!q.empty())
       path += PATH_SEPARATOR_CHAR;
 
@@ -400,7 +421,7 @@ void WebServer::Download(struct mg_connection *c, struct mg_http_message* hm)
 
    PLOGI.printf("Downloading file: q=%s", q.c_str());
 
-   string path = BuildPrefPath(q.c_str());
+   string path = BuildTablePath(q.c_str());
 
    struct mg_http_serve_opts opts = {};
    mg_http_serve_file(c, hm, path.c_str(), &opts);
@@ -436,12 +457,12 @@ void WebServer::Upload(struct mg_connection *c, struct mg_http_message* hm)
    // mid-way. The staging tree mirrors the target path (both under the same
    // web root) so the promote is a same-filesystem atomic rename; stragglers
    // are swept on server start (see Start()).
-   const std::filesystem::path targetDir = BuildPrefPath(q);
-   const std::filesystem::path stagingDir = BuildPrefPath("") / ".uploading" / q;
+   const std::filesystem::path targetDir = BuildTablePath(q);
+   const std::filesystem::path stagingDir = BuildTablePath("") / ".uploading" / q;
    std::error_code ec;
    std::filesystem::create_directories(stagingDir, ec);   // mg_http_upload won't create dirs
 
-   const long bytesWritten = mg_http_upload(c, hm, &mg_fs_posix, stagingDir.string().c_str(), 1024 * 1024 * 500);
+   const long bytesWritten = mg_http_upload(c, hm, &mg_fs_posix, stagingDir.string().c_str(), MAX_UPLOAD_SIZE);
 
    // File complete: promote it before signalling progress, so the host sees
    // the finished table at its real path the instant it reaches 100%.
@@ -455,9 +476,9 @@ void WebServer::Upload(struct mg_connection *c, struct mg_http_message* hm)
                       finalFile.string().c_str(), ec.message().c_str());
       else {
          if (*q == '\0' && file == "VPinballX.ini") {
-            g_pvp->m_settings.SetIniPath(finalFile.string());
-            g_pvp->m_settings.Load(true);
-            g_pvp->m_settings.Save();
+            g_settingsService.GetAppSettings().SetIniPath(finalFile.string());
+            g_settingsService.GetAppSettings().Load(true);
+            g_settingsService.GetAppSettings().Save();
          }
          SetLastUpdate();
       }
@@ -485,23 +506,29 @@ void WebServer::Delete(struct mg_connection *c, struct mg_http_message* hm)
    if (!ValidatePathParameter(c, hm, "q", q))
       return;
 
-   string path = BuildPrefPath(q.c_str());
+   string path = BuildTablePath(q.c_str());
 
-   if (std::filesystem::is_regular_file(path)) {
-      if (std::filesystem::remove(path.c_str())) {
+   std::error_code ec;
+   if (std::filesystem::is_regular_file(path, ec)) {
+      if (std::filesystem::remove(path, ec)) {
          SetLastUpdate();
          mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
       }
-      else
+      else {
+         PLOGE.printf("Failed to delete file: q=%s, error=%s", q.c_str(), ec.message().c_str());
          mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+      }
    }
-   else if (std::filesystem::is_directory(path)) {
-      if (std::filesystem::remove_all(path) != 0) {
+   else if (std::filesystem::is_directory(path, ec)) {
+      const std::uintmax_t removed = std::filesystem::remove_all(path, ec);
+      if (!ec && removed != 0) {
          SetLastUpdate();
          mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
       }
-      else
+      else {
+         PLOGE.printf("Failed to delete directory: q=%s, error=%s", q.c_str(), ec.message().c_str());
          mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+      }
    }
    else
       mg_http_reply(c, STATUS_BAD_REQUEST, "", "%s", RESPONSE_BAD_REQUEST);
@@ -517,24 +544,73 @@ void WebServer::Rename(struct mg_connection *c, struct mg_http_message* hm)
    if (!ValidatePathParameter(c, hm, "name", newName))
       return;
 
-   string oldPath = BuildPrefPath(q.c_str());
+   string oldPath = BuildTablePath(q.c_str());
    std::filesystem::path oldFile(oldPath);
 
-   if (!std::filesystem::exists(oldFile)) {
+   std::error_code ec;
+   if (!std::filesystem::exists(oldFile, ec)) {
       mg_http_reply(c, STATUS_NOT_FOUND, "", RESPONSE_NOT_FOUND);
       return;
    }
 
    std::filesystem::path newFile = oldFile.parent_path() / newName;
-   if (std::filesystem::exists(newFile)) {
+   if (std::filesystem::exists(newFile, ec)) {
       mg_http_reply(c, STATUS_CONFLICT, "", RESPONSE_CONFLICT);
       return;
    }
 
-   std::error_code ec;
    std::filesystem::rename(oldFile, newFile, ec);
-   if (ec)
+   if (ec) {
+      PLOGE.printf("Failed to rename: q=%s, name=%s, error=%s", q.c_str(), newName.c_str(), ec.message().c_str());
       mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+   }
+   else {
+      SetLastUpdate();
+      mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
+   }
+}
+
+void WebServer::Move(struct mg_connection *c, struct mg_http_message* hm)
+{
+   string q;
+   if (!ValidatePathParameter(c, hm, "q", q))
+      return;
+
+   string dest;
+   if (!ValidatePathParameter(c, hm, "dest", dest))
+      return;
+
+   string oldPath = BuildTablePath(q.c_str());
+   string newPath = BuildTablePath(dest.c_str());
+
+   std::filesystem::path oldFile(oldPath);
+   std::filesystem::path newFile(newPath);
+
+   std::error_code ec;
+   if (!std::filesystem::exists(oldFile, ec)) {
+      mg_http_reply(c, STATUS_NOT_FOUND, "", RESPONSE_NOT_FOUND);
+      return;
+   }
+
+   if (std::filesystem::exists(newFile, ec)) {
+      mg_http_reply(c, STATUS_CONFLICT, "", RESPONSE_CONFLICT);
+      return;
+   }
+
+   if (!newFile.parent_path().empty() && !std::filesystem::exists(newFile.parent_path(), ec)) {
+      std::filesystem::create_directories(newFile.parent_path(), ec);
+      if (ec) {
+         PLOGE.printf("Failed to create directory: dest=%s, error=%s", dest.c_str(), ec.message().c_str());
+         mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+         return;
+      }
+   }
+
+   std::filesystem::rename(oldFile, newFile, ec);
+   if (ec) {
+      PLOGE.printf("Failed to move: q=%s, dest=%s, error=%s", q.c_str(), dest.c_str(), ec.message().c_str());
+      mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+   }
    else {
       SetLastUpdate();
       mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
@@ -542,10 +618,9 @@ void WebServer::Rename(struct mg_connection *c, struct mg_http_message* hm)
 }
 
 // Two stored web roots (library / advanced) registered by the host. Implemented
-// in VPinballLib.cpp. SetActiveWebRoot returns the path now serving as the
-// browse root — kept here in g_webBrowseRoot so the file-browser ops use it
-// instead of the global m_myPrefPath (which must stay anchored at the internal
-// app dir for INI/log/user/ writes).
+// in VPinballLib.cpp. SetActiveWebRoot selects the path now serving as the
+// browse root, so the file-browser ops use it instead of the app Tables folder
+// (the preference folder stays anchored at the internal app dir for INI/log/user/ writes).
 extern "C" void VPinballSetActiveWebRoot(int type);
 extern "C" const char* VPinballGetActiveWebRoot();
 extern "C" const char* VPinballGetWebLibraryPath();
@@ -611,15 +686,17 @@ void WebServer::Folder(struct mg_connection *c, struct mg_http_message* hm)
       return;
    }
 
-   string path = BuildPrefPath(q);
+   string path = BuildTablePath(q);
 
    std::error_code ec;
    if (std::filesystem::create_directory(path, ec)) {
       SetLastUpdate();
       mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
    }
-   else
+   else {
+      PLOGE.printf("Failed to create folder: q=%s, error=%s", q, ec.message().c_str());
       mg_http_reply(c, STATUS_INTERNAL_SERVER_ERROR, "", RESPONSE_INTERNAL_SERVER_ERROR);
+   }
 }
 
 void WebServer::Extract(struct mg_connection *c, struct mg_http_message* hm)
@@ -632,12 +709,14 @@ void WebServer::Extract(struct mg_connection *c, struct mg_http_message* hm)
       return;
    }
 
-   string path = BuildPrefPath(q);
+   string path = BuildTablePath(q);
 
-   if (std::filesystem::is_regular_file(path)) {
+   const std::filesystem::path filePath(path);
+   std::error_code ec;
+   if (std::filesystem::is_regular_file(filePath, ec)) {
       const string ext = extension_from_path(path);
       if (ext == "zip" || ext == "vpxz") {
-         if (Unzip(path.c_str())) {
+         if (ZipUtils::Unzip(filePath, filePath.parent_path(), nullptr)) {
             PLOGI.printf("File unzipped: q=%s", path.c_str());
             SetLastUpdate();
             mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
@@ -671,9 +750,8 @@ void WebServer::Command(struct mg_connection *c, struct mg_http_message* hm)
          mg_http_reply(c, STATUS_BAD_REQUEST, "", "%s", RESPONSE_BAD_REQUEST);
    }
    else if (!strncmp(cmd, "shutdown", sizeof(cmd))) {
-      CComObject<PinTable>* pActiveTable = g_pvp->GetActiveTable();
-      if (pActiveTable) {
-         pActiveTable->QuitPlayer(Player::CS_CLOSE_CAPTURE_SCREENSHOT);
+      if (g_pplayer) {
+         g_pplayer->SetCloseState(Player::CS_CLOSE_CAPTURE_SCREENSHOT);
          mg_http_reply(c, STATUS_OK, "", RESPONSE_OK);
       }
       else
@@ -710,7 +788,7 @@ void WebServer::LogStream(struct mg_connection *c, struct mg_http_message* hm)
 
    {
       std::lock_guard<std::mutex> lock(s_logMutex);
-      s_logConnections.push_back(c);
+      s_logConnections.push_back(c->id);
 
       for (const auto& logLine : s_recentLogs) {
          string data = "data: " + logLine + "\n\n";
@@ -739,26 +817,18 @@ void WebServer::BroadcastLogEntry(const string& formattedLog)
    if (s_logConnections.empty())
       return;
 
-   string data = "data: " + formattedLog + "\n\n";
+   const string data = "data: " + formattedLog + "\n\n";
 
-   auto it = s_logConnections.begin();
-   while (it != s_logConnections.end()) {
-      struct mg_connection* conn = *it;
-      if (conn && mg_send(conn, data.c_str(), data.length()) == 0)
-         it = s_logConnections.erase(it);
-      else
-         ++it;
-   }
+   for (const unsigned long id : s_logConnections)
+      mg_wakeup(&m_mgr, id, data.c_str(), data.length());
 }
 
 void WebServer::BroadcastStatus()
 {
-   if (s_statusConnections.empty()) return;
+   if (s_instance == nullptr) return;
 
    bool running = g_pplayer != nullptr;
-   string currentTable = "";
-   if (running && !g_pvp->m_currentTablePath.empty())
-      currentTable = g_pvp->GetActiveTable()->m_filename;
+   string currentTable = running ? g_pplayer->m_ptable->m_filename.string() : ""s;
 
    json j = {
       {"running", running},
@@ -766,17 +836,12 @@ void WebServer::BroadcastStatus()
       {"lastUpdate", s_lastUpdateTimestamp}
    };
 
-   string response = j.dump();
+   const string response = j.dump();
 
    std::lock_guard<std::mutex> lock(s_logMutex);
-   auto it = s_statusConnections.begin();
-   while (it != s_statusConnections.end()) {
-      struct mg_connection* conn = *it;
-      if (conn && mg_ws_send(conn, response.c_str(), response.length(), WEBSOCKET_OP_TEXT) == 0)
-         it = s_statusConnections.erase(it);
-      else
-         ++it;
-   }
+   if (s_statusConnections.empty()) return;
+   for (const unsigned long id : s_statusConnections)
+      mg_wakeup(&s_instance->m_mgr, id, response.c_str(), response.length());
 }
 
 string WebServer::GetIPAddress()
@@ -847,62 +912,16 @@ bool WebServer::ValidatePathParameter(struct mg_connection *c, struct mg_http_me
    return true;
 }
 
-std::filesystem::path WebServer::BuildPrefPath(const char* relativePath)
+std::filesystem::path WebServer::BuildTablePath(const char* relativePath)
 {
-   // Web file-browser root is independent of g_pvp->GetPrefPath. The host
+   // Web file-browser root is independent of the app Tables folder. The host
    // registers a browse root via VPinballSetActiveWebRoot; if unset, fall back
-   // to the live VPinball prefPath so the upstream desktop builds (which never
-   // touch the new API) still work.
+   // to the Tables folder so the desktop builds (which never touch the new API)
+   // still work.
    const char* webRoot = VPinballGetActiveWebRoot();
    if (webRoot && webRoot[0] != '\0') {
       return std::filesystem::path(webRoot) / relativePath;
    }
-   return std::filesystem::path(g_pvp->GetPrefPath()) / relativePath;
+   return g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Tables) / relativePath;
 }
 
-bool WebServer::Unzip(const char* pSource)
-{
-   int error = 0;
-   zip_t* zip_archive = zip_open(pSource, ZIP_RDONLY, &error);
-   if (!zip_archive) {
-      PLOGE.printf("Unable to unzip file: source=%s", pSource);
-      return false;
-   }
-
-   bool success = true;
-   zip_int64_t file_count = zip_get_num_entries(zip_archive, 0);
-
-   for (zip_uint64_t i = 0; i < (zip_uint64_t)file_count; ++i) {
-      zip_stat_t file_stat;
-      if (zip_stat_index(zip_archive, i, ZIP_STAT_NAME, &file_stat) != 0) {
-         success = false;
-         continue;
-      }
-
-      string filename = file_stat.name;
-      if (filename.rfind("__MACOSX", 0) == 0)
-         continue;
-
-      std::filesystem::path path = std::filesystem::path(pSource).parent_path() / filename;
-      if (filename.back() == '/')
-         std::filesystem::create_directories(path);
-      else {
-         std::filesystem::create_directories(path.parent_path());
-         zip_file_t* zip_file = zip_fopen_index(zip_archive, i, 0);
-         if (!zip_file) {
-             PLOGE.printf("Unable to extract file: %s", path.string().c_str());
-             success = false;
-             continue;
-         }
-         std::ofstream ofs(path, std::ios::binary);
-         char buf[4096];
-         zip_int64_t len;
-         while ((len = zip_fread(zip_file, buf, sizeof(buf))) > 0)
-            ofs.write(buf, len);
-         zip_fclose(zip_file);
-      }
-   }
-
-   zip_close(zip_archive);
-   return success;
-}

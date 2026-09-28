@@ -55,10 +55,7 @@ public:
    void LabelInit(int screenNum);
    const string& GetGetGame() const;
    void SetGetGame(const string& value);
-   // Non-const because we lazily resolve the pupvideos root path on first
-   // read — needed for tables (e.g. Terrifier v1.02) that read GetRoot
-   // before calling B2SInit (the call that normally triggers resolution).
-   const string& GetGetRoot();
+   string GetGetRoot() const;
    void SetGetRoot(const string& value);
    void SoundAdd(const string& sname, const string& fname, int svol, double sX, double sy, const string& SP);
    void SoundPlay(const string& sname);
@@ -66,12 +63,12 @@ public:
    void InitPuPMenu(int Param1);
    const string& GetB2SDisplays() const;
    void setVolumeCurrent(int ScreenNum, int vol);
-   int GetGameUpdate(const string& GameTitle, int Func, int FuncData, const string& Extra) const;
+   int GameUpdate(const string& GameTitle, int Func, int FuncData, const string& Extra) const;
    // void GrabDC(int pWidth, int pHeight, const string& wintitle, VARIANT *pixels);
    string GetVersion() const;
    // void GrabDC2(int pWidth, int pHeight, const string& wintitle, SAFEARRAY **pixels);
    void playevent(int ScreenNum, const string& playlist, const string& playfilename, int volume, int priority, int playtype, int Seconds, const string& Special);
-   void SetPosVideo(int ScreenNum, int StartPos, int EndPos, int Mode, const string& Special);
+   void SetPosVideo(int ScreenNum, int StartPos, int EndPos, int mode, const string& Special);
    void PuPClose();
 
 private:

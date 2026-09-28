@@ -2,11 +2,13 @@
 
 #include "core/stdafx.h"
 #include "RenderTarget.h"
-#include "RenderDevice.h"
-#include "VRDevice.h"
+
+#include "parts/Collection.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/VRDevice.h"
 
 #if defined(ENABLE_OPENGL)
-#include "Shader.h"
+#include "renderer/Shader.h"
 #endif
 
 #if !defined(DISABLE_FORCE_NVIDIA_OPTIMUS) && defined(ENABLE_DX9)
@@ -22,7 +24,9 @@ int RenderTarget::GetCurrentRenderLayer() { return current_render_layer; }
 RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const int width, const int height, const colorFormat format)
    : m_name("BackBuffer"s)
    , m_type(type)
-   , m_nLayers(type == RT_DEFAULT ? 1 : type == RT_CUBEMAP ? 6 : 2)
+   , m_nLayers(type == SurfaceType::RT_DEFAULT ? 1
+           : type == SurfaceType::RT_CUBEMAP   ? 6
+                                               : 2)
    , m_rd(rd)
    , m_is_back_buffer(true)
    , m_format(format)
@@ -32,11 +36,12 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    , m_has_depth(true)
    , m_shared_depth(false)
 {
-   assert((type == RT_DEFAULT) || (type == RT_STEREO));
+   assert((type == SurfaceType::RT_DEFAULT) || (type == SurfaceType::RT_STEREO));
    m_color_sampler = nullptr;
    m_depth_sampler = nullptr;
 
    #if defined(ENABLE_BGFX)
+   assert(false);
    m_framebuffer = BGFX_INVALID_HANDLE; // Invalid handle is the reserved Id for BGFX's back buffer
 
    #elif defined(ENABLE_OPENGL)
@@ -57,7 +62,7 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    #elif defined(ENABLE_DX9)
    HRESULT hr = m_rd->GetCoreDevice()->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &m_color_surface);
    if (FAILED(hr))
-      ReportError("Fatal Error: unable to create back buffer!", hr, __FILE__, __LINE__);
+      ReportError("Fatal Error: unable to create back buffer!"s, hr, __FILE__, __LINE__);
    m_use_alternate_depth = m_rd->m_useNvidiaApi || !m_rd->m_INTZ_support;
    m_color_tex = nullptr;
    m_depth_tex = nullptr;
@@ -72,7 +77,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, bgfx:
    const string& name, const int width, const int height, const colorFormat format)
    : m_name(name)
    , m_type(type)
-   , m_nLayers(type == RT_DEFAULT ? 1 : type == RT_CUBEMAP ? 6 : 2)
+   , m_nLayers(type == SurfaceType::RT_DEFAULT ? 1
+           : type == SurfaceType::RT_CUBEMAP   ? 6
+                                               : 2)
    , m_rd(rd)
    , m_is_back_buffer(true)
    , m_format(format)
@@ -85,7 +92,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, bgfx:
    , m_depth_sampler(nullptr)
    , m_framebuffer(fbh)
    , m_color_tex(colorTex)
+   , m_colorFormat(colFormat)
    , m_depth_tex(depthTex)
+   , m_depthFormat(depthFormat)
 {
    if (bgfx::isValid(colorTex))
       m_color_sampler = std::make_shared<Sampler>(rd, name + ".Color", type, colorTex, colFormat, width, height, false);
@@ -97,7 +106,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, bgfx:
 RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const string& name, const int width, const int height, const colorFormat format, bool with_depth, int nMSAASamples, const char* failureMessage, RenderTarget* sharedDepth, bool writeOnly)
    : m_name(name)
    , m_type(type)
-   , m_nLayers(type == RT_DEFAULT ? 1 : type == RT_CUBEMAP ? 6 : 2)
+   , m_nLayers(type == SurfaceType::RT_DEFAULT ? 1
+           : type == SurfaceType::RT_CUBEMAP   ? 6
+                                               : 2)
    , m_rd(rd)
    , m_is_back_buffer(false)
    , m_format(format)
@@ -109,89 +120,146 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    , m_writeOnly(writeOnly)
 {
    assert(nMSAASamples >= 1);
-   assert(type != RT_CUBEMAP || nMSAASamples == 1); // Cubemap render target do not support multisampling
+   assert(type != SurfaceType::RT_CUBEMAP || nMSAASamples == 1); // Cubemap render target do not support multisampling
 
    m_color_sampler = nullptr;
    m_depth_sampler = nullptr;
 
 #if defined(ENABLE_BGFX)
-   bgfx::TextureFormat::Enum fmt;
-   uint64_t msaaFlags;
-   if (nMSAASamples > 8)
-      msaaFlags = BGFX_TEXTURE_RT_MSAA_X16;
-   else if (nMSAASamples > 4)
-      msaaFlags = BGFX_TEXTURE_RT_MSAA_X8;
-   else if (nMSAASamples > 2)
-      msaaFlags = BGFX_TEXTURE_RT_MSAA_X4;
-   else if (nMSAASamples > 1)
-      msaaFlags = BGFX_TEXTURE_RT_MSAA_X2;
-   else
-      msaaFlags = BGFX_TEXTURE_RT;
-   // FIXME BGFX add support for MSAA (not that obvious: resolving by blitting is not supported by bgfx, depth attachment must be write only... see https://github.com/bkaradzic/bgfx/issues/2862)
-   msaaFlags = BGFX_TEXTURE_RT;
-   // FIXME most render target are not blit destination and are only used as write target (then GPU sampling, no readback) => BGFX_TEXTURE_READ_BACK
    // EXPERIMENTAL (ExperimentalRendererOpt): for targets flagged writeOnly (only written then sampled, never a blit/copy
    // destination) drop BGFX_TEXTURE_BLIT_DST so the tiler can keep the attachment framebuffer-compressed (UBWC on Adreno /
    // AFBC on Mali). Gated on the device flag so it can be A/B tested; default path keeps BLIT_DST (current behavior).
    const bool dropBlitDst = m_writeOnly && m_rd->m_experimentalRendererOpt;
-   const uint64_t colorFlags = (dropBlitDst ? 0ull : BGFX_TEXTURE_BLIT_DST) | msaaFlags;
-   const uint64_t depthFlags = (dropBlitDst ? 0ull : BGFX_TEXTURE_BLIT_DST) | msaaFlags /* MSAA depth buffer must be write only | BGFX_TEXTURE_RT_WRITE_ONLY */;
+   uint64_t texFlags;
+   switch (nMSAASamples)
+   {
+   case 2: texFlags = BGFX_TEXTURE_RT_MSAA_X2; break;
+   case 4: texFlags = BGFX_TEXTURE_RT_MSAA_X4; break;
+   case 8: texFlags = BGFX_TEXTURE_RT_MSAA_X8; break;
+   case 16: texFlags = BGFX_TEXTURE_RT_MSAA_X16; break;
+   // FIXME most render target are not blit destination and are only used as write target then GPU sampling
+   default: texFlags = BGFX_TEXTURE_RT | (dropBlitDst ? 0ull : BGFX_TEXTURE_BLIT_DST); break;
+   }
+   bgfx::TextureFormat::Enum m_colorFormat;
    switch (format)
    {
-   case colorFormat::RED16F: fmt = bgfx::TextureFormat::R16F; break;
-   case colorFormat::RG16F: fmt = bgfx::TextureFormat::RG16F; break;
-   case colorFormat::RGB16F: fmt = bgfx::TextureFormat::RGBA16F; break;
-   case colorFormat::RGBA16F: fmt = bgfx::TextureFormat::RGBA16F; break;
-   case colorFormat::RGB5: fmt = bgfx::TextureFormat::RGB5A1; break;
-   case colorFormat::RGB8: fmt = bgfx::TextureFormat::RGB8; break;
-   case colorFormat::RGB10: fmt = bgfx::TextureFormat::RGB10A2; break;
-   case colorFormat::RGBA8: fmt = bgfx::TextureFormat::RGBA8; break;
-   case colorFormat::RGBA10: fmt = bgfx::TextureFormat::RGB10A2; break;
-   case colorFormat::GREY8: fmt = bgfx::TextureFormat::R8; break;
+   case colorFormat::RED16F: m_colorFormat = bgfx::TextureFormat::R16F; break;
+   case colorFormat::RG16F: m_colorFormat = bgfx::TextureFormat::RG16F; break;
+#ifdef __ANDROID__
+   case colorFormat::RGB16F: m_colorFormat = bgfx::TextureFormat::RG11B10F; break;
+#else
+   case colorFormat::RGB16F: m_colorFormat = bgfx::TextureFormat::RGBA16F; break;
+#endif
+   case colorFormat::RGBA16F: m_colorFormat = bgfx::TextureFormat::RGBA16F; break;
+   case colorFormat::RGB32F: m_colorFormat = bgfx::TextureFormat::RGBA32F; break;
+   case colorFormat::RGBA32F: m_colorFormat = bgfx::TextureFormat::RGBA32F; break;
+   case colorFormat::RGB5: m_colorFormat = bgfx::TextureFormat::RGB5A1; break;
+   case colorFormat::RGB8: m_colorFormat = bgfx::TextureFormat::RGB8; break;
+   case colorFormat::RGB10: m_colorFormat = bgfx::TextureFormat::RGB10A2; break;
+   case colorFormat::RGBA8: m_colorFormat = bgfx::TextureFormat::RGBA8; break;
+   case colorFormat::RGBA10: m_colorFormat = bgfx::TextureFormat::RGB10A2; break;
+   case colorFormat::GREY8: m_colorFormat = bgfx::TextureFormat::R8; break;
    default: assert(false); // Unsupported texture format 
    }
-   m_color_tex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, fmt, colorFlags);
-   m_color_sampler = std::make_shared<Sampler>(m_rd, name + ".Color", m_type, m_color_tex, fmt, m_width, m_height, false);
+   m_color_tex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, m_colorFormat, texFlags);
+   m_color_sampler = std::make_shared<Sampler>(m_rd, name + ".Color", m_type, m_color_tex, m_colorFormat, m_width, m_height, false);
 
    if (m_shared_depth)
    {
+      assert(!IsMSAA());
+      m_depthFormat = sharedDepth->m_depthFormat;
       m_depth_tex = sharedDepth->m_depth_tex;
       m_depth_sampler = sharedDepth->m_depth_sampler;
    }
    else if (with_depth)
    {
-      bgfx::TextureFormat::Enum depthFormat = bgfx::TextureFormat::D24;
+      m_depthFormat = bgfx::TextureFormat::D32F;
       #ifdef ENABLE_XR
       // For OpenXR, we need to be able to copy from the render depth buffer to the swapchain's depth buffer.
       // TODO we should use directly the vr's swapchain depth buffer instead of creating a compatible one to avoid the blit
       if (g_pplayer->m_vrDevice)
-         depthFormat = g_pplayer->m_vrDevice->GetDepthFormat();
+         m_depthFormat = g_pplayer->m_vrDevice->GetDepthFormat();
       #endif
-      m_depth_tex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, depthFormat, depthFlags);
-      m_depth_sampler = std::make_shared<Sampler>(m_rd, name + ".Depth", m_type, m_depth_tex, depthFormat, m_width, m_height, false);
+      if (IsMSAA())
+      {
+         m_msaaResolveDepthTex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, m_depthFormat, texFlags | BGFX_TEXTURE_MSAA_SAMPLE);
+         m_msaa_depth_sampler = std::make_shared<Sampler>(m_rd, name + ".MSAADepth", m_type, m_msaaResolveDepthTex, m_depthFormat, m_width, m_height, false);
+         // Create a non-MSAA texture to resolve the MSAA depth buffer into. Note that BGFX is inconsistent regarding depth buffer resolve: OpenGL will resolve it while other platforms don't.
+         m_depth_tex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, m_depthFormat, BGFX_TEXTURE_RT);
+         m_depth_sampler = std::make_shared<Sampler>(m_rd, name + ".Depth", m_type, m_depth_tex, m_depthFormat, m_width, m_height, false);
+         m_depth_sampler->m_msaaDepthResolve = this;
+      }
+      else
+      {
+         m_depth_tex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, m_depthFormat, texFlags);
+         m_depth_sampler = std::make_shared<Sampler>(m_rd, name + ".Depth", m_type, m_depth_tex, m_depthFormat, m_width, m_height, false);
+      }
    }
 
-   if (with_depth)
-   {
-      bgfx::Attachment colorAttachment, depthAttachment;
-      colorAttachment.init(m_color_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_RESOLVE_AUTO_GEN_MIPS);
-      depthAttachment.init(m_depth_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_RESOLVE_AUTO_GEN_MIPS);
-      const bgfx::Attachment attachments[] = { colorAttachment, depthAttachment };
-      m_framebuffer = bgfx::createFrameBuffer(2, attachments);
-   }
-   else
    {
       bgfx::Attachment colorAttachment;
-      colorAttachment.init(m_color_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_RESOLVE_AUTO_GEN_MIPS);
-      m_framebuffer = bgfx::createFrameBuffer(1, &colorAttachment);
+      if (with_depth)
+      {
+         bgfx::Attachment depthAttachment;
+         colorAttachment.init(m_color_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_ATTACHMENT_NONE);
+         depthAttachment.init(IsMSAA() ? m_msaaResolveDepthTex : m_depth_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_ATTACHMENT_NONE);
+         const std::array<bgfx::Attachment, 2> attachments { colorAttachment, depthAttachment };
+         m_framebuffer = bgfx::createFrameBuffer(2, attachments.data());
+         if (IsMSAA())
+         {
+            // A color attachment is needed alongside the depth attachment because bgfx skips binding the pixel shader for depth-only framebuffers (shadow map optimization).
+            // A dedicated non-MSAA color texture is used since m_color_tex is MSAA and all framebuffer attachments must have matching sample counts.
+            m_msaaDepthResolveColorTex = bgfx::createTexture2D(m_width, m_height, false, m_nLayers, bgfx::TextureFormat::R8, BGFX_TEXTURE_RT);
+            bgfx::Attachment resolveColorAttachment;
+            resolveColorAttachment.init(m_msaaDepthResolveColorTex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_ATTACHMENT_NONE);
+            bgfx::Attachment resolveDepthAttachment;
+            resolveDepthAttachment.init(m_depth_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_ATTACHMENT_NONE);
+            const std::array<bgfx::Attachment, 2> attachments { resolveColorAttachment, resolveDepthAttachment };
+            m_msaaDepthResolveFramebuffer = bgfx::createFrameBuffer(2, attachments.data());
+         }
+      }
+      else
+      {
+         colorAttachment.init(m_color_tex, bgfx::Access::Write, 0, m_nLayers, 0, BGFX_ATTACHMENT_NONE);
+         m_framebuffer = bgfx::createFrameBuffer(1, &colorAttachment);
+      }
+      if (!bgfx::isValid(m_framebuffer))
+      {
+         PLOGE << failureMessage;
+         PLOGE << "Failed to create render target";
+         exit(-1);
+      }
+      bgfx::setName(m_framebuffer, name.c_str());
    }
-   if (!bgfx::isValid(m_framebuffer))
+
+   // Create ancillary framebuffers to be able to blit & render from/to the other layers
+   if (m_nLayers > 1)
    {
-      PLOGE << failureMessage;
-      PLOGE << "Failed to create render target";
-      exit(-1);
+      for (uint16_t i = 0; i < static_cast<uint16_t>(m_nLayers); i++)
+      {
+         bgfx::Attachment colorAttachment;
+         if (with_depth)
+         {
+            bgfx::Attachment depthAttachment;
+            colorAttachment.init(m_color_tex, bgfx::Access::Write, i, 1, 0, BGFX_ATTACHMENT_NONE);
+            depthAttachment.init(IsMSAA() ? m_msaaResolveDepthTex : m_depth_tex, bgfx::Access::Write, i, 1, 0, BGFX_ATTACHMENT_NONE);
+            const std::array<bgfx::Attachment, 2> attachments { colorAttachment, depthAttachment };
+            m_framebuffer_layers[i] = bgfx::createFrameBuffer(2, attachments.data());
+         }
+         else
+         {
+            colorAttachment.init(m_color_tex, bgfx::Access::Write, i, 1, 0, BGFX_ATTACHMENT_NONE);
+            m_framebuffer_layers[i] = bgfx::createFrameBuffer(1, &colorAttachment);
+         }
+         if (!bgfx::isValid(m_framebuffer_layers[i]))
+         {
+            PLOGE << failureMessage;
+            PLOGE << "Failed to create render target";
+            exit(-1);
+         }
+         bgfx::setName(m_framebuffer_layers[i], std::format("{}.Layer{}", name, i).c_str());
+      }
    }
-   bgfx::setName(m_framebuffer, name.c_str());
 
 #elif defined(ENABLE_OPENGL)
    const GLuint col_type = ((format == RGBA32F) || (format == RGB32F)) ? GL_FLOAT : ((format == RGB16F) || (format == RGBA16F)) ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
@@ -232,10 +300,12 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    glActiveTexture(GL_TEXTURE0 + tex_unit->unit);
 
 #ifndef __OPENGLES__
-   m_texTarget = nMSAASamples > 1 ? ((type == RT_DEFAULT) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D_MULTISAMPLE_ARRAY)
-                                  : ((type == RT_DEFAULT) ? GL_TEXTURE_2D : type == RT_STEREO ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_CUBE_MAP);
+   m_texTarget = nMSAASamples > 1 ? ((type == SurfaceType::RT_DEFAULT) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D_MULTISAMPLE_ARRAY)
+                                  : ((type == SurfaceType::RT_DEFAULT)     ? GL_TEXTURE_2D
+                                          : type == SurfaceType::RT_STEREO ? GL_TEXTURE_2D_ARRAY
+                                                                           : GL_TEXTURE_CUBE_MAP);
 #else
-   m_texTarget = (type == RT_DEFAULT ? GL_TEXTURE_2D : type == RT_STEREO ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_CUBE_MAP);
+   m_texTarget = (type == SurfaceType::RT_DEFAULT ? GL_TEXTURE_2D : type == SurfaceType::RT_STEREO ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_CUBE_MAP);
 #endif
 
    if (nMSAASamples > 1)
@@ -247,9 +317,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
       glTexParameteri(m_texTarget, GL_TEXTURE_MAX_LEVEL, 0);
       switch (m_type)
       {
-      case RT_DEFAULT: glTexImage2DMultisample(m_texTarget, nMSAASamples, format, width, height, GL_FALSE); break;
-      case RT_STEREO: glTexImage3DMultisample(m_texTarget, nMSAASamples, format, width, height, 2, GL_FALSE); break;
-      case RT_CUBEMAP: assert(false); break;
+      case SurfaceType::RT_DEFAULT: glTexImage2DMultisample(m_texTarget, nMSAASamples, format, width, height, GL_FALSE); break;
+      case SurfaceType::RT_STEREO: glTexImage3DMultisample(m_texTarget, nMSAASamples, format, width, height, 2, GL_FALSE); break;
+      case SurfaceType::RT_CUBEMAP: assert(false); break;
       }
       glBindTexture(m_texTarget, 0);
 #ifndef __OPENGLES__
@@ -267,9 +337,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
             glTexParameteri(m_texTarget, GL_TEXTURE_MAX_LEVEL, 0);
             switch (m_type)
             {
-            case RT_DEFAULT: glTexImage2DMultisample(m_texTarget, nMSAASamples, GL_DEPTH_COMPONENT, width, height, GL_FALSE); break;
-            case RT_STEREO: glTexImage3DMultisample(m_texTarget, nMSAASamples, GL_DEPTH_COMPONENT, width, height, 2, GL_FALSE); break;
-            case RT_CUBEMAP: assert(false); break;
+            case SurfaceType::RT_DEFAULT: glTexImage2DMultisample(m_texTarget, nMSAASamples, GL_DEPTH_COMPONENT, width, height, GL_FALSE); break;
+            case SurfaceType::RT_STEREO: glTexImage3DMultisample(m_texTarget, nMSAASamples, GL_DEPTH_COMPONENT, width, height, 2, GL_FALSE); break;
+            case SurfaceType::RT_CUBEMAP: assert(false); break;
             }
             glBindTexture(m_texTarget, 0);
          }
@@ -285,9 +355,9 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
       glTexParameteri(m_texTarget, GL_TEXTURE_MAX_LEVEL, 0);
       switch (m_type)
       {
-      case RT_DEFAULT: glTexImage2D(m_texTarget, 0, format, width, height, 0, col_format, col_type, nullptr); break;
-      case RT_STEREO: glTexImage3D(m_texTarget, 0, format, width, height, 2, 0, col_format, col_type, nullptr); break;
-      case RT_CUBEMAP:
+      case SurfaceType::RT_DEFAULT: glTexImage2D(m_texTarget, 0, format, width, height, 0, col_format, col_type, nullptr); break;
+      case SurfaceType::RT_STEREO: glTexImage3D(m_texTarget, 0, format, width, height, 2, 0, col_format, col_type, nullptr); break;
+      case SurfaceType::RT_CUBEMAP:
          for (int i = 0; i < 6; i++)
             glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, format, width, height, 0, col_format, col_type, nullptr);
          break;
@@ -319,12 +389,12 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
             switch (m_type)
             {
 #ifndef __OPENGLES__
-            case RT_DEFAULT: glTexImage2D(m_texTarget, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
+            case SurfaceType::RT_DEFAULT: glTexImage2D(m_texTarget, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
 #else
-            case RT_DEFAULT: glTexImage2D(m_texTarget, 0, GL_DEPTH_COMPONENT16, width, height, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
+            case SurfaceType::RT_DEFAULT: glTexImage2D(m_texTarget, 0, GL_DEPTH_COMPONENT16, width, height, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
 #endif
-            case RT_STEREO: glTexImage3D(m_texTarget, 0, GL_DEPTH_COMPONENT, width, height, 2, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
-            case RT_CUBEMAP:
+            case SurfaceType::RT_STEREO: glTexImage3D(m_texTarget, 0, GL_DEPTH_COMPONENT, width, height, 2, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr); break;
+            case SurfaceType::RT_CUBEMAP:
                for (int i = 0; i < 6; i++)
                   glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT, width, height, 0, GL_DEPTH_COMPONENT, internalFormat, nullptr);
                break;
@@ -371,7 +441,6 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
    const int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
    if (status != GL_FRAMEBUFFER_COMPLETE)
    {
-      char msg[256];
       const char* errorCode;
       switch (status)
       {
@@ -389,7 +458,7 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
 #endif
       default: errorCode = "unknown"; break;
       }
-      sprintf_s(msg, sizeof(msg), "glCheckFramebufferStatus returned 0x%08X %s", glCheckFramebufferStatus(m_framebuffer), errorCode);
+      const string msg = std::format("glCheckFramebufferStatus returned {:#010X} {}", (unsigned int)glCheckFramebufferStatus(m_framebuffer), errorCode);
       ShowError(msg);
 
 #ifndef __OPENGLES__
@@ -430,7 +499,7 @@ RenderTarget::RenderTarget(RenderDevice* const rd, const SurfaceType type, const
 #endif
 
 #elif defined(ENABLE_DX9)
-   assert(m_type == RT_DEFAULT); // Layered rendering is not yet supported by the DX9 backend
+   assert(m_type == SurfaceType::RT_DEFAULT); // Layered rendering is not yet supported by the DX9 backend
    m_color_tex = nullptr;
    m_color_surface = nullptr;
    m_depth_tex = nullptr;
@@ -490,10 +559,20 @@ RenderTarget::~RenderTarget()
 #if defined(ENABLE_BGFX)
    if (bgfx::isValid(m_framebuffer))
       bgfx::destroy(m_framebuffer);
+   for (uint16_t i = 0; i < static_cast<uint16_t>(m_nLayers); i++)
+      if (bgfx::isValid(m_framebuffer_layers[i]))
+         bgfx::destroy(m_framebuffer_layers[i]);
    if (bgfx::isValid(m_color_tex))
       bgfx::destroy(m_color_tex);
-   if (bgfx::isValid(m_depth_tex))
+   if (!m_shared_depth && bgfx::isValid(m_depth_tex))
       bgfx::destroy(m_depth_tex);
+
+   if (bgfx::isValid(m_msaaDepthResolveFramebuffer))
+      bgfx::destroy(m_msaaDepthResolveFramebuffer);
+   if (bgfx::isValid(m_msaaDepthResolveColorTex))
+      bgfx::destroy(m_msaaDepthResolveColorTex);
+   if (bgfx::isValid(m_msaaResolveDepthTex))
+      bgfx::destroy(m_msaaResolveDepthTex);
 
 #elif defined(ENABLE_OPENGL)
    glDeleteTextures(1, &m_color_tex);
@@ -567,15 +646,40 @@ void RenderTarget::CopyTo(RenderTarget* const dest, const bool copyColor, const 
    assert(srcLayer != -1 || dstLayer != -1 || m_nLayers == dest->m_nLayers); // Either we copy a single layer or the full set in which case they must match
 
 #if defined(ENABLE_BGFX)
+   assert(dest->m_nMSAASamples == 1);
    if (w1 == w2 && h1 == h2)
    {
       // BGFX does not support blitting multiple layers at once on all target platform (supported on Vulkan, not supported on DX11, untested for the other backends)
+      bgfx::TextureRegion src;
+      bgfx::TextureRegion dst;
       for (int z = 0; z < nLayers; z++)
       {
          if (copyColor)
-            bgfx::blit(m_rd->m_activeViewId, dest->m_color_tex, 0, px2, py2, pz2 + z, m_color_tex, 0, px1, py1, pz1 + z, w1, h1, 1);
+         {
+            src.init(m_color_tex, px1, py1, w1, h1);
+            src.mip = 0;
+            src.z = pz1 + z;
+            src.depth = 1;
+            dst.init(dest->m_color_tex, px2, py2, w2, h2);
+            dst.mip = 0;
+            dst.z = pz2 + z;
+            dst.depth = 1;
+            bgfx::blit(m_rd->m_activeViewId, dst, src);
+         }
          if (m_has_depth && dest->m_has_depth && copyDepth)
-            bgfx::blit(m_rd->m_activeViewId, dest->m_depth_tex, 0, px2, py2, pz2 + z, m_depth_tex, 0, px1, py1, pz1 + z, w1, h1, 1);
+         {
+            if (m_nMSAASamples > 1)
+               ResolveMSAADepth();
+            src.init(m_depth_tex, px1, py1, w1, h1);
+            src.mip = 0;
+            src.z = pz1 + z;
+            src.depth = 1;
+            dst.init(dest->m_depth_tex, px2, py2, w2, h2);
+            dst.mip = 0;
+            dst.z = pz2 + z;
+            dst.depth = 1;
+            bgfx::blit(m_rd->m_activeViewId, dst, src);
+         }
       }
    }
    else
@@ -597,10 +701,10 @@ void RenderTarget::CopyTo(RenderTarget* const dest, const bool copyColor, const 
          { px2, py2, 0.0f, qx2, qy2 }
       };
       Shader* shader = m_rd->m_FBShader;
-      shader->SetTechnique(SHADER_TECHNIQUE_fb_mirror);
-      shader->SetVector(SHADER_w_h_height, 1.f, 1.f, 1.f, 1.f);
-      shader->SetInt(SHADER_layer, srcLayer);
-      shader->SetTexture(SHADER_tex_fb_unfiltered, GetColorSampler());
+      shader->SetTechnique(ShaderTechnique::fb_mirror);
+      shader->SetVector(ShaderUniform::w_h_height, 1.f, 1.f, 1.f, 0.f);
+      shader->SetInt(ShaderUniform::layer, srcLayer);
+      shader->SetTexture(ShaderUniform::tex_fb_unfiltered, GetColorSampler());
       shader->Begin();
       bgfx::TransientVertexBuffer tvb; // TODO only allocate one per frame instead of one per CopyTo
       bgfx::allocTransientVertexBuffer(&tvb, 4, *m_rd->m_pVertexTexelDeclaration);
@@ -660,7 +764,6 @@ void RenderTarget::Activate(const int layer)
    current_render_layer = layer;
 
    #if defined(ENABLE_BGFX)
-   assert(layer == -1 || m_nLayers == 1);
    m_rd->NextView();
    #ifdef _DEBUG
    bgfx::setViewName(m_rd->m_activeViewId, m_name.c_str());
@@ -668,6 +771,7 @@ void RenderTarget::Activate(const int layer)
    // Either bind all layers for instanced rendering or the only requested one for normal rendering (one pass per layer)
    bgfx::setViewFrameBuffer(m_rd->m_activeViewId, (layer == -1 || m_nLayers == 1) ? m_framebuffer : m_framebuffer_layers[layer]);
    bgfx::setViewRect(m_rd->m_activeViewId, 0, 0, m_width, m_height);
+   m_needResolve = true;
 
    #elif defined(ENABLE_OPENGL)
    if (m_color_sampler)
@@ -694,3 +798,39 @@ void RenderTarget::Activate(const int layer)
    }
    #endif
 }
+
+#ifdef ENABLE_BGFX
+void RenderTarget::ResolveMSAADepth()
+{
+   if (!m_needResolve)
+      return;
+
+   // Activate this target, but on the resolved depth buffer, not the MSAA one
+   assert(current_render_target != this);
+   assert(bgfx::isValid(m_msaaDepthResolveFramebuffer));
+   RenderTarget* previousRenderTarget = current_render_target;
+   int previousRenderLayer = current_render_layer;
+   current_render_target = nullptr;
+   current_render_layer = -1;
+   m_rd->NextView();
+   bgfx::setViewName(m_rd->m_activeViewId, (m_name + ".Resolve").c_str());
+   bgfx::setViewFrameBuffer(m_rd->m_activeViewId, m_msaaDepthResolveFramebuffer);
+   bgfx::setViewRect(m_rd->m_activeViewId, 0, 0, m_width, m_height);
+
+   auto quad = m_rd->GetQuadMeshBuffer();
+   vec4 layer(0.f, 0.f, 0.f, 0.f);
+   bgfx::setUniform(m_rd->m_FBShader->GetUniformHandle(ShaderUniform::layer), &layer.x);
+   bgfx::setTexture(0, m_rd->m_FBShader->GetUniformHandle(ShaderUniform::tex_depth), m_msaaResolveDepthTex, BGFX_SAMPLER_NONE);
+   quad->bind();
+   if (quad->m_vb->m_isStatic)
+      bgfx::setVertexBuffer(0, quad->m_vb->GetStaticBuffer(), quad->m_vb->GetVertexOffset(), 4);
+   else
+      bgfx::setVertexBuffer(0, quad->m_vb->GetDynamicBuffer(), quad->m_vb->GetVertexOffset(), 4);
+   bgfx::setInstanceCount(m_nLayers);
+   bgfx::setState(BGFX_STATE_PT_TRISTRIP | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_ALWAYS);
+   bgfx::submit(m_rd->m_activeViewId, m_rd->m_FBShader->GetProgramHandle(ShaderTechnique::fb_resolve_depth_msaa));
+
+   previousRenderTarget->Activate(previousRenderLayer);
+   m_needResolve = false;
+}
+#endif

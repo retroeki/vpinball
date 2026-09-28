@@ -1,9 +1,14 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "PerfUI.h"
+
+#include "core/VPApp.h"
+#include "parts/Collection.h"
+#include "parts/flipper.h"
+#include "renderer/Renderer.h"
 #include "utils/wintimer.h"
+
 #include "imgui/imgui.h"
 #include "imgui/imgui_internal.h"
 #include "implot/implot.h"
@@ -13,12 +18,13 @@ PerfUI::PerfUI(Player *const player)
    : m_player(player)
 {
    ImPlot::CreateContext();
-   m_showPerf = (PerfMode)g_pvp->m_settings.GetPlayer_ShowFPS();
+   m_showPerf = (PerfMode)g_settingsService.GetAppSettings().GetPlayer_ShowFPS();
 }
 
 PerfUI::~PerfUI()
 {
-   g_pvp->m_settings.SetPlayer_ShowFPS(m_showPerf, false);
+   g_settingsService.GetAppSettings().SetPlayer_ShowFPS(m_showPerf, false);
+   g_settingsService.GetAppSettings().Save();
    ImPlot::DestroyContext();
 }
 
@@ -29,6 +35,8 @@ void PerfUI::NextPerfMode()
    {
       m_player->InitFPS();
       m_player->m_logicProfiler.EnableWorstFrameLogging(true);
+      if (m_player->m_renderProfiler != &m_player->m_logicProfiler)
+         m_player->m_renderProfiler->EnableWorstFrameLogging(true);
    }
    if (m_showPerf == PerfMode::PM_DISABLED)
       m_player->m_renderer->m_renderDevice->LogNextFrame();
@@ -44,7 +52,7 @@ void PerfUI::Update()
    RenderFPS();
 
    if (m_showPerf == PerfMode::PM_STATS)
-      RenderStats();
+      RenderPlots();
 
    ImGui::PopFont();
 }
@@ -54,132 +62,270 @@ void PerfUI::RenderFPS()
    const ImGuiIO &io = ImGui::GetIO();
    constexpr ImGuiWindowFlags window_flags
       = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.5f);
    if (m_player->m_vrDevice == nullptr)
       ImGui::SetNextWindowPos(ImVec2(8.f * m_uiScale, io.DisplaySize.y - 8.f * m_uiScale), 0, ImVec2(0.f, 1.f));
    else if (m_showPerf == PerfMode::PM_STATS) // VR with stats
       ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.25f, io.DisplaySize.y * 0.35f), 0, ImVec2(0.f, 0.f));
    else // VR without stats
       ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.35f), 0, ImVec2(0.5f, 0.f));
-
-
+   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.666f);
    ImGui::Begin("FPS", nullptr, window_flags);
 
-   // Frame sequence graph
+   // Frame sequence graph & stats
    if (m_showPerf == PerfMode::PM_STATS)
+      RenderStats();
+
+   // Base FPS & latency feedback
+   if (m_showPerf == PerfMode::PM_FPS)
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2());
+
+   // Dot for sync feedback
+   if (m_player->GetVideoSyncMode() != VideoSyncMode::VSM_NONE)
    {
-      ImGuiWindow *const window = ImGui::GetCurrentWindow();
-      static const string infoLabels[] = {
-         "Misc"s,
-         "Script"s,
-         "Physics"s,
-         "Sleep"s,
-         "Prepare Frame"s,
-         "Custom 1"s,
-         "Custom 2"s,
-         "Custom 3"s,
-         // Render thread
-         "Render Wait"s,
-         "Render Submit"s,
-         "Render Flip"s,
-         "Render Sleep"s,
-      };
-      static const string infoLabels2[] = {
-         "Misc"s,
-         "Script"s,
-         "Physics"s,
-         "Sleep"s,
-         "(Prepare frame after next, including script calls)"s,
-         "Custom 1"s,
-         "Custom 2"s,
-         "Custom 3"s,
-         // Render thread
-         "(Wait for logic thread to prepare a frame)"s,
-         "(Submit to driver next frame)"s,
-         "(Wait for GPU and display sync to finish current frame)"s,
-         "(Sleep to synchronise on user selected FPS)"s,
-      };
-      static constexpr FrameProfiler::ProfileSection sections[] = {
-         FrameProfiler::PROFILE_PREPARE_FRAME,
-         FrameProfiler::PROFILE_RENDER_WAIT,
-         FrameProfiler::PROFILE_RENDER_SUBMIT,
-         FrameProfiler::PROFILE_RENDER_FLIP,
-         FrameProfiler::PROFILE_RENDER_SLEEP,
-         FrameProfiler::PROFILE_RENDER_SUBMIT, // For BGFX, since BGFX performs CPU->GPU submit after flip
-      };
-      static constexpr ImU32 cols[] = {
-         IM_COL32(128, 255, 128, 255), // Prepare
-         IM_COL32(255,   0,   0, 255), // Wait for Render Frame
-         IM_COL32(  0, 128, 255, 255), // Submit (VPX->BGFX)
-         IM_COL32(  0, 192, 192, 255), // Flip (wait for GPU and sync on display)
-         IM_COL32(128, 128, 128, 255), // Sleep
-         IM_COL32(  0, 128, 255, 255), // Submit (BGFX->Driver)
-      };
-      //const ImU32 col_base = ImGui::GetColorU32(ImGuiCol_PlotHistogram) & 0x77FFFFFF;
-      //const ImU32 col_hovered = ImGui::GetColorU32(ImGuiCol_PlotHistogramHovered) & 0x77FFFFFF;
-      //const ImU32 col_outline_base = ImGui::GetColorU32(ImGuiCol_PlotHistogram) & 0x7FFFFFFF;
-      //const ImU32 col_outline_hovered = ImGui::GetColorU32(ImGuiCol_PlotHistogramHovered) & 0x7FFFFFFF;
-      const ImGuiContext &g = *GImGui;
-      const ImGuiStyle &style = g.Style;
-      ImVec2 graph_size;
-      graph_size.x = ImGui::CalcItemWidth();
-      const auto blockHeight = ImGui::GetTextLineHeight() + (style.FramePadding.y * 2);
-      graph_size.y = (style.FramePadding.y * 1) + blockHeight * 1;
-      #ifdef ENABLE_BGFX
-         graph_size.y += blockHeight;
+      ImU32 color = IM_COL32(0, 255, 0, 128); // Default to green when at target refresh rate
+      #ifndef ENABLE_BGFX
+      if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && m_player->m_lastFrameSyncOnFPS)
+         color = IM_COL32(0, 0, 255, 128); // Blue dot when running at app regulated speed (not hardware)
+      else if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && !m_player->m_lastFrameSyncOnVBlank)
+         color = IM_COL32(255, 0, 0, 128); // Red dot when running slower than expected
+      else
       #endif
-      const ImRect frame_bb(window->DC.CursorPos, window->DC.CursorPos + graph_size);
-      const ImRect inner_bb(frame_bb.Min + style.FramePadding, frame_bb.Max - style.FramePadding);
-      const ImRect total_bb(frame_bb.Min, frame_bb.Max);
-      ImGui::ItemSize(total_bb, style.FramePadding.y);
-      if (ImGui::ItemAdd(total_bb, 0, &frame_bb))
-      {
-         ImGui::RenderFrame(frame_bb.Min, frame_bb.Max, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.5f), true, style.FrameRounding);
-         uint64_t minTS = UINT64_MAX;
-         //uint64_t maxTS = 0;
-         for (int i = 0; i < 5; i++)
-         {
-            FrameProfiler *profiler = i == 0 ? &m_player->m_logicProfiler : m_player->m_renderProfiler;
-            if (profiler->GetPrevStart(sections[i]) == 0)
-               continue;
-            minTS = std::min(minTS, profiler->GetPrevStart(sections[i]));
-            //maxTS = max(maxTS, profiler->GetPrevEnd(sections[i]));
-         }
-         const float elapse = static_cast<float>(m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME)) * 1.5f;
-         const float width = inner_bb.Max.x - inner_bb.Min.x;
-         for (int i = 0; i < 6; i++)
-         {
-            const FrameProfiler * const profiler = i == 0 ? &m_player->m_logicProfiler : m_player->m_renderProfiler;
-            if (profiler->GetPrevStart(sections[i]) == 0)
-               continue;
-            float start = static_cast<float>(profiler->GetPrevStart(sections[i]) - minTS) / elapse;
-            float end = static_cast<float>(profiler->GetPrevEnd(sections[i]) - minTS) / elapse;
-            #ifdef ENABLE_BGFX
-            const float height = blockHeight * (i == 0 ? 1.f : 0.f) - style.FramePadding.y;
-            if (i == 5)
-            {
-               // For BGFX submit is done in 2 parts: VPX->BGFX, then BGFX->GPU after flip
-               const uint64_t submit1 = profiler->GetPrevEnd(FrameProfiler::PROFILE_RENDER_SUBMIT) - profiler->GetPrevStart(FrameProfiler::PROFILE_RENDER_SUBMIT);
-               const uint64_t submit2 = profiler->GetPrev(FrameProfiler::PROFILE_RENDER_SUBMIT) - submit1;
-               start = static_cast<float>(profiler->GetPrevEnd(FrameProfiler::PROFILE_RENDER_FLIP) - minTS) / elapse;
-               end = static_cast<float>(profiler->GetPrevEnd(FrameProfiler::PROFILE_RENDER_FLIP) - minTS + submit2) / elapse;
-            }
-            #else
-            const float height = blockHeight * 0 - style.FramePadding.y;
-            #endif
-            const ImVec2 pos0 = inner_bb.Min + ImVec2(start * width, height);
-            const ImVec2 pos1 = inner_bb.Min + ImVec2(end * width, height + blockHeight * 0.9f);
-            if (ImGui::IsMouseHoveringRect(pos0, pos1))
-               ImGui::SetTooltip("%s: %5.1fms\n%s", infoLabels[sections[i]].c_str(), (end - start) * elapse * 1e-3f, infoLabels2[sections[i]].c_str());
-            window->DrawList->AddRectFilled(pos0, pos1, cols[i]);
-         }
-      }
+      if (m_player->m_renderProfiler->GetPrev(FrameProfiler::PROFILE_FRAME) > m_player->m_renderer->m_renderDevice->GetTargetFrameLength() + 500)
+         color = IM_COL32(255, 0, 0, 128); // Red dot when missing target refresh rate
+      else if (m_player->m_lastFrameSyncOnVBlank)
+         color = IM_COL32(0, 255, 0, 128); // Green when using VSync
+      else
+         color = IM_COL32(0, 192, 255, 128); // Cyan when using sfotware display sync
+      ImGui::GetWindowDrawList()->AddCircleFilled(
+         ImGui::GetCursorScreenPos() + ImVec2(ImGui::GetWindowWidth() - 5.f * m_uiScale - 2.f * ImGui::GetStyle().WindowPadding.x, ImGui::GetTextLineHeight() * 0.5f),
+         5.f * m_uiScale, color);
    }
 
-   // Main frame timing table
-   if ((m_showPerf == PerfMode::PM_STATS) && ImGui::BeginTable("Timings", 3, ImGuiTableFlags_Borders))
+   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.666f);
+   ImGui::BeginChild("FPSText", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+
    {
-      const uint32_t period = m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME);
+      const double frameLength = m_player->m_renderProfiler->GetSlidingAvg(FrameProfiler::PROFILE_FRAME);
+      const ImVec2 renderTextPos = ImGui::GetCursorScreenPos();
+      ImGui::Text("Render: %5.1ffps %4.1fms (%4.1fms)", 1e6 / frameLength, 1e-3 * frameLength, 1e-3 * m_player->m_renderProfiler->GetPrev(FrameProfiler::PROFILE_FRAME));
+   }
+
+   {
+      const ImVec2 inputTextPos = ImGui::GetCursorScreenPos();
+      bool hasFlipperLatency = false;
+      const uint64_t lastLeftFlipChange = m_player->m_pininput.GetInputActions()[m_player->m_pininput.GetLeftFlipperActionId()]->GetLastStateChange();
+      const uint64_t lastRightFlipChange = m_player->m_pininput.GetInputActions()[m_player->m_pininput.GetRightFlipperActionId()]->GetLastStateChange();
+      if (const uint64_t now = usec(); now < lastLeftFlipChange + 1000000ULL && now > lastRightFlipChange + 1000000ULL)
+      {
+         for (const auto part : m_player->m_ptable->GetParts())
+         {
+            if (part->GetItemType() == eItemFlipper)
+            {
+               if (auto flipper = (Flipper *)part; lastLeftFlipChange < flipper->GetLastRotateTime())
+               {
+                  const double prevAcqToAction = 1e-3 * (static_cast<double>(flipper->GetLastRotateTime() - lastLeftFlipChange) + m_player->m_pininput.m_leftFlipperLastChangePollDelay);
+                  const double acqToAction = 1e-3 * static_cast<double>(flipper->GetLastRotateTime() - lastLeftFlipChange);
+                  ImGui::Text("Flipper latency: %3.1f - %3.1fms", acqToAction, prevAcqToAction);
+                  hasFlipperLatency = true;
+                  break;
+               }
+            }
+         }
+      }
+      if (!hasFlipperLatency)
+         ImGui::Text("Input Latency: %4.1fms (%4.1fms max)", 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(false), 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(true));
+      ImGui::SameLine();
+      if (ImGui::IsMouseHoveringRect(inputTextPos, ImGui::GetCursorScreenPos() + ImVec2(0, ImGui::GetTextLineHeight())))
+         ImGui::SetTooltip("'Input Latency' is an evaluation of the average finger to physics latency inside VPX\nIt does not include the polling & processing delay of the input hardware.");
+      ImGui::NewLine();
+   }
+
+   {
+      // Map Android PowerManager.THERMAL_STATUS_* to a short label. -1 = listener hasn't fired yet (non-Android build or pre-listener).
+      const int thermal = RuntimeStats::GetThermalStatus();
+      const char* thermalLabel = "--";
+      switch (thermal)
+      {
+         case 0: thermalLabel = "NONE"; break;
+         case 1: thermalLabel = "LIGHT"; break;
+         case 2: thermalLabel = "MODERATE"; break;
+         case 3: thermalLabel = "SEVERE"; break;
+         case 4: thermalLabel = "CRITICAL"; break;
+         case 5: thermalLabel = "EMERGENCY"; break;
+         case 6: thermalLabel = "SHUTDOWN"; break;
+         default: break;
+      }
+      ImGui::Text("Battery: %4.1fC  Thermal: %s", RuntimeStats::GetBatteryTempC(), thermalLabel);
+      // A/B readout for the experimental renderer optimizations. The flag state labels which run this is; the per-frame
+      // uniform-set count is the direct #2 metric (drops sharply when the per-draw uniform storm is cut, since unchanged
+      // uniforms take the early-out before m_curParameterChanges++). Draw calls are shown for context and should be
+      // identical on/off, confirming the scene matches between the two runs. (#1's effect shows in fps/ms + Battery/Thermal.)
+      const RenderDevice* const rd = m_player->m_renderer->m_renderDevice;
+      ImGui::Text("ExpOpt: %s   Draws: %u   Uniform sets: %u\nPipeline: %u prog-changes  %u state-changes\nDraws: basic %u  light %u  flasher %u  dmd %u  ball %u  other %u\nStaticPP: %s   rebuilt-this-frame: %s",
+         rd->m_experimentalRendererOpt ? "ON" : "OFF",
+         rd->Perf_GetNumDrawCalls(), rd->Perf_GetNumParameterChanges(),
+         rd->Perf_GetNumTechniqueChanges(), rd->Perf_GetNumStateChanges(),
+         rd->m_frameDrawBasic, rd->m_frameDrawLight, rd->m_frameDrawFlasher, rd->m_frameDrawDMD, rd->m_frameDrawBall, rd->m_frameDrawOther,
+         m_player->m_renderer->IsUsingStaticPrepass() ? "ON" : "OFF",
+         m_player->m_renderer->m_frameStaticPrepassRebuilt ? "YES" : "no");
+   }
+
+   ImGui::EndChild();
+   if (m_showPerf == PerfMode::PM_FPS)
+      ImGui::PopStyleVar();
+
+   ImGui::End();
+}
+
+void PerfUI::RenderStats() const
+{
+   // Frame sequence graph
+   ImGuiWindow *const window = ImGui::GetCurrentWindow();
+   static const string infoLabels[] = {
+      "Misc"s,
+      "Script"s,
+      "Physics"s,
+      "Sleep"s,
+      "Prepare Frame"s,
+      "Custom 1"s,
+      "Custom 2"s,
+      "Custom 3"s,
+      // Render thread
+      "Wait for frame"s, // PROFILE_RENDER_WAIT
+      "Wait GPU"s, // PROFILE_RENDER_WAIT_SC
+      #ifdef ENABLE_BGFX
+      "Submit BGFX"s, // PROFILE_RENDER_SUBMIT
+      "Submit GPU"s, // PROFILE_RENDER_FLIP
+      "Render Sleep"s, // PROFILE_RENDER_SLEEP
+      #else
+      "Render Submit"s,
+      "Render Flip"s,
+      "Render Sleep"s, 
+      #endif
+   };
+   static const string infoLabels2[] = {
+      "Misc"s,
+      "Script"s,
+      "Physics"s,
+      "Sleep"s,
+      "(Prepare frame after next, including script calls)"s,
+      "Custom 1"s,
+      "Custom 2"s,
+      "Custom 3"s,
+      // Render thread
+      "(Wait for logic thread to prepare a frame)"s,
+      "(Wait for a free swapchain slot)"s,
+      #ifdef ENABLE_BGFX
+      "(Submit frame from VPX to BGFX)"s,
+      "(Submit frame from BGFX to GPU)"s,
+      "(Sleep to pace frames on chosen FPS)"s,
+      #else
+      "(Submit to driver next frame)"s,
+      "(Wait for GPU and display sync to finish current frame)"s,
+      "(Sleep to synchronise on user selected FPS)"s,
+      #endif
+   };
+   static_assert(std::size(infoLabels) == FrameProfiler::PROFILE_RENDER_SLEEP + 1, "infoLabels[] is out of sync with the ProfileSection enum");
+   static_assert(std::size(infoLabels2) == FrameProfiler::PROFILE_RENDER_SLEEP + 1, "infoLabels2[] is out of sync with the ProfileSection enum");
+   static constexpr FrameProfiler::ProfileSection sections[] = {
+      FrameProfiler::PROFILE_RENDER_SLEEP,
+      FrameProfiler::PROFILE_RENDER_WAIT,
+      FrameProfiler::PROFILE_RENDER_SUBMIT,
+      FrameProfiler::PROFILE_RENDER_FLIP,
+      FrameProfiler::PROFILE_RENDER_WAIT_SC,
+      FrameProfiler::PROFILE_PREPARE_FRAME,
+   };
+   static constexpr ImU32 cols[] = {
+      IM_COL32(128, 128, 128, 255), // Sleep
+      IM_COL32(192,   0,   0, 255), // Wait for Render Frame (red as it is not uspposed ot ever happen)
+      IM_COL32(  0, 128, 255, 255), // Submit (VPX->BGFX)
+      IM_COL32(  0, 192, 192, 255), // Submit (BGFX->Driver)
+      IM_COL32(192, 192, 192, 255), // Wait for Swapchain slot
+      IM_COL32(128, 255, 128, 255), // Prepare
+   };
+   const ImGuiContext &g = *GImGui;
+   const ImGuiStyle &style = g.Style;
+   ImVec2 graph_size;
+   graph_size.x = ImGui::CalcItemWidth();
+   const float blockHeight = ImGui::GetTextLineHeight() * 0.75f;
+   const float lineheight = blockHeight;
+   graph_size.y = (style.FramePadding.y * 1.f) + blockHeight * 1.f; // Logic Thread
+   #ifdef ENABLE_BGFX
+      graph_size.y += blockHeight * 2.f; // Additional Render Thread and GPU info
+   #endif
+   const ImRect frame_bb(window->DC.CursorPos, window->DC.CursorPos + graph_size);
+   const ImRect inner_bb(frame_bb.Min + style.FramePadding, frame_bb.Max - style.FramePadding);
+   const ImRect total_bb(frame_bb.Min, frame_bb.Max);
+   ImGui::ItemSize(total_bb, style.FramePadding.y);
+   if (ImGui::ItemAdd(total_bb, 0, &frame_bb))
+   {
+      ImGui::RenderFrame(frame_bb.Min, frame_bb.Max, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.5f), true, style.FrameRounding);
+         
+      uint64_t minTS = UINT64_MAX;
+      uint64_t maxTS = 0;
+      for (const auto section : sections)
+      {
+         const FrameProfiler *profiler = (section == FrameProfiler::PROFILE_PREPARE_FRAME) ? &m_player->m_logicProfiler : m_player->m_renderProfiler;
+         minTS = (profiler->GetPrevStart(section) == 0) ? minTS : std::min(minTS, profiler->GetPrevStart(section));
+         maxTS = (profiler->GetPrevStart(section) == 0) ? maxTS : std::max(maxTS, profiler->GetPrevEnd(section));
+      }
+
+      // Full scale is expected frame length + 1 display frame (to show when we miss)
+      const float elapse = m_player->IsVR()
+         ? 1.5f * static_cast<float>(m_player->m_renderProfiler->GetAvg(FrameProfiler::PROFILE_FRAME))
+         : static_cast<float>(m_player->m_renderer->m_renderDevice->GetTargetFrameLength()) + static_cast<float>(1000000. / (double)m_player->m_playfieldWnd->GetRefreshRate());
+      const float width = inner_bb.Max.x - inner_bb.Min.x;
+      for (int i = 0; i < std::size(sections); i++)
+      {
+         const FrameProfiler *const profiler = (sections[i] == FrameProfiler::PROFILE_PREPARE_FRAME) ? &m_player->m_logicProfiler : m_player->m_renderProfiler;
+         if (profiler->GetPrevStart(sections[i]) == 0)
+            continue;
+         const float start = static_cast<float>(profiler->GetPrevStart(sections[i]) - minTS) / elapse;
+         const float end = static_cast<float>(profiler->GetPrevEnd(sections[i]) - minTS) / elapse;
+         #ifdef ENABLE_BGFX
+            const float height = ((sections[i] == FrameProfiler::PROFILE_PREPARE_FRAME) ? 0.0f : blockHeight) - style.FramePadding.y;
+         #else
+            const float height = - style.FramePadding.y;
+         #endif
+         const ImVec2 pos0 = inner_bb.Min + ImVec2(start * width, height);
+         const ImVec2 pos1 = inner_bb.Min + ImVec2(end * width, height + lineheight);
+         if (ImGui::IsMouseHoveringRect(pos0, pos1))
+            ImGui::SetTooltip(
+               "%s: %5.1fms\n%s", infoLabels[sections[i]].c_str(), static_cast<float>(profiler->GetPrev(sections[i])) * 1e-3f, infoLabels2[sections[i]].c_str());
+         window->DrawList->AddRectFilled(pos0, pos1, cols[i]);
+      }
+      #ifdef ENABLE_BGFX
+      {
+         const float height = blockHeight * 2.f - style.FramePadding.y;
+         const uint64_t gpuStart = min(m_player->m_renderProfiler->GetPrevEnd(FrameProfiler::PROFILE_RENDER_FLIP),
+            m_player->m_renderProfiler->GetPrevStart(FrameProfiler::PROFILE_RENDER_FLIP) + 300); // 300us is a magic number for the delay between submission start to GPU processing
+         const uint64_t gpuEnd = gpuStart + m_player->m_renderer->m_renderDevice->m_lastGPUFrameLength;
+         {
+            const float start = static_cast<float>(gpuStart - minTS) / elapse;
+            const float end = static_cast<float>(min(gpuEnd, maxTS) - minTS) / elapse;
+            const ImVec2 pos0 = inner_bb.Min + ImVec2(start * width, height);
+            const ImVec2 pos1 = inner_bb.Min + ImVec2(end * width, height + lineheight);
+            window->DrawList->AddRectFilled(pos0, pos1, IM_COL32(255, 128, 128, 255));
+            if (ImGui::IsMouseHoveringRect(pos0, pos1))
+               ImGui::SetTooltip("GPU render: %5.1fms\n(Time spent by the GPU to process frame)", static_cast<float>(gpuEnd - gpuStart) * 1e-3f);
+         }
+         if (gpuEnd > maxTS)
+         {
+            const float end = static_cast<float>(gpuEnd - maxTS) / elapse;
+            const ImVec2 pos0 = inner_bb.Min + ImVec2(0, height);
+            const ImVec2 pos1 = inner_bb.Min + ImVec2(end * width, height + lineheight);
+            window->DrawList->AddRectFilled(pos0, pos1, IM_COL32(255, 128, 128, 255));
+            if (ImGui::IsMouseHoveringRect(pos0, pos1))
+               ImGui::SetTooltip("GPU render: %5.1fms\n(Time spent by the GPU to process frame)", static_cast<float>(gpuEnd - gpuStart) * 1e-3f);
+         }
+      }
+      #endif
+   }
+
+   // Timing table
+   if (ImGui::BeginTable("Timings", 3, ImGuiTableFlags_Borders))
+   {
+      const uint32_t period = m_player->m_renderProfiler->GetPrev(FrameProfiler::PROFILE_FRAME);
       ImGui::TableSetupColumn("##Cat", ImGuiTableColumnFlags_WidthFixed);
       ImGui::TableSetupColumn(m_showAvgFPS ? "Avg Time" : "Time", ImGuiTableColumnFlags_WidthFixed);
       ImGui::TableSetupColumn(m_showAvgFPS ? "Avg Ratio" : "Ratio", ImGuiTableColumnFlags_WidthFixed);
@@ -196,38 +342,50 @@ void PerfUI::RenderFPS()
       }
 
       const int hoveredRow = ImGui::TableGetHoveredRow();
-      int renderRow = 1, logicRow = 1, rowOffset = 0;
+      int renderRow = 1;
+      int logicRow = 1;
+      int rowOffset = 0;
 
       const FrameProfiler* profiler = g_pplayer->m_renderProfiler;
       #ifdef ENABLE_BGFX
          PROF_ROW("Render Thread", FrameProfiler::PROFILE_FRAME)
-         PROF_ROW("> Wait", FrameProfiler::PROFILE_RENDER_WAIT)
+         PROF_ROW("> Wait Frame", FrameProfiler::PROFILE_RENDER_WAIT)
+         PROF_ROW("> VPX -> BGFX", FrameProfiler::PROFILE_RENDER_SUBMIT)
+         PROF_ROW("> BGFX -> GPU", FrameProfiler::PROFILE_RENDER_FLIP)
+         PROF_ROW("> Wait GPU", FrameProfiler::PROFILE_RENDER_WAIT_SC)
+         PROF_ROW("> Sleep", FrameProfiler::PROFILE_RENDER_SLEEP)
          if (hoveredRow == 2)
             ImGui::SetTooltip("Time spent waiting for the CPU to prepare a frame");
          else if (hoveredRow == 3)
-            ImGui::SetTooltip("Time spent submitting frame from VPX to BGFX then from BGFX to GPU");
+            ImGui::SetTooltip("Time spent submiting frame from VPX to BGFX");
          else if (hoveredRow == 4)
-            ImGui::SetTooltip("Time spent sleeping to satisfy user requested framerate");
+            ImGui::SetTooltip("Time spent submiting frame from BGFX to GPU");
          else if (hoveredRow == 5)
-            ImGui::SetTooltip("Time spent waiting for GPU to flip (including VSYNC)");
-         logicRow = 6;
-         rowOffset = 2;
-      #else
-         PROF_ROW("Frame", FrameProfiler::PROFILE_FRAME)
-      #endif
-      PROF_ROW("> Submit", FrameProfiler::PROFILE_RENDER_SUBMIT)
-      PROF_ROW("> Sleep", FrameProfiler::PROFILE_RENDER_SLEEP)
-      PROF_ROW("> Flip", FrameProfiler::PROFILE_RENDER_FLIP)
+            ImGui::SetTooltip("Time spent waiting for the GPU\n(for a free swapchain slot)");
+         else if (hoveredRow == 6)
+            ImGui::SetTooltip("Time spent sleeping to match desired framerate");
+         logicRow = 7;
+         rowOffset = 3;
 
-      profiler = &m_player->m_logicProfiler;
-      #ifdef ENABLE_BGFX
+         profiler = &m_player->m_logicProfiler;
          PROF_ROW("Logic Thread", FrameProfiler::PROFILE_FRAME)
+         PROF_ROW("> Prepare", FrameProfiler::PROFILE_PREPARE_FRAME)
+         PROF_ROW("> Physics", FrameProfiler::PROFILE_PHYSICS)
+         PROF_ROW("> Script", FrameProfiler::PROFILE_SCRIPT)
+         PROF_ROW("> Sleep", FrameProfiler::PROFILE_SLEEP)
+         PROF_ROW("> Misc", FrameProfiler::PROFILE_MISC)
+      #else
+         profiler = &m_player->m_logicProfiler;
+         PROF_ROW("Frame", FrameProfiler::PROFILE_FRAME)
+         PROF_ROW("> Prepare", FrameProfiler::PROFILE_PREPARE_FRAME)
+         PROF_ROW("> Submit", FrameProfiler::PROFILE_RENDER_SUBMIT)
+         PROF_ROW("> Flip", FrameProfiler::PROFILE_RENDER_FLIP)
+         PROF_ROW("> Physics", FrameProfiler::PROFILE_PHYSICS)
+         PROF_ROW("> Script", FrameProfiler::PROFILE_SCRIPT)
+         PROF_ROW("> Sleep", FrameProfiler::PROFILE_SLEEP)
+         PROF_ROW("> Misc", FrameProfiler::PROFILE_MISC)
       #endif
-      PROF_ROW("> Prepare", FrameProfiler::PROFILE_PREPARE_FRAME)
-      PROF_ROW("> Physics", FrameProfiler::PROFILE_PHYSICS)
-      PROF_ROW("> Script", FrameProfiler::PROFILE_SCRIPT)
-      PROF_ROW("> Sleep", FrameProfiler::PROFILE_SLEEP)
-      PROF_ROW("> Misc", FrameProfiler::PROFILE_MISC)
+
       #ifdef DEBUG
       if (m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_CUSTOM1) > 0) { PROF_ROW("> Debug #1", FrameProfiler::PROFILE_CUSTOM1); ImGui::TableNextRow(); }
       if (m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_CUSTOM2) > 0) { PROF_ROW("> Debug #2", FrameProfiler::PROFILE_CUSTOM2); ImGui::TableNextRow(); }
@@ -235,7 +393,7 @@ void PerfUI::RenderFPS()
       #endif
 
       if ((hoveredRow == renderRow) || (hoveredRow == logicRow))
-         ImGui::SetTooltip("FPS: %4.1f (%4.1f average)", 1e6 / m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME), 1e6 / m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME));
+         ImGui::SetTooltip("FPS: %4.1f (%4.1f average)", 1e6 / m_player->m_renderProfiler->GetPrev(FrameProfiler::PROFILE_FRAME), 1e6 / m_player->m_renderProfiler->GetSlidingAvg(FrameProfiler::PROFILE_FRAME));
       else if (hoveredRow == 5 + rowOffset)
          ImGui::SetTooltip("Time spent preparing a frame for rendering");
       else if (hoveredRow == 6 + rowOffset)
@@ -252,76 +410,19 @@ void PerfUI::RenderFPS()
       #undef PROF_ROW
 
       ImGui::EndTable();
-      ImGui::NewLine();
    }
-
-   // Display simple FPS window
-   #if defined(ENABLE_BGFX)
-   // TODO We are missing a way to evaluate properly if we are syncing on display or not
-   const bool pop = (m_player->GetVideoSyncMode() != VideoSyncMode::VSM_NONE)
-      && ((m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME) - 100) * m_player->m_playfieldWnd->GetRefreshRate() < 1000000);
-      // && (abs(static_cast<float>(m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME)) - (1000000.f / m_player->m_playfieldWnd->GetRefreshRate())) < 100.f);
-   if (pop)
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.f, 0.5f, 0.2f, 1.f)); // Rendering at target framerate => green background
-   #else
-   if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && m_player->m_lastFrameSyncOnFPS)
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.f, 0.f, 0.75f, 1.f)); // Running at app regulated speed (not hardware)
-   else if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && !m_player->m_lastFrameSyncOnVBlank)
-      ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.75f, 0.f, 0.f, 1.f)); // Running slower than expected
-   #endif
-   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.5f);
-   ImGui::BeginChild("FPSText", ImVec2(0.f, 0.f), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
-   const double frameLength = m_player->m_logicProfiler.GetSlidingAvg(FrameProfiler::PROFILE_FRAME);
-   // Map Android PowerManager.THERMAL_STATUS_* to a short label. -1 = listener hasn't fired yet (non-Android build or pre-listener).
-   const int thermal = RuntimeStats::GetThermalStatus();
-   const char* thermalLabel = "--";
-   switch (thermal)
-   {
-      case 0: thermalLabel = "NONE"; break;
-      case 1: thermalLabel = "LIGHT"; break;
-      case 2: thermalLabel = "MODERATE"; break;
-      case 3: thermalLabel = "SEVERE"; break;
-      case 4: thermalLabel = "CRITICAL"; break;
-      case 5: thermalLabel = "EMERGENCY"; break;
-      case 6: thermalLabel = "SHUTDOWN"; break;
-      default: break;
-   }
-   const float batteryTempC = RuntimeStats::GetBatteryTempC();
-   ImGui::Text("Render: %5.1ffps %4.1fms (%4.1fms)\nLatency: %4.1fms (%4.1fms max)\nBattery: %4.1fC  Thermal: %s",
-      1e6 / frameLength, 1e-3 * frameLength, 1e-3 * m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME),
-      1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(false), 1e-3 * m_player->m_logicProfiler.GetSlidingInputLag(true),
-      batteryTempC, thermalLabel);
-   // A/B readout for the experimental renderer optimizations. The flag state labels which run this is; the per-frame
-   // uniform-set count is the direct #2 metric (drops sharply when the per-draw uniform storm is cut, since unchanged
-   // uniforms take the early-out before m_curParameterChanges++). Draw calls are shown for context and should be
-   // identical on/off, confirming the scene matches between the two runs. (#1's effect shows in fps/ms + Battery/Thermal.)
-   const RenderDevice* const rd = m_player->m_renderer->m_renderDevice;
-   ImGui::Text("ExpOpt: %s   Draws: %u   Uniform sets: %u\nPipeline: %u prog-changes  %u state-changes\nDraws: basic %u  light %u  flasher %u  dmd %u  ball %u  other %u\nStaticPP: %s   rebuilt-this-frame: %s",
-      rd->m_experimentalRendererOpt ? "ON" : "OFF",
-      rd->Perf_GetNumDrawCalls(), rd->Perf_GetNumParameterChanges(),
-      rd->Perf_GetNumTechniqueChanges(), rd->Perf_GetNumStateChanges(),
-      rd->m_frameDrawBasic, rd->m_frameDrawLight, rd->m_frameDrawFlasher, rd->m_frameDrawDMD, rd->m_frameDrawBall, rd->m_frameDrawOther,
-      m_player->m_renderer->IsUsingStaticPrepass() ? "ON" : "OFF",
-      m_player->m_renderer->m_frameStaticPrepassRebuilt ? "YES" : "no");
-   ImGui::EndChild();
-   #if defined(ENABLE_BGFX)
-   if (pop)
-      ImGui::PopStyleColor();
-   #else
-   if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && m_player->m_lastFrameSyncOnFPS)
-      ImGui::PopStyleColor();
-   else if (m_player->GetVideoSyncMode() == VideoSyncMode::VSM_FRAME_PACING && !m_player->m_lastFrameSyncOnVBlank)
-      ImGui::PopStyleColor();
-   #endif
-
-   ImGui::End();
 }
 
-void PerfUI::RenderStats()
+void PerfUI::RenderPlots()
 {
    const ImGuiIO &io = ImGui::GetIO();
-   constexpr ImGuiWindowFlags window_flags_plots
-      = ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+   ImGuiWindowFlags window_flags_plots
+      = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+   if (!m_player->m_renderer->m_vrApplyColorKey)
+   {
+      window_flags_plots |= ImGuiWindowFlags_NoBackground;
+   }
+
    ImGui::SetNextWindowSize(ImVec2(5.f * ImGui::CalcTextSize("1234567890").x, 500.f));
    if (m_player->m_vrDevice)
       ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.80f, io.DisplaySize.y * 0.35f), 0, ImVec2(1.f, 0.f));
@@ -338,7 +439,7 @@ void PerfUI::RenderStats()
 
    m_plotFPS.SetRolling(m_showRollingFPS);
    m_plotFPSSmoothed.SetRolling(m_showRollingFPS);
-   m_plotFPSSmoothed.AddPoint(t, 1e-3f * (float)m_player->m_logicProfiler.GetPrev(FrameProfiler::PROFILE_FRAME)); // Frame time in ms
+   m_plotFPSSmoothed.AddPoint(t, 1e-3f * static_cast<float>(m_player->m_renderProfiler->GetPrev(FrameProfiler::PROFILE_FRAME))); // Frame time in ms
    m_plotFPS.AddPoint(t, m_plotFPS.GetLast().y * 0.95f + m_plotFPSSmoothed.GetLast().y * 0.05f);
    if (m_plotFPS.HasData() && m_plotFPSSmoothed.HasData() && ImPlot::BeginPlot("##FPS", ImVec2(-1, 150), ImPlotFlags_None))
    {
@@ -350,10 +451,10 @@ void PerfUI::RenderStats()
          ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_plotFPS.m_timeSpan, ImGuiCond_Always);
       else
          ImPlot::SetupAxisLimits(ImAxis_X1, static_cast<double>(t) - m_plotFPS.m_timeSpan, static_cast<double>(t), ImGuiCond_Always);
-      ImPlot::PlotLine("ms Frame", &m_plotFPSSmoothed.m_data[0].x, &m_plotFPSSmoothed.m_data[0].y, m_plotFPSSmoothed.m_data.size(), 0, m_plotFPSSmoothed.m_offset, 2 * sizeof(float));
-      ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(1, 0, 0, 0.25f));
-      ImPlot::PlotLine("Smoothed ms Frame", &m_plotFPS.m_data[0].x, &m_plotFPS.m_data[0].y, m_plotFPS.m_data.size(), 0, m_plotFPS.m_offset, 2 * sizeof(float));
-      ImPlot::PopStyleColor();
+      ImPlot::PlotLine("ms Frame", &m_plotFPSSmoothed.m_data[0].x, &m_plotFPSSmoothed.m_data[0].y, m_plotFPSSmoothed.m_data.size(),
+         { ImPlotProp_Offset, m_plotFPSSmoothed.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
+      ImPlot::PlotLine("Smoothed ms Frame", &m_plotFPS.m_data[0].x, &m_plotFPS.m_data[0].y, m_plotFPS.m_data.size(),
+         { ImPlotProp_FillColor, ImVec4(1, 0, 0, 0.25f), ImPlotProp_Offset, m_plotFPS.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
       ImPlot::EndPlot();
    }
 
@@ -370,10 +471,10 @@ void PerfUI::RenderStats()
          ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_plotPhysx.m_timeSpan, ImGuiCond_Always);
       else
          ImPlot::SetupAxisLimits(ImAxis_X1, static_cast<double>(t) - m_plotPhysx.m_timeSpan, static_cast<double>(t), ImGuiCond_Always);
-      ImPlot::PlotLine("ms Physics", &m_plotPhysxSmoothed.m_data[0].x, &m_plotPhysxSmoothed.m_data[0].y, m_plotPhysxSmoothed.m_data.size(), 0, m_plotPhysxSmoothed.m_offset, 2 * sizeof(float));
-      ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(1, 0, 0, 0.25f));
-      ImPlot::PlotLine("Smoothed ms Physics", &m_plotPhysx.m_data[0].x, &m_plotPhysx.m_data[0].y, m_plotPhysx.m_data.size(), 0, m_plotPhysx.m_offset, 2 * sizeof(float));
-      ImPlot::PopStyleColor();
+      ImPlot::PlotLine("ms Physics", &m_plotPhysxSmoothed.m_data[0].x, &m_plotPhysxSmoothed.m_data[0].y, m_plotPhysxSmoothed.m_data.size(),
+         { ImPlotProp_Offset, m_plotPhysxSmoothed.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
+      ImPlot::PlotLine("Smoothed ms Physics", &m_plotPhysx.m_data[0].x, &m_plotPhysx.m_data[0].y, m_plotPhysx.m_data.size(),
+         { ImPlotProp_FillColor, ImVec4(1, 0, 0, 0.25f), ImPlotProp_Offset, m_plotPhysx.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
       ImPlot::EndPlot();
    }
 
@@ -390,10 +491,10 @@ void PerfUI::RenderStats()
          ImPlot::SetupAxisLimits(ImAxis_X1, 0, m_plotScript.m_timeSpan, ImGuiCond_Always);
       else
          ImPlot::SetupAxisLimits(ImAxis_X1, static_cast<double>(t) - m_plotScript.m_timeSpan, static_cast<double>(t), ImGuiCond_Always);
-      ImPlot::PlotLine("ms Script", &m_plotScriptSmoothed.m_data[0].x, &m_plotScriptSmoothed.m_data[0].y, m_plotScriptSmoothed.m_data.size(), 0, m_plotScriptSmoothed.m_offset, 2 * sizeof(float));
-      ImPlot::PushStyleColor(ImPlotCol_Fill, ImVec4(1, 0, 0, 0.25f));
-      ImPlot::PlotLine("Smoothed ms Script", &m_plotScript.m_data[0].x, &m_plotScript.m_data[0].y, m_plotScript.m_data.size(), 0, m_plotScript.m_offset, 2 * sizeof(float));
-      ImPlot::PopStyleColor();
+      ImPlot::PlotLine("ms Script", &m_plotScriptSmoothed.m_data[0].x, &m_plotScriptSmoothed.m_data[0].y, m_plotScriptSmoothed.m_data.size(),
+         { ImPlotProp_Offset, m_plotScriptSmoothed.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
+      ImPlot::PlotLine("Smoothed ms Script", &m_plotScript.m_data[0].x, &m_plotScript.m_data[0].y, m_plotScript.m_data.size(),
+         { ImPlotProp_FillColor, ImVec4(1, 0, 0, 0.25f), ImPlotProp_Offset, m_plotScript.m_offset, ImPlotProp_Stride, 2 * (int)sizeof(float) });
       ImPlot::EndPlot();
    }
 

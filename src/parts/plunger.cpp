@@ -1,34 +1,40 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-#include "renderer/Shader.h"
+#include "plunger.h"
 
-Plunger::Plunger()
-{
-   m_phitplunger = nullptr;
-}
+#include "core/VPApp.h"
+#include "input/PlungerHandler.h"
+#include "parts/ball.h"
+#include "parts/Collection.h"
+#include "parts/PartGroup.h"
+#include "renderer/IndexBuffer.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/trace.h"
+
 
 Plunger::~Plunger()
 {
-   assert(m_rd == nullptr);
+   assert(m_renderer == nullptr);
 }
 
-Plunger *Plunger::CopyForPlay(PinTable *live_table) const
+Plunger *Plunger::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Plunger, live_table)
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Plunger)
    return dst;
 }
 
-HRESULT Plunger::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT Plunger::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_v.x = x;
    m_d.m_v.y = y;
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsPlunger_##prop() : Settings::GetDefaultPropsPlunger_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsPlunger_##prop() : Settings::GetDefaultPropsPlunger_##prop##_Default()
 void Plunger::SetDefaults(const bool fromMouseClick)
 {
    LinkProp(m_d.m_height, Height);
@@ -38,7 +44,6 @@ void Plunger::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_speedPull, PullSpeed);
    LinkProp(m_d.m_type, PlungerType);
    LinkProp(m_d.m_animFrames, AnimFrames);
-   LinkProp(m_d.m_color, Color);
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSurface, Surface);
    LinkProp(m_d.m_mechPlunger, MechPlunger);
@@ -54,8 +59,8 @@ void Plunger::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_springLoops, CustomSpringLoops);
    LinkProp(m_d.m_springEndLoops, CustomSpringEndLoops);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    SetDefaultPhysics(fromMouseClick);
 }
 
@@ -71,7 +76,7 @@ void Plunger::SetDefaultPhysics(const bool fromMouseClick)
 
 void Plunger::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsPlunger_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsPlunger_##prop(field, false)
    LinkProp(m_d.m_height, Height);
    LinkProp(m_d.m_width, Width);
    LinkProp(m_d.m_zAdjust, ZAdjust);
@@ -79,7 +84,6 @@ void Plunger::WriteRegDefaults()
    LinkProp(m_d.m_speedPull, PullSpeed);
    LinkProp(m_d.m_type, PlungerType);
    LinkProp(m_d.m_animFrames, AnimFrames);
-   LinkProp(m_d.m_color, Color);
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSurface, Surface);
    LinkProp(m_d.m_mechPlunger, MechPlunger);
@@ -100,34 +104,10 @@ void Plunger::WriteRegDefaults()
    LinkProp(m_d.m_scatterVelocity, ScatterVelocity);
    LinkProp(m_d.m_momentumXfer, MomentumXfer);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
-
-void Plunger::UIRenderPass1(Sur * const psur)
-{
-}
-
-void Plunger::UIRenderPass2(Sur * const psur)
-{
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetFillColor(-1);
-   psur->SetObject(this);
-
-   psur->Rectangle(m_d.m_v.x - m_d.m_width, m_d.m_v.y - m_d.m_stroke,
-      m_d.m_v.x + m_d.m_width, m_d.m_v.y + m_d.m_height);
-
-   // draw a dotted line at the park position, if appropriate
-   if (m_d.m_parkPosition > 0.0f && m_d.m_parkPosition < 1.0f)
-   {
-      const float park = m_d.m_parkPosition * m_d.m_stroke;
-      psur->SetLineColor(RGB(0x80, 0x80, 0x80), true, 1);
-      psur->Line(m_d.m_v.x - m_d.m_width, m_d.m_v.y - m_d.m_stroke + park,
-         m_d.m_v.x + m_d.m_width, m_d.m_v.y - m_d.m_stroke + park);
-   }
-}
-
 
 #pragma region Physics
 
@@ -138,7 +118,20 @@ void Plunger::PhysicSetup(PhysicsEngine* physics, const bool isUI)
 
    if (isUI)
    {
-      // FIXME implement UI picking
+      // Editor picking proxy: a flat quad covering the plunger lane (rod travel range and housing) at the rod's height
+      const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_v.x, m_d.m_v.y) + m_d.m_zAdjust;
+      const float xMin = m_d.m_v.x - m_d.m_width;
+      const float xMax = m_d.m_v.x + m_d.m_width;
+      const float yMin = m_d.m_v.y - m_d.m_stroke; // furthest travel of the tip
+      const float yMax = m_d.m_v.y + m_d.m_height; // housing behind the plunger
+      Vertex3Ds *const rgv3D = new Vertex3Ds[4]; // CCW winding for upward facing normal
+      rgv3D[0] = Vertex3Ds(xMin, yMin, height + 2.f * m_d.m_width); // at the top of the rod
+      rgv3D[1] = Vertex3Ds(xMin, yMax, height + 2.f * m_d.m_width);
+      rgv3D[2] = Vertex3Ds(xMax, yMax, height + 2.f * m_d.m_width);
+      rgv3D[3] = Vertex3Ds(xMax, yMin, height + 2.f * m_d.m_width);
+      Hit3DPoly *const ph3dpoly = new Hit3DPoly(this, rgv3D, 4);
+      ph3dpoly->m_ObjType = ePlunger;
+      physics->AddCollider(ph3dpoly, isUI);
    }
    else
    {
@@ -161,25 +154,15 @@ void Plunger::PhysicRelease(PhysicsEngine* physics, const bool isUI)
 #pragma endregion
 
 
-void Plunger::SetObjectPos()
+void Plunger::Translate(const Vertex2D &offset)
 {
-   m_vpinball->SetObjectPosCur(m_d.m_v.x, m_d.m_v.y);
-}
-
-void Plunger::MoveOffset(const float dx, const float dy)
-{
-   m_d.m_v.x += dx;
-   m_d.m_v.y += dy;
+   m_d.m_v.x += offset.x;
+   m_d.m_v.y += offset.y;
 }
 
 Vertex2D Plunger::GetCenter() const
 {
    return m_d.m_v;
-}
-
-void Plunger::PutCenter(const Vertex2D& pv)
-{
-   m_d.m_v = pv;
 }
 
 
@@ -238,10 +221,10 @@ static const char *nextTipToken(const char* &p)
 // Ported at: VisualPinball.Engine/VPT/Plunger/PlungerDesc.cs
 //            VisualPinball.Engine/VPT/Plunger/PlungerMeshGenerator.cs
 
-void Plunger::RenderSetup(RenderDevice *device)
+void Plunger::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
    const float zheight = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_v.x, m_d.m_v.y) + m_d.m_zAdjust;
    const float stroke = m_d.m_stroke;
    const float beginy = m_d.m_v.y;
@@ -461,7 +444,7 @@ void Plunger::RenderSetup(RenderDevice *device)
    // figure the relative spring gauge, in terms of the overall width
    const float springGaugeRel = springGauge / m_d.m_width;
 
-   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_cframes * m_vtsPerFrame);
+   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_cframes * m_vtsPerFrame);
 
    Vertex3D_NoTex2 *buf;
    vertexBuffer->Lock(buf);
@@ -771,7 +754,7 @@ void Plunger::RenderSetup(RenderDevice *device)
    vertexBuffer->Unlock();
 
    // create the new index buffer
-   std::shared_ptr<IndexBuffer> indexBuffer = std::make_shared<IndexBuffer>(m_rd, k, indices);
+   std::shared_ptr<IndexBuffer> indexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, k, indices);
    delete[] indices;
 
    // Create the mesh buffer
@@ -787,9 +770,9 @@ void Plunger::RenderSetup(RenderDevice *device)
 
 void Plunger::RenderRelease()
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    m_meshBuffer = nullptr;
-   m_rd = nullptr;
+   m_renderer = nullptr;
 }
 
 void Plunger::UpdateAnimation(const float diff_time_msec)
@@ -799,8 +782,8 @@ void Plunger::UpdateAnimation(const float diff_time_msec)
 
 void Plunger::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
@@ -815,9 +798,9 @@ void Plunger::Render(const unsigned int renderMask)
    const int frame0 = (int)((pa.m_pos - pa.m_frameStart) / (pa.m_frameEnd - pa.m_frameStart) * (float)(m_cframes - 1) + 0.5f);
    const int frame = (frame0 < 0 ? 0 : frame0 >= m_cframes ? m_cframes - 1 : frame0);
 
-   m_rd->ResetRenderState();
-   m_rd->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
-   m_rd->DrawMesh(m_rd->m_basicShader, false, m_boundingSphereCenter, 0.f /*m_boundingSphereRadius*/, m_meshBuffer, 
+   m_renderer->m_renderDevice->ResetRenderState();
+   m_renderer->m_renderDevice->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
+   m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, m_boundingSphereCenter, 0.f /*m_boundingSphereRadius*/, m_meshBuffer, 
       RenderDevice::TRIANGLELIST, frame * m_indicesPerFrame, m_indicesPerFrame);
 }
 
@@ -838,112 +821,93 @@ STDMETHODIMP Plunger::InterfaceSupportsErrorInfo(REFIID riid)
    return S_FALSE;
 }
 
-HRESULT Plunger::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
+void Plunger::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   BiffWriter bw(pstm, hcrypthash);
+   writer.WriteVector2(FID(VCEN), m_d.m_v);
+   writer.WriteFloat(FID(WDTH), m_d.m_width);
+   writer.WriteFloat(FID(HIGH), m_d.m_height);
+   writer.WriteFloat(FID(ZADJ), m_d.m_zAdjust);
+   writer.WriteFloat(FID(HPSL), m_d.m_stroke);
+   writer.WriteFloat(FID(SPDP), m_d.m_speedPull);
+   writer.WriteFloat(FID(SPDF), m_d.m_speedFire);
+   writer.WriteInt(FID(TYPE), m_d.m_type);
+   writer.WriteInt(FID(ANFR), m_d.m_animFrames);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
 
-   bw.WriteVector2(FID(VCEN), m_d.m_v);
-   bw.WriteFloat(FID(WDTH), m_d.m_width);
-   bw.WriteFloat(FID(HIGH), m_d.m_height);
-   bw.WriteFloat(FID(ZADJ), m_d.m_zAdjust);
-   bw.WriteFloat(FID(HPSL), m_d.m_stroke);
-   bw.WriteFloat(FID(SPDP), m_d.m_speedPull);
-   bw.WriteFloat(FID(SPDF), m_d.m_speedFire);
-   bw.WriteInt(FID(TYPE), m_d.m_type);
-   bw.WriteInt(FID(ANFR), m_d.m_animFrames);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteFloat(FID(MEST), m_d.m_mechStrength);
+   writer.WriteBool(FID(MECH), m_d.m_mechPlunger);
+   writer.WriteBool(FID(APLG), m_d.m_autoPlunger);
 
-   bw.WriteFloat(FID(MEST), m_d.m_mechStrength);
-   bw.WriteBool(FID(MECH), m_d.m_mechPlunger);
-   bw.WriteBool(FID(APLG), m_d.m_autoPlunger);
+   writer.WriteFloat(FID(MPRK), m_d.m_parkPosition);
+   writer.WriteFloat(FID(PSCV), m_d.m_scatterVelocity);
+   writer.WriteFloat(FID(MOMX), m_d.m_momentumXfer);
 
-   bw.WriteFloat(FID(MPRK), m_d.m_parkPosition);
-   bw.WriteFloat(FID(PSCV), m_d.m_scatterVelocity);
-   bw.WriteFloat(FID(MOMX), m_d.m_momentumXfer);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteBool(FID(VSBL), m_d.m_visible);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+   writer.WriteString(FID(SURF), m_d.m_szSurface);
+   writer.WriteWideString(FID(NAME), m_wzName);
 
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteBool(FID(VSBL), m_d.m_visible);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-   bw.WriteString(FID(SURF), m_d.m_szSurface);
-   bw.WriteWideString(FID(NAME), m_wzName);
-
-   bw.WriteString(FID(TIPS), m_d.m_szTipShape);
-   bw.WriteFloat(FID(RODD), m_d.m_rodDiam);
-   bw.WriteFloat(FID(RNGG), m_d.m_ringGap);
-   bw.WriteFloat(FID(RNGD), m_d.m_ringDiam);
-   bw.WriteFloat(FID(RNGW), m_d.m_ringWidth);
-   bw.WriteFloat(FID(SPRD), m_d.m_springDiam);
-   bw.WriteFloat(FID(SPRG), m_d.m_springGauge);
-   bw.WriteFloat(FID(SPRL), m_d.m_springLoops);
-   bw.WriteFloat(FID(SPRE), m_d.m_springEndLoops);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
+   writer.WriteString(FID(TIPS), m_d.m_szTipShape);
+   writer.WriteFloat(FID(RODD), m_d.m_rodDiam);
+   writer.WriteFloat(FID(RNGG), m_d.m_ringGap);
+   writer.WriteFloat(FID(RNGD), m_d.m_ringDiam);
+   writer.WriteFloat(FID(RNGW), m_d.m_ringWidth);
+   writer.WriteFloat(FID(SPRD), m_d.m_springDiam);
+   writer.WriteFloat(FID(SPRG), m_d.m_springGauge);
+   writer.WriteFloat(FID(SPRL), m_d.m_springLoops);
+   writer.WriteFloat(FID(SPRE), m_d.m_springEndLoops);
+   SaveSharedEditableFields(writer);
+   writer.EndObject();
 }
 
-HRESULT Plunger::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Plunger::Load(IObjectReader& reader)
 {
-   m_d.m_color = RGB(76, 76, 76); //initialize color for new plunger
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool Plunger::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch(id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(VCEN): pbr->GetVector2(m_d.m_v); break;
-   case FID(WDTH): pbr->GetFloat(m_d.m_width); break;
-   case FID(ZADJ): pbr->GetFloat(m_d.m_zAdjust); break;
-   case FID(HIGH): pbr->GetFloat(m_d.m_height); break;
-   case FID(HPSL): pbr->GetFloat(m_d.m_stroke); break;
-   case FID(SPDP): pbr->GetFloat(m_d.m_speedPull); break;
-   case FID(SPDF): pbr->GetFloat(m_d.m_speedFire); break;
-   case FID(MEST): pbr->GetFloat(m_d.m_mechStrength); break;
-   case FID(MPRK): pbr->GetFloat(m_d.m_parkPosition); break;
-   case FID(PSCV): pbr->GetFloat(m_d.m_scatterVelocity); break;
-   case FID(MOMX): pbr->GetFloat(m_d.m_momentumXfer); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(MECH): pbr->GetBool(m_d.m_mechPlunger); break;
-   case FID(APLG): pbr->GetBool(m_d.m_autoPlunger); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(TYPE): pbr->GetInt(&m_d.m_type); break;
-   case FID(ANFR): pbr->GetInt(m_d.m_animFrames); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(VSBL): pbr->GetBool(m_d.m_visible); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   case FID(SURF): pbr->GetString(m_d.m_szSurface); break;
-   case FID(TIPS): pbr->GetString(m_d.m_szTipShape); break;
-   case FID(RODD): pbr->GetFloat(m_d.m_rodDiam); break;
-   case FID(RNGG): pbr->GetFloat(m_d.m_ringGap); break;
-   case FID(RNGD): pbr->GetFloat(m_d.m_ringDiam); break;
-   case FID(RNGW): pbr->GetFloat(m_d.m_ringWidth); break;
-   case FID(SPRD): pbr->GetFloat(m_d.m_springDiam); break;
-   case FID(SPRG): pbr->GetFloat(m_d.m_springGauge); break;
-   case FID(SPRL): pbr->GetFloat(m_d.m_springLoops); break;
-   case FID(SPRE): pbr->GetFloat(m_d.m_springEndLoops); break;
-   default: ISelect::LoadToken(id, pbr); break;
-   }
-   return true;
-}
-
-HRESULT Plunger::InitPostLoad()
-{
-   return S_OK;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(VCEN): m_d.m_v = reader.AsVector2(); break;
+         case FID(WDTH): m_d.m_width = reader.AsFloat(); break;
+         case FID(ZADJ): m_d.m_zAdjust = reader.AsFloat(); break;
+         case FID(HIGH): m_d.m_height = reader.AsFloat(); break;
+         case FID(HPSL): m_d.m_stroke = reader.AsFloat(); break;
+         case FID(SPDP): m_d.m_speedPull = reader.AsFloat(); break;
+         case FID(SPDF): m_d.m_speedFire = reader.AsFloat(); break;
+         case FID(MEST): m_d.m_mechStrength = reader.AsFloat(); break;
+         case FID(MPRK): m_d.m_parkPosition = reader.AsFloat(); break;
+         case FID(PSCV): m_d.m_scatterVelocity = reader.AsFloat(); break;
+         case FID(MOMX): m_d.m_momentumXfer = reader.AsFloat(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(MECH): m_d.m_mechPlunger = reader.AsBool(); break;
+         case FID(APLG): m_d.m_autoPlunger = reader.AsBool(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(TYPE): m_d.m_type = static_cast<PlungerType>(reader.AsInt()); break;
+         case FID(ANFR): m_d.m_animFrames = reader.AsInt(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(VSBL): m_d.m_visible = reader.AsBool(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         case FID(SURF): m_d.m_szSurface = reader.AsString(); break;
+         case FID(TIPS): m_d.m_szTipShape = reader.AsString(); break;
+         case FID(RODD): m_d.m_rodDiam = reader.AsFloat(); break;
+         case FID(RNGG): m_d.m_ringGap = reader.AsFloat(); break;
+         case FID(RNGD): m_d.m_ringDiam = reader.AsFloat(); break;
+         case FID(RNGW): m_d.m_ringWidth = reader.AsFloat(); break;
+         case FID(SPRD): m_d.m_springDiam = reader.AsFloat(); break;
+         case FID(SPRG): m_d.m_springGauge = reader.AsFloat(); break;
+         case FID(SPRL): m_d.m_springLoops = reader.AsFloat(); break;
+         case FID(SPRE): m_d.m_springEndLoops = reader.AsFloat(); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
 }
 
 STDMETHODIMP Plunger::PullBack()
@@ -951,10 +915,10 @@ STDMETHODIMP Plunger::PullBack()
    // initiate a pull; the speed is set by our pull speed property
    if (m_phitplunger)
    {
-     if(g_pplayer->m_pininput.m_plunger_retract)
-        m_phitplunger->m_plungerMover.PullBackandRetract(m_d.m_speedPull);
+      if (g_pplayer->m_pininput.m_plungerHandler->IsPullBackandRetract())
+         m_phitplunger->m_plungerMover.PullBackandRetract(m_d.m_speedPull);
       else
-        m_phitplunger->m_plungerMover.PullBack(m_d.m_speedPull);
+         m_phitplunger->m_plungerMover.PullBack(m_d.m_speedPull);
    }
 
    return S_OK;
@@ -976,8 +940,9 @@ return S_OK;
 }
 
 // Returns the position of the plunger as a value between 0 and 25
-// Note that g_pplayer->m_curMechPlungerPos is 0 at park position, which usually correspond to something like 4 or 5 here,
-// leading to value from 5 to 25 when pulling the plunger, with value below 5 being when the plunger pass the park position.
+// 0 = fully forward (frame end), 25 = fully retracted (frame start); the park position sits at 25 * parkPosition (~4-5).
+// This is the *simulated* plunger position. VPX <= 10.8 reported the raw mechanical sensor position when a mech
+// device was attached; scripts now observe the filtered, spring-chased virtual plunger instead.
 STDMETHODIMP Plunger::Position(float *pVal)
 {
    const PlungerMoverObject &pa = m_phitplunger->m_plungerMover;
@@ -1216,10 +1181,10 @@ STDMETHODIMP Plunger::CreateBall(IBall **pResult)
 
       const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, x, y);
 
-      HitBall *const pball = g_pplayer->CreateBall(x, y, height, 0.1f, 0, 0);
+      Ball *const pball = g_pplayer->CreateBall(x, y, height, 0.1f, 0, 0, DEFAULT_BALL_SIZE, 1.f);
 
-      *pResult = pball->m_pBall;
-      pball->m_pBall->AddRef();
+      *pResult = pball;
+      pball->AddRef();
    }
 
    return S_OK;
@@ -1228,8 +1193,6 @@ STDMETHODIMP Plunger::CreateBall(IBall **pResult)
 STDMETHODIMP Plunger::get_X(float *pVal)
 {
    *pVal = m_d.m_v.x;
-   m_vpinball->SetStatusBarUnitInfo(string(), true);
-
    return S_OK;
 }
 

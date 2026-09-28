@@ -1,16 +1,18 @@
 // Versions
 PropString(Version, VPinball, "VPX Version"s, "VPX version that saved this file"s, string(VP_VERSION_STRING_DIGITS));
 
+// Global settings
+PropBool(Global, EnableLog, "Enable Log"s, "Enable general logging to the vinball.log file"s, true);
+PropBool(Global, LogScriptOutput, "Log Script Output"s, "Enable script logging output"s, true);
+PropBool(Global, ResetLogOnPlay, "Reset Log on Play"s, "Reset the log file when a table is played"s, g_isMobile);
+
 // General Application settings
-PropBool(Editor, EnableLog, "Enable Log"s, "Enable general logging to the vinball.log file"s, true);
 PropBool(Editor, DisableHash, "Disable File Validation"s, "Disable file integrity validation (risky; but slightly faster loading)"s, false);
 
 // Audio settings
 PropInt(Player, MusicVolume, "Backglass Volume"s, "Main volume for music and sound played from the backglass speakers"s, 0, 100, 100);
 PropInt(Player, SoundVolume, "Playfield Volume"s, "Main volume for mechanical sounds coming from the playfield"s, 0, 100, 100);
 PropInt(Player, PinmameVolume, "PinMAME ROM Volume"s, "Gain in dB for emulated ROM (PinMAME) audio; 0 = native level (matches VPinMAME tilde-OSD), positive boosts quiet tables"s, -32, 32, 0);
-PropBool(Player, PlayMusic, "Enable Backglass"s, "Enable/Disable backglass game sound & music"s, true);
-PropBoolBase(Player, PlaySound, "Enable Playfield"s, "Enable/Disable playfield mechanical sounds"s, false, true); // We use the complete macro as Win32 global PlaySound would conflict otherwise
 PropStringDyn(Player, SoundDeviceBG, "Backglass Sound Device"s, "Select backglass sound device"s, ""s);
 PropStringDyn(Player, SoundDevice, "Playfield Sound Device"s, "Select playfield sound device"s, ""s);
 PropEnum(Player, Sound3D, "Playfield Output Mode"s, "Select how playfield sound is output to a speaker configuration"s, int /* VPX::SoundConfigTypes*/, 0 /* VPX::SoundConfigTypes::SNDCFG_SND3D2CH */,
@@ -19,11 +21,15 @@ PropEnum(Player, Sound3D, "Playfield Output Mode"s, "Select how playfield sound 
 // Output (windows) settings
 // Main window (a.k.a. playfield)
 PropStringDyn(Player, PlayfieldDisplay, "Display"s, "Display used for the main Playfield window"s, ""s);
+#ifdef ENABLE_BGFX
+PropEnumDyn(Player, PlayfieldFullScreen, "Display Mode"s, "Select between windowed or borderless fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s);
+#else
+PropEnumDyn(Player, PlayfieldFullScreen, "Display Mode"s, "Select between windowed, borderless fullscreen or fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s, "Fullscreen"s);
+#endif
 PropIntDyn(Player, PlayfieldWndX, "X Position"s, "Horizontal position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Player, PlayfieldWndY, "Y Position"s, "Vertical position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Player, PlayfieldWidth, "Width"s, "Width of the window"s, 0, 16384, 16384);
 PropIntDyn(Player, PlayfieldHeight, "Height"s, "Height of the window"s, 0, 16384, 16384);
-PropBoolDyn(Player, PlayfieldFullScreen, "Fullscreen"s, "Use fullscreen exclusive mode (should be avoided unless you need to change the display resolution)"s, false);
 PropIntDyn(Player, PlayfieldFSWidth, "Width"s, "Fullscreen display mode width"s, 0, 16384, 16384);
 PropIntDyn(Player, PlayfieldFSHeight, "Height"s, "Fullscreen display mode height"s, 0, 16384, 16384);
 PropFloatDyn(Player, PlayfieldRefreshRate, "Refresh Rate"s, "Fullscreen display mode refresh rate"s, 0.f, 1000.f, 0.f);
@@ -32,48 +38,69 @@ PropIntDyn(Player, PlayfieldColorDepth, "Color Depth"s, "Fullscreen display mode
 PropEnumDyn(Backglass, BackglassOutput, "Output Mode"s, "Select between disabled, floating, or embedded in another window mode"s, int /* OutputMode */, 0 /* OM_DISABLED */, "Disabled"s,
    "Floating"s, "Embedded in playfield"s);
 PropStringDyn(Backglass, BackglassDisplay, "Display"s, "Display used for the main Backglass window"s, ""s);
+#ifdef ENABLE_BGFX
+PropEnumDyn(Backglass, BackglassFullScreen, "Display Mode"s, "Select between windowed or borderless fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s);
+#else
+PropEnumDyn(
+   Backglass, BackglassFullScreen, "Display Mode"s, "Select between windowed, borderless fullscreen or fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s, "Fullscreen"s);
+#endif
 PropIntDyn(Backglass, BackglassWndX, "X Position"s, "Horizontal position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Backglass, BackglassWndY, "Y Position"s, "Vertical position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Backglass, BackglassWidth, "Width"s, "Width of the window"s, 0, 16384, 16384);
 PropIntDyn(Backglass, BackglassHeight, "Height"s, "Height of the window"s, 0, 16384, 16384);
-PropBoolDyn(Backglass, BackglassFullScreen, "Fullscreen"s, "Use fullscreen exclusive mode (should be avoided unless you need to change the display resolution)"s, false);
 PropIntDyn(Backglass, BackglassFSWidth, "Width"s, "Fullscreen display mode width"s, 0, 16384, 16384);
 PropIntDyn(Backglass, BackglassFSHeight, "Height"s, "Fullscreen display mode height"s, 0, 16384, 16384);
 PropFloatDyn(Backglass, BackglassRefreshRate, "Fullscreen Refresh Rate"s, "Fullscreen display mode refresh rate"s, 0.f, 1000.f, 0.f);
 PropIntDyn(Backglass, BackglassColorDepth, "Color Depth"s, "Fullscreen display mode color depth"s, 0, 64, 32);
+PropEnumDyn(Backglass, BackglassRotation, "Rotation"s, "Rotate the rendered content clockwise inside the output, e.g. for screens that are physically mounted rotated without the OS being told about it"s, int, 0, "0"s, "90"s, "180"s, "270"s);
 // ScoreView Window
 PropEnumDyn(ScoreView, ScoreViewOutput, "Output Mode"s, "Select between disabled, floating, or embedded in another window mode"s, int /* OutputMode */, 0 /* OM_DISABLED */, "Disabled"s,
    "Floating"s, "Embedded in playfield"s);
 PropStringDyn(ScoreView, ScoreViewDisplay, "Display"s, "Display used for the main ScoreView window"s, ""s);
+#ifdef ENABLE_BGFX
+PropEnumDyn(ScoreView, ScoreViewFullScreen, "Display Mode"s, "Select between windowed or borderless fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s);
+#else
+PropEnumDyn(
+   ScoreView, ScoreViewFullScreen, "Display Mode"s, "Select between windowed, borderless fullscreen or fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s, "Fullscreen"s);
+#endif
 PropIntDyn(ScoreView, ScoreViewWndX, "X Position"s, "Horizontal position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(ScoreView, ScoreViewWndY, "Y Position"s, "Vertical position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(ScoreView, ScoreViewWidth, "Width"s, "Width of the window"s, 0, 16384, 16384);
 PropIntDyn(ScoreView, ScoreViewHeight, "Height"s, "Height of the window"s, 0, 16384, 16384);
-PropBoolDyn(ScoreView, ScoreViewFullScreen, "Fullscreen"s, "Use fullscreen exclusive mode (should be avoided unless you need to change the display resolution)"s, false);
 PropIntDyn(ScoreView, ScoreViewFSWidth, "Width"s, "Fullscreen display mode width"s, 0, 16384, 16384);
 PropIntDyn(ScoreView, ScoreViewFSHeight, "Height"s, "Fullscreen display mode height"s, 0, 16384, 16384);
 PropFloatDyn(ScoreView, ScoreViewRefreshRate, "Fullscreen Refresh Rate"s, "Fullscreen display mode refresh rate"s, 0.f, 1000.f, 0.f);
 PropIntDyn(ScoreView, ScoreViewColorDepth, "Color Depth"s, "Fullscreen display mode color depth"s, 0, 64, 32);
+PropEnumDyn(ScoreView, ScoreViewRotation, "Rotation"s, "Rotate the rendered content clockwise inside the output, e.g. for screens that are physically mounted rotated without the OS being told about it"s, int, 0, "0"s, "90"s, "180"s, "270"s);
 // Topper Window
 PropEnumDyn(Topper, TopperOutput, "Output Mode"s, "Select between disabled, floating, or embedded in another window mode"s, int /* OutputMode */, 0 /* OM_DISABLED */, "Disabled"s, "Floating"s,
    "Embedded in playfield"s);
 PropStringDyn(Topper, TopperDisplay, "Display"s, "Display used for the Topper window"s, ""s);
+#ifdef ENABLE_BGFX
+PropEnumDyn(Topper, TopperFullScreen, "Display Mode"s, "Select between windowed or borderless fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s);
+#else
+PropEnumDyn(Topper, TopperFullScreen, "Display Mode"s, "Select between windowed, borderless fullscreen or fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s, "Fullscreen"s);
+#endif
 PropIntDyn(Topper, TopperWndX, "X Position"s, "Horizontal position of the Topper window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Topper, TopperWndY, "Y Position"s, "Vertical position of the Topper window on the selected display"s, 0, 16384, 0);
 PropIntDyn(Topper, TopperWidth, "Width"s, "Width of the Topper window"s, 0, 16384, 16384);
 PropIntDyn(Topper, TopperHeight, "Height"s, "Height of the Topper window"s, 0, 16384, 16384);
-PropBoolDyn(Topper, TopperFullScreen, "Fullscreen"s, "Use fullscreen exclusive mode (should be avoided unless you need to change the display resolution) for the Topper window"s, false);
 PropIntDyn(Topper, TopperFSWidth, "Width"s, "Fullscreen display mode width for the Topper window"s, 0, 16384, 16384);
 PropIntDyn(Topper, TopperFSHeight, "Height"s, "Fullscreen display mode height for the Topper window"s, 0, 16384, 16384);
 PropFloatDyn(Topper, TopperRefreshRate, "Fullscreen Refresh Rate"s, "Fullscreen display mode refresh rate"s, 0.f, 1000.f, 0.f);
 PropIntDyn(Topper, TopperColorDepth, "Color Depth"s, "Fullscreen display mode color depth"s, 0, 64, 32);
+PropEnumDyn(Topper, TopperRotation, "Rotation"s, "Rotate the rendered content clockwise inside the output, e.g. for screens that are physically mounted rotated without the OS being told about it"s, int, 0, "0"s, "90"s, "180"s, "270"s);
 // VR Preview Window
 PropStringDyn(PlayerVR, PreviewDisplay, "Display"s, "Display used for the VR Preview window"s, ""s);
+#ifdef ENABLE_BGFX
+PropEnumDyn(PlayerVR, PreviewFullScreen, "Display Mode"s, "Select between windowed or borderless fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s);
+#else
+PropEnumDyn(PlayerVR, PreviewFullScreen, "Display Mode"s, "Select between windowed, borderless fullscreen or fullscreen mode"s, int, 0, "Windowed"s, "Borderless Fullscreen"s, "Fullscreen"s);
+#endif
 PropIntDyn(PlayerVR, PreviewWndX, "X Position"s, "Horizontal position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(PlayerVR, PreviewWndY, "Y Position"s, "Vertical position of the window on the selected display"s, 0, 16384, 0);
 PropIntDyn(PlayerVR, PreviewWidth, "Width"s, "Width of the window"s, 0, 16384, 16384);
 PropIntDyn(PlayerVR, PreviewHeight, "Height"s, "Height of the window"s, 0, 16384, 16384);
-PropBoolDyn(PlayerVR, PreviewFullScreen, "Fullscreen"s, "Use fullscreen exclusive mode (should be avoided unless you need to change the display resolution)"s, false);
 PropIntDyn(PlayerVR, PreviewFSWidth, "Width"s, "Fullscreen display mode width"s, 0, 16384, 16384);
 PropIntDyn(PlayerVR, PreviewFSHeight, "Height"s, "Fullscreen display mode height"s, 0, 16384, 16384);
 PropFloatDyn(PlayerVR, PreviewRefreshRate, "Fullscreen Refresh Rate"s, "Fullscreen display mode refresh rate"s, 0.f, 1000.f, 0.f);
@@ -82,13 +109,13 @@ PropIntDyn(PlayerVR, PreviewColorDepth, "Color Depth"s, "Fullscreen display mode
 PropArray(Window, Mode, int, Enum, Int, m_propInvalid, m_propBackglass_BackglassOutput, m_propScoreView_ScoreViewOutput, m_propTopper_TopperOutput, m_propInvalid);
 PropArray(Window, Display, string, String, String, m_propPlayer_PlayfieldDisplay, m_propBackglass_BackglassDisplay, m_propScoreView_ScoreViewDisplay, m_propTopper_TopperDisplay,
    m_propPlayerVR_PreviewDisplay);
+PropArray(Window, FullScreen, int, Enum, Int, m_propPlayer_PlayfieldFullScreen, m_propBackglass_BackglassFullScreen, m_propScoreView_ScoreViewFullScreen, m_propTopper_TopperFullScreen,
+   m_propPlayerVR_PreviewFullScreen);
 PropArray(Window, WndX, int, Int, Int, m_propPlayer_PlayfieldWndX, m_propBackglass_BackglassWndX, m_propScoreView_ScoreViewWndX, m_propTopper_TopperWndX, m_propPlayerVR_PreviewWndX);
 PropArray(Window, WndY, int, Int, Int, m_propPlayer_PlayfieldWndY, m_propBackglass_BackglassWndY, m_propScoreView_ScoreViewWndY, m_propTopper_TopperWndY, m_propPlayerVR_PreviewWndY);
 PropArray(Window, Width, int, Int, Int, m_propPlayer_PlayfieldWidth, m_propBackglass_BackglassWidth, m_propScoreView_ScoreViewWidth, m_propTopper_TopperWidth, m_propPlayerVR_PreviewWidth);
 PropArray(
    Window, Height, int, Int, Int, m_propPlayer_PlayfieldHeight, m_propBackglass_BackglassHeight, m_propScoreView_ScoreViewHeight, m_propTopper_TopperHeight, m_propPlayerVR_PreviewHeight);
-PropArray(Window, FullScreen, bool, Bool, Int, m_propPlayer_PlayfieldFullScreen, m_propBackglass_BackglassFullScreen, m_propScoreView_ScoreViewFullScreen, m_propTopper_TopperFullScreen,
-   m_propPlayerVR_PreviewFullScreen);
 PropArray(Window, FSWidth, int, Int, Int, m_propPlayer_PlayfieldFSWidth, m_propBackglass_BackglassFSWidth, m_propScoreView_ScoreViewFSWidth, m_propTopper_TopperFSWidth,
    m_propPlayerVR_PreviewFSWidth);
 PropArray(Window, FSHeight, int, Int, Int, m_propPlayer_PlayfieldFSHeight, m_propBackglass_BackglassFSHeight, m_propScoreView_ScoreViewFSHeight, m_propTopper_TopperFSHeight,
@@ -97,23 +124,18 @@ PropArray(Window, FSRefreshRate, float, Float, Float, m_propPlayer_PlayfieldRefr
    m_propTopper_TopperRefreshRate, m_propPlayerVR_PreviewRefreshRate);
 PropArray(Window, FSColorDepth, int, Int, Int, m_propPlayer_PlayfieldColorDepth, m_propBackglass_BackglassColorDepth, m_propScoreView_ScoreViewColorDepth, m_propTopper_TopperColorDepth,
    m_propPlayerVR_PreviewColorDepth);
+// Only defined for the ancillary windows: the playfield has its own rotation, as part of its view setup
+PropArray(Window, Rotation, int, Enum, Int, m_propInvalid, m_propBackglass_BackglassRotation, m_propScoreView_ScoreViewRotation, m_propTopper_TopperRotation, m_propInvalid);
 
 // Graphics synchronisation and latency reduction
-#if defined(ENABLE_BGFX)
-PropEnum(Player, SyncMode, "Synchronization"s, "None: No synchronization.\nVertical Sync: Synchronize on video sync, which avoids video tearing, but has higher input latency."s, int, 1, "No Sync"s, "Vertical Sync"s);
-#else
 PropEnum(Player, SyncMode, "Synchronization"s,
-   "None: No synchronization.\nVertical Sync: Synchronize on video sync, which avoids video tearing, but has higher input latency.\nAdaptive Sync: Synchronize on video sync, "
-   "except for late frames (below target FPS), also features higher input latency.\nFrame Pacing: same as adaptive sync, but with lower latency. Comes with the risk of introducing more stutters if the computer is not powerful enough."s,
-   int, 1, "No Sync"s, "Vertical Sync"s, "Adaptive Sync"s, "Frame Pacing"s);
-#endif
+   "None: No synchronization.\nVertical Sync: Synchronize on video sync, avoids video tearing at the price of high visual latency.\nAdaptive Sync: Synchronize on video sync, "
+   "except for late frames (below target FPS), also features higher visual latency.\nFrame Pacing: pace the frame rendering to limit visual latency, comes with the risk of introducing more stutters if the computer is not powerful enough."s,
+   int, 3, "No Sync"s, "Vertical Sync"s, "Adaptive Sync"s, "Frame Pacing"s);
 PropFloat(Player, MaxFramerate, "Limit Framerate"s,
    "-1 will limit FPS to the display refresh rate\n0 will not limit the display refresh rate\nOther values will limit the FPS to it (energy saving/less heat, framerate stability)"s, -1.f,
    1000.f, -1.f);
-PropInt(Player, MaxPrerenderedFrames, "Max. Prerendered Frames"s, "Maximum number of 'frames in flight' (frames pushed to the GPU queue waiting for rendering).\nHigher values may lead to higher FPS, but at higher input latency.\nRecommended to be left at 0 (disabled/system default)"s, 0, 5, 0);
-PropInt(Player, VisualLatencyCorrection, "Visual Latency Correction"s,
-   "Leave at -1 to get default latency correction based on display frequency.\nIf you measured your setup latency using tools like Intel's PresentMon, enter the average latency in ms."s,
-   -1, 200, -1);
+PropInt(Player, MaxPrerenderedFrames, "Max. Prerendered Frames"s, "Maximum number of 'frames in flight' (frames pushed to the GPU queue waiting for rendering).\nHigher values may lead to higher FPS, but at higher input latency.\nRecommended to be adjusted to the lowest value that allows a stable framerate.\n(Not supported in OpenGL version)"s, 1, 3, 1);
 // Single A/B toggle (set from the app's Experimental settings) gating render perf optimizations:
 //  (1) drop BGFX_TEXTURE_BLIT_DST on write-only render targets so tilers can framebuffer-compress them, and
 //  (2) skip redundant per-draw uniform re-uploads on the GL/GLES/Vulkan bgfx backends.
@@ -149,9 +171,9 @@ PropFloat(Player, HDRGlobalExposure, "HDR Display Global Exposure"s, "Global exp
 PropBool(Player, ForceBloomOff, "Disable Bloom"s, "Disable postprocessed bloom filter"s, false);
 PropBool(Player, OverrideTableBloom, "Override Table Bloom"s, "Replace default table bloom strength with a custom value"s, false);
 PropFloat(Player, BloomStrength, "Bloom Strength"s, "Custom bloom strength (0.0 to 2.0)"s, 0.f, 2.f, 1.f);
-PropBool(Player, ForceMotionBlurOff, "Disable Motion Blur"s, "Disable postprocessed ball motion blur"s, false);
+PropBool(Player, ForceMotionBlurOff, "Disable Motion Blur"s, "Disable ball motion blur.\nThis feature is BGFX only (and not supported in VR or headtracking)"s, false);
 PropBool(Player, ForceAnisotropicFiltering, "Force Anisotropic Filtering"s, "Force anisotropic filtering for better rendering quality/texture clarity at the cost of a bit of performance"s, true);
-PropBool(Player, CompressTextures, "Compress Textures"s, "Automatically compress textures at game startup (slow) for better performance"s, false);
+PropBool(Player, CompressTextures, "Compress Textures"s, "Compress textures to GPU formats to reduce memory use (slow on first load, cached afterwards)"s, g_isMobile);
 PropBool(Player, UseNVidiaAPI, "Alternative Depth Buffer"s, "Use NVidia API to manage Depth Buffer on a DirectX 9 build. May solve some rendering issues"s, false);
 PropBool(Player, SoftwareVertexProcessing, "Software Vertex Processing"s, "Activate this on a DirectX 9 build, if you have issues using an old Intel graphics chip"s, false);
 PropBool(Player, DisableAO, "Disable Ambient Occlusion"s, ""s, false);
@@ -159,10 +181,13 @@ PropBool(Player, DynamicAO, "Dynamic Ambient Occlusion"s, ""s, true);
 PropEnum(Player, PFReflection, "Reflection Quality"s,
    "Limit the quality of reflections for better performance.\n'Dynamic' is recommended and will give the best results, but may harm performance.\n'Static Only' has no performance cost (except for VR rendering).\nOther options feature different trade-offs between quality and performance."s,
    int, 5, "Disable Reflections"s, "Balls Only"s, "Static Only"s, "Static & Balls"s, "Static & Unsynced Dynamic"s, "Dynamic"s);
-PropInt(Player, MaxTexDimension, "Maximum texture dimension"s, "Images sized above this limit will be automatically scaled down on load"s, 512, 16384, g_isMobile ? 1536 : 16384);
+PropInt(Player, MaxTexDimension, "Maximum texture dimension"s, "Images sized above this limit will be automatically scaled down on load"s, 512, 16384, g_isMobile ? 3072 : 16384);
 PropInt(Player, PlayfieldMaxTexDimension, "Playfield maximum texture dimension"s, "Higher cap applied only to playfield images (name contains 'playfield'). 0 = use the global Maximum texture dimension."s, 0, 16384, 0);
 PropInt(Player, AlphaRampAccuracy, "Detail Level"s, "Level of detail for balls and ramps"s, 1, 10, 10);
 PropEnum(Player, BGSet, "View Mode"s, "Select between desktop, cabinet or 'full single screen' viewing mode configurations (if a table has set them up correctly)"s, int, 0, "Desktop / Full Single Screen"s, "Cabinet"s, "Full Single Screen"s);
+PropEnum(Player, CabinetAutofitMode, "Cabinet Autofit Mode"s, "Select between manual setup, automatic fitting without visual stretch or automatic fitting with table stretching"s, int, 0,
+   "Manual"s, "Fit Table"s, "Fit Screen"s);
+PropFloat(Player, CabinetAutofitPos, "Cabinet Autofit Pos"s, "Relative lower flipper bat position when using automatic view fitting (0% for bottom of screen, 100% for top)"s, 0.f, 0.2f, 0.05f);
 
 // Aliasing & sharpening
 PropFloat(Player, AAFactor, "Full Scene Anti Aliasing"s,
@@ -172,15 +197,15 @@ PropEnum(Player, MSAASamples, "MSAA level"s,
    "Set the amount of MSAA samples.\nMSAA can help reduce geometry aliasing at the cost of performance and GPU memory.\nThis can improve image quality if not using supersampling"s, int,
    0, "Disabled"s, "4 Samples"s, "6 Samples"s, "8 Samples"s);
 PropEnum(Player, FXAA, "Post processed antialiasing"s, "Select between different antialiasing techniques that offer different quality vs performance balances"s, int, 0, "Disabled"s,
-   "Fast FXAA"s, "Standard FXAA"s, "Quality FXAA"s, "Fast NFAA"s, "Standard DLAA"s, "Quality SMAA"s, "Standard FAAA"s);
+   "Fast FXAA"s, "Standard FXAA"s, "Quality FXAA"s, "Fast NFAA"s, "Standard DLAA"s, "Quality SMAA"s, "Quality FAAA"s);
 PropEnum(Player, Sharpen, "Post processed sharpening"s, "Select between different sharpening techniques that offer different quality vs performance balances"s, int, 0, "Disabled"s, "CAS"s,
    "Bilateral CAS"s);
 
 // Ball rendering
 PropBool(Player, BallAntiStretch, "Unstretch Ball"s, "Compensate ball stretching"s, false);
 PropBool(Player, DisableLightingForBalls, "Disable Ball Lighting"s, "Disable lighting and reflection effects on balls, e.g. to help the visually handicapped"s, false);
-PropBool(Player, BallTrail, "Ball Trail"s, "Legacy Ball Trails"s, false);
-PropFloat(Player, BallTrailStrength, "Ball Trail Strength"s, "Strength of the fake Ball Trail"s, 0.f, 5.f, 0.5f);
+PropBool(Player, BallTrail, "Ball Trail"s, "Legacy Ball Trails.\nWill/should be replaced by ForceMotionBlurOff with the next release"s, false);
+PropFloat(Player, BallTrailStrength, "Ball Trail Strength"s, "Strength of the legacy Ball Trail"s, 0.f, 5.f, 0.5f);
 PropBool(Player, OverwriteBallImage, "Overwrite ball image"s, "Allow to define images that will be used instead of the table's provided one"s, false);
 PropString(Player, BallImage, "Ball image override"s, "Image to use for the ball instead of the table's provide one"s, ""s);
 PropString(Player, DecalImage, "Decal image override"s, "Image to use for the ball's decal instead of the table's provide one"s, ""s);
@@ -194,10 +219,16 @@ PropBool(Player, EnableCameraModeFlyAround, "Legacy Fly Over Mode"s, "Enable mov
 PropBool(Player, DetectHang, "Detect Script Hang"s, ""s, false);
 PropInt(Player, SecurityLevel, "Security Level"s, ""s, 0, 4, DEFAULT_SECURITY_LEVEL);
 PropInt(Player, NumberOfTimesToShowTouchMessage, "NumberOfTimesToShowTouchMessage"s, "Number of times to re-display the touch display message"s, 0, 100, 10);
-PropBool(Player, BAMHeadTracking, "BAM Headtracking"s, "Enable headtracking using the external BAM application.\nThis feature is experimental and unsupported"s, false);
 PropBool(Player, Mirror, "Mirror"s, "Mirror the table (left <-> right)"s, false);
 PropEnum(Player, CacheMode, "Cache Mode"s, "Use cache to limit stutters and speedup loading"s, int, 1, "Disabled"s, "Preload Textures"s);
 PropEnum(Player, RumbleMode, "RumbleMode"s, "Use rumble motor(s) in attached input devices"s, int, 3, "Off"s, "Table only (N/A yet)"s, "Generic only (N/A yet)"s, "Table with generic fallback"s);
+PropFloat(Player, RumbleFlipperContact, "Flipper Contact Rumble"s, "Strength of the rumble played when a ball hits a flipper, scaled by the impact speed (0 disables it)"s, 0.f, 3.f, 1.f);
+PropFloat(Player, RumbleBumper, "Bumper Rumble"s, "Strength of the rumble played when a bumper fires (0 disables it)"s, 0.f, 3.f, 1.f);
+PropFloat(Player, RumbleSlingshot, "Slingshot Rumble"s, "Strength of the rumble played when a slingshot fires (0 disables it)"s, 0.f, 3.f, 1.f);
+PropFloat(Player, RumblePlunger, "Plunger Rumble"s, "Strength of the rumble played when the plunger tip strikes the ball or the ball lands on the plunger, scaled by the impact (0 disables it)"s, 0.f, 3.f, 1.f);
+PropFloat(Player, RumbleFlipperButton, "Flipper Button Rumble"s, "Strength of the pulse played when a flipper fires on its button, whether or not it hits a ball (0 disables it). Ball hits on the flipper are the Flipper Contact Rumble."s, 0.f, 3.f, 0.5f);
+PropFloat(Player, RumbleNudge, "Nudge Rumble"s, "Strength of the rumble played when the cabinet is nudged, scaled by the cabinet acceleration (0 disables it)"s, 0.f, 3.f, 1.f);
+PropFloat(Player, RumbleBallBall, "Ball Collision Rumble"s, "Strength of the rumble played when two balls collide, scaled by the impact speed (0 disables it)"s, 0.f, 3.f, 1.f);
 PropInt(Player, MinPhysLoopTime, "MinPhysLoopTime"s, ""s, 0, 1000, 0); // Legacy lag reduction hack (e.g. if script execution or physics takes very long, comes at the price of "slower" gameplay). Not supported by BGFX variant (due to its multithreaded loop)
 PropIntUnbounded(Player, PhysicsMaxLoops, "Physics Max Loops"s,
    "Maximum number of physics iteration above which physics engine just skip to stay playable.\nThis is somewhat hacky, override table setup, and may cause gameplay issues. This should not be used anymore."s,
@@ -210,48 +241,45 @@ PropBool(Player, asenable, "AutostartEnable"s, ""s, false);
 PropInt(Player, Exitconfirm, "Direct Exit Length"s, "Length of a long ESC press that directly closes the app, (sadly) expressed in seconds * 60"s, 0, 30 * 60, 120);
 PropString(Input, Devices, "Devices"s, "List of known devices"s, ""s);
 
-// Nudge & Plumb settings
-PropFloat(Player, NudgeOrientation0, "Sensor 1 - Orientation"s, "Define sensor orientation"s, 0.f, 360.f, 0.f);
-PropFloat(Player, NudgeOrientation1, "Sensor 2 - Orientation"s, "Define sensor orientation"s, 0.f, 360.f, 0.f);
-PropBool(Player, NudgeFilter0, "Sensor 1 - Use Filter"s, "Enable/Disable filtering acquired value to prevent noise"s, false);
-PropBool(Player, NudgeFilter1, "Sensor 2 - Use Filter"s, "Enable/Disable filtering acquired value to prevent noise"s, false);
-PropBool(Player, SimulatedPlumb, "Plumb simulation"s, "Enable/Disable mechanical Tilt plumb simulation"s, true);
-PropFloat(Player, PlumbInertia, "Plumb Inertia"s, ""s, 0.001f, 1.f, 0.35f);
-PropFloat(Player, PlumbThresholdAngle, "Plumb Threshold"s, "Define threshold angle at which a Tilt is caused"s, 5.0f, 60.f, 35.f);
-PropBool(Player, EnableLegacyNudge, "Legacy Keyboard nudge"s, "Enable/Disable legacy keyboard nudge mode"s, false);
-PropFloat(Player, LegacyNudgeStrength, "Legacy Nudge Strength"s, "Changes the visual effect/screen shaking when using the legacy keyboard nudging mode"s, 0.f, 90.f, 1.f);
-PropFloat(Player, NudgeStrength, "Visual Nudge Strength"s, "Changes the visual effect/screen shaking when nudging the table"s, 0.f, 0.25f, 0.02f);
-PropArray(Player, NudgeOrientation, float, Float, Float, m_propPlayer_NudgeOrientation0, m_propPlayer_NudgeOrientation1);
-PropArray(Player, NudgeFilter, bool, Bool, Int, m_propPlayer_NudgeFilter0, m_propPlayer_NudgeFilter1);
+// Plumb settings
+PropBool(Player, SimulatedPlumb, "Plumb Simulation"s, "Enable/Disable mechanical Tilt plumb simulation"s, true);
+PropFloat(Player, PlumbDamping, "Plumb Damping"s, "Adjust plumb damping (how fast the pumb gets back to rest)"s, 0.f, 2.f, 1.f);
+PropFloat(Player, PlumbThresholdAngle, "Plumb Threshold"s, "Define threshold angle at which a Tilt is triggered"s, 0.15f, 4.f, 1.f);
+
+// Nudge settings
+PropEnum(Player, KeyboardNudgeMode, "Keyboard Nudge Mode"s, "Select how nudge is simulated when triggered from the keyboard."s, int, 2, "VP9 (simple push/retract)"s, "VPX 10.8 (cabinet model)"s, "VPX 10.9 (improved cabinet)"s);
+PropFloat(Player, KeyboardNudgeStrength, "Keyboard Nudge Strength"s, "Strength of the keyboard nudging mode"s, 0.f, 2.f, 1.f);
+PropFloat(Player, NudgeStrength, "Visual Nudge Strength"s, "Changes the visual effect/screen shaking when nudging the table"s, 0.f, 2.f, 1.f);
+PropInt(Input, NudgeSensorCount, "Nudge Sensor Count"s, "Number of hardware nudge sensors defined"s, 0, 100, 0);
 
 // Plunger settings
 PropBool(Player, PlungerRetract, "One Second Retract"s, "Enable retracting the plunger after a 1 second press when using the digital plunger emulation through keyboard or joystick button"s,
    false);
-PropBool(Player, PlungerLinearSensor, "Linear Sensor"s, "Select between symmetric (linear) and assymetric sensor"s, false);
 PropInt(Player, PlungerNormalize, "Plunger normalize override"s, "This value may be defined to override the table's plunger normalization"s, 0, 100,
    100); // Hacky: This should be a table override, not a player property as it overrides table data
+PropInt(Input, PlungerSensorCount, "Plunger Sensor Count"s, "Number of hardware plunger sensor defined"s, 0, 100, 0);
 
 // VR settings
-PropEnum(PlayerVR, AskToTurnOn, "Enable VR"s, "Ask to turn on VR"s, int, 1, "Enabled"s, "Autodetect"s, "Disabled"s);
-PropFloat(PlayerVR, Orientation, "View orientation"s, "VR view orientation"s, -180.f, 180.f, 0.f);
-PropFloat(PlayerVR, TableX, "View Offset X"s, "VR view X offset"s, -100.f, 100.f, 0.f);
-PropFloat(PlayerVR, TableY, "View Offset Y"s, "VR view Y offset"s, -100.f, 100.f, 0.f);
-PropFloat(PlayerVR, TableZ, "View Offset Z"s, "VR view Z offset"s, -100.f, 100.f, 0.f);
+#if SDL_PLATFORM_ANDROID && defined(ENABLE_XR)
+// Android with VR is native Quest build, so force VR mode
+PropEnum(PlayerVR, AskToTurnOn, "Enable VR"s, "Ask to turn on VR"s, int, 0, "Enabled"s, "Autodetect"s, "Disabled"s);
+#else
+PropEnum(PlayerVR, AskToTurnOn, "Enable VR"s, "Ask to turn on VR"s, int, 2, "Enabled"s, "Autodetect"s, "Disabled"s);
+#endif
+PropEnum(PlayerVR, DisplayRefreshRate, "Headset Refresh Rate"s, "Refresh rate requested from the headset when supported. Lower rates give the renderer more time per frame and avoid reprojected frames on standalone headsets"s, int, 0, "Runtime default"s, "72 Hz"s, "80 Hz"s, "90 Hz"s, "120 Hz"s);
+PropFloatDyn(PlayerVR, Orientation, "View orientation"s, "VR view orientation"s, -180.f, 180.f, 0.f);
+PropFloatDyn(PlayerVR, TableX, "View Offset X"s, "VR view X offset"s, -100.f, 100.f, 0.f);
+PropFloatDyn(PlayerVR, TableY, "View Offset Y"s, "VR view Y offset"s, -100.f, 100.f, 0.f);
+PropFloatDyn(PlayerVR, TableZ, "View Offset Z"s, "VR view Z offset"s, -100.f, 100.f, 0.f);
 PropBool(
-   PlayerVR, UsePassthroughColor, "Color Keyed Passthrough"s, "Replace VR background by a user defined color, to allow color keyed passthrough (for example using Virtual Desktop)"s, false);
-PropInt(PlayerVR, PassthroughColor, "Color Keyed Passthrough color"s, "Color that will replace the background"s, 0x000000, 0xFFFFFF, 0xBB4700);
+   PlayerVR, UsePassthroughColor, "Color Keyed Passthrough"s, "Replace VR background by full black to allow color keyed passthrough (for example using Virtual Desktop, setting passthrough to sharp full black)"s, false);
 PropEnum(Player, VRPreview, "Preview mode"s, "Select VR preview mode"s, int, 1, "Disabled"s, "Left Eye"s, "Right Eye"s, "Both Eyes"s);
 PropBool(PlayerVR, ShrinkPreview, "Shrink preview"s, "Shrink VR preview"s, false);
+PropBool(PlayerVR, AddBackglass, "Add Backglass"s, "Add a default backglass display to the scene"s, false);
+PropFloatDyn(PlayerVR, ControllerCabYOffset, "Cabinet Y Offset"s, "Y offset to apply when using controller view centering"s, -150.f, 50.f, 0.f);
+PropFloatDyn(PlayerVR, ControllerLockbarScale, "Lockbar size ratio"s, "Lockbar size ratio to apply when using controller view centering"s, 0.5f, 2.0f, 1.f);
 PropFloatUnbounded(PlayerVR, ResFactor, "ResFactor"s, ""s, -1.f);
-PropBool(Player, CaptureExternalDMD, "Capture External DMD"s, "Capture an external DMD Window and render it into the VR viewport.\nThis feature is deprecated and unsupported."s, false);
-PropBool(Player, CapturePUP, "Capture PinUp Player"s, "Capture PinUp Player (PUP) Window and render it into the VR viewport.\nThis feature is deprecated and unsupported."s, false);
-// Legacy OpenVR settings (to be removed)
-PropEnum(PlayerVR, EyeFBFormat, "EyeFBFormat"s, "VR frame buffer format"s, int, 1, "RGB 8"s, "RGBA 8 (Recommended)"s, "RGB 16F"s, "RGBA 16F"s);
-PropFloatUnbounded(PlayerVR, Slope, "Slope"s, "VR view slope"s, 6.5f);
-PropBool(PlayerVR, ScaleToFixedWidth, "ScaleToFixedWidth"s, ""s, false);
-PropFloatUnbounded(PlayerVR, ScaleAbsolute, "ScaleAbsolute"s, ""s, 55.f);
-PropFloatUnbounded(PlayerVR, ScaleRelative, "ScaleRelative"s, ""s, 1.f);
-PropFloatUnbounded(PlayerVR, NearPlane, "NearPlane"s, "VR near plane offset"s, 5.f);
+PropBool(PlayerVR, LockFeetToGround, "Lock Feet to Ground"s, "Lock cabinet feet to ground. This usually feels more natural (avoid floating cabinet) but may be deactivated for example for playing mini flipper seated at a desk."s, true);
 
 // Physics override profiles
 PropFloatUnbounded(Player, FlipperPhysicsMass0, "FlipperPhysicsMass0"s, ""s, 1.f);
@@ -476,7 +504,7 @@ PropEnum(Player, Stereo3D, "Stereo rendering"s, "Stereo rendering mode"s, Stereo
 PropFloat(Player, Stereo3DEyeSeparation, "Eye distance"s, "Physical distance (mm) between eyes"s, 5.f, 200.f, 63.f);
 PropFloat(Player, Stereo3DBrightness, "Stereo Brightness"s, "Brightness adjustment applied to stereo rendering"s, 0.f, 2.f, 1.f);
 PropFloat(Player, Stereo3DSaturation, "Stereo Saturation"s, "Saturation adjustment applied to stereo rendering"s, 0.f, 2.f, 1.f);
-PropFloat(Player, Stereo3DDefocus, "Anaglyph Defocus"s, "Defocusing of the lesser eye to anaglyph stereo rendering"s, 0.f, 1.f, 0.f);
+PropFloat(Player, Stereo3DDefocus, "Anaglyph Defocus"s, "Defocusing of the lesser eye (non dominant eye) applied to anaglyph stereo rendering.\nThis may help to keep the depth perception with less ghosting/retinal rivalry."s, 0.f, 1.f, 0.f);
 PropFloat(Player, Stereo3DLeftContrast, "Anaglyph Left Contrast"s, "Left eye contrast adjustment applied to anaglyph stereo rendering"s, 0.f, 2.f, 1.f);
 PropFloat(Player, Stereo3DRightContrast, "Anaglyph Right Contrast"s, "Right eye contrast adjustment applied to anaglyph stereo rendering"s, 0.f, 2.f, 1.f);
 PropEnum(Player, Anaglyph1Filter, "Anaglyph Filter"s, "Anaglyph filter"s, int, 2, "None"s, "Dubois"s, "Luminance"s, "Deghost"s);
@@ -491,41 +519,41 @@ PropEnum(Player, Anaglyph9Filter, "Anaglyph Filter"s, "Anaglyph filter"s, int, 2
 PropEnum(Player, Anaglyph10Filter, "Anaglyph Filter"s, "Anaglyph filter applied to anaglyph profile #10"s, int, 0, "None"s, "Dubois"s, "Luminance"s, "Deghost"s);
 PropArray(Player, AnaglyphFilter, int, Int, Int, m_propPlayer_Anaglyph1Filter, m_propPlayer_Anaglyph2Filter, m_propPlayer_Anaglyph3Filter, m_propPlayer_Anaglyph4Filter,
    m_propPlayer_Anaglyph5Filter, m_propPlayer_Anaglyph6Filter, m_propPlayer_Anaglyph7Filter, m_propPlayer_Anaglyph8Filter, m_propPlayer_Anaglyph9Filter, m_propPlayer_Anaglyph10Filter);
-PropFloat(Player, Anaglyph1DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph2DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph3DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph4DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph5DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph6DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph7DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph8DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph9DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
-PropFloat(Player, Anaglyph10DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation"s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph1DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph2DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph3DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph4DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph5DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph6DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph7DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph8DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph9DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
+PropFloat(Player, Anaglyph10DynDesat, "Anaglyph Dyn. Desat"s, "Dynamic desaturation selectively desaturate (turn to greyscale) colors that would otherwise cause retinal rivalry (when something is seen by one eye but not by the other)."s, 0.f, 1.f, 1.f);
 PropArray(Player, AnaglyphDynDesat, float, Float, Float, m_propPlayer_Anaglyph1DynDesat, m_propPlayer_Anaglyph2DynDesat, m_propPlayer_Anaglyph3DynDesat, m_propPlayer_Anaglyph4DynDesat,
    m_propPlayer_Anaglyph5DynDesat, m_propPlayer_Anaglyph6DynDesat, m_propPlayer_Anaglyph7DynDesat, m_propPlayer_Anaglyph8DynDesat, m_propPlayer_Anaglyph9DynDesat,
    m_propPlayer_Anaglyph10DynDesat);
-PropFloat(Player, Anaglyph1Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph2Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph3Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph4Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph5Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph6Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph7Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph8Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph9Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
-PropFloat(Player, Anaglyph10Deghost, "Anaglyph Deghosting"s, "Deghosting level"s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph1Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph2Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph3Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph4Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph5Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph6Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph7Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph8Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph9Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
+PropFloat(Player, Anaglyph10Deghost, "Anaglyph Deghosting"s, "Adjust colors to avoid color clamping as color clamping always results in visible ghosting. The drawback is that it makes images brighter and less saturated."s, 0.f, 1.f, 0.f);
 PropArray(Player, AnaglyphDeghost, float, Float, Float, m_propPlayer_Anaglyph1Deghost, m_propPlayer_Anaglyph2Deghost, m_propPlayer_Anaglyph3Deghost, m_propPlayer_Anaglyph4Deghost,
    m_propPlayer_Anaglyph5Deghost, m_propPlayer_Anaglyph6Deghost, m_propPlayer_Anaglyph7Deghost, m_propPlayer_Anaglyph8Deghost, m_propPlayer_Anaglyph9Deghost, m_propPlayer_Anaglyph10Deghost);
-PropBool(Player, Anaglyph1sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph2sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph3sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph4sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph5sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph6sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph7sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph8sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph9sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
-PropBool(Player, Anaglyph10sRGB, "Calibrated sRGB Display"s, "Calibrated sRGB Display"s, true);
+PropBool(Player, Anaglyph1sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph2sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph3sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph4sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph5sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph6sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph7sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph8sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph9sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
+PropBool(Player, Anaglyph10sRGB, "Calibrated sRGB Display"s, "If enabled, bypass display gamma evaluation from calibration and uses standard sRGB gamma curve."s, true);
 PropArray(Player, AnaglyphsRGB, bool, Int, Int, m_propPlayer_Anaglyph1sRGB, m_propPlayer_Anaglyph2sRGB, m_propPlayer_Anaglyph3sRGB, m_propPlayer_Anaglyph4sRGB, m_propPlayer_Anaglyph5sRGB,
    m_propPlayer_Anaglyph6sRGB, m_propPlayer_Anaglyph7sRGB, m_propPlayer_Anaglyph8sRGB, m_propPlayer_Anaglyph9sRGB, m_propPlayer_Anaglyph10sRGB);
 // Red Cyan
@@ -882,16 +910,16 @@ PropArray(RecentDir, TableFileName, string, String, String, m_propRecentDir_Tabl
    m_propRecentDir_TableFileName4, m_propRecentDir_TableFileName5, m_propRecentDir_TableFileName6, m_propRecentDir_TableFileName7);
 
 // Controller: legacy VPinMAME B2S/DOF settings, exposed in VPX UI, then provided through Windows registry (replaced by plugin settings)
-PropEnum(Controller, DOFContactors, "DOFContactors"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFKnocker, "DOFKnocker"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFChimes, "DOFChimes"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFBell, "DOFBell"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFGear, "DOFGear"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFShaker, "DOFShaker"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFFlippers, "DOFFlippers"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFTargets, "DOFTargets"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropEnum(Controller, DOFDropTargets, "DOFDropTargets"s, ""s, int, 0, "Sound FX"s, "DOF"s, "Both"s);
-PropBool(Controller, ForceDisableB2S, "ForceDisableB2S"s, ""s, false);
+PropEnum(Controller, DOFContactors, "DOF Contactors"s, "Hints the table script on how to handle contactor events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFKnocker, "DOF Knocker"s, "Hints the table script on how to handle knocker events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFChimes, "DOF Chimes"s, "Hints the table script on how to handle chime events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFBell, "DOF Bell"s, "Hints the table script on how to handle bell events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFGear, "DOF Gear"s, "Hints the table script on how to handle gear events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFShaker, "DOF Shaker"s, "Hints the table script on how to handle shaker events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFFlippers, "DOF Flippers"s, "Hints the table script on how to handle flipper events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFTargets, "DOF Targets"s, "Hints the table script on how to handle target events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropEnum(Controller, DOFDropTargets, "DOF Drop Targets"s, "Hints the table script on how to handle drop target events, between sounds and direct output framework"s, int, 2, "Sound FX"s, "DOF"s, "Both"s);
+PropBool(Controller, ForceDisableB2S, "Disable B2S"s, "Legacy 'Disable B2S' hints script to avoid using B2S controller. Only works with tables using 'controller.vbs' and not using plugins for backglass rendering"s, false);
 
 // Parts Defaults: Balls
 PropFloat(DefaultPropsBall, Mass, "Ball Mass"s, ""s, 0.1f, 2.f, 1.f);
@@ -976,7 +1004,7 @@ PropIntUnbounded(DefaultPropsFlasher, Opacity, "Opacity"s, ""s, 100);
 PropFloatUnbounded(DefaultPropsFlasher, ModulateVsAdd, "ModulateVsAdd"s, ""s, 0.9f);
 PropIntUnbounded(DefaultPropsFlasher, FilterAmount, "FilterAmount"s, ""s, 100);
 PropBool(DefaultPropsFlasher, Visible, "Visible"s, ""s, true);
-PropBool(DefaultPropsFlasher, AddBlend, "AddBlend"s, ""s, false);
+PropEnum(DefaultPropsFlasher, AddBlend, "AddBlend"s, ""s, int, 0, "Off"s, "On, amplify"s, "On, absorb"s);
 PropEnum(DefaultPropsFlasher, RenderMode, "RenderMode"s, ""s, int, 0, "FLASHER"s, "DMD"s, "DISPLAY"s, "ALPHASEG"s);
 PropBool(DefaultPropsFlasher, DisplayTexture, "DisplayTexture"s, ""s, false);
 PropEnum(DefaultPropsFlasher, ImageMode, "ImageMode"s, ""s, RampImageAlignment, ImageModeWrap, "ImageModeWorld"s, "ImageModeWrap"s);
@@ -1356,22 +1384,21 @@ PropBool(DefaultPropsTrigger, TimerEnabled, "Timer Enabled"s, ""s, false);
 PropInt(DefaultPropsTrigger, TimerInterval, "Timer Interval"s, ""s, -2, 10000, 100);
 
 // Default core plugins enable state
+PropBoolDyn(PluginAltSound, Enable, "Enable"s, "Enable legacy AltSound plugin"s, g_isStandalone);
 PropBoolDyn(PluginB2SLegacy, Enable, "Enable"s, "Enable legacy B2S plugin"s, g_isStandalone);
 PropBoolDyn(PluginDMDUtil, Enable, "Enable"s, "Enable DMDUtil plugin"s, false);
 PropBoolDyn(PluginFlexDMD, Enable, "Enable"s, "Enable FlexDMD plugin"s, g_isStandalone);
 PropBoolDyn(PluginPinMAME, Enable, "Enable"s, "Enable PinMAME plugin"s, g_isStandalone);
-PropBoolDyn(PluginPUP, Enable, "Enable"s, "Enable PinUp player plugin"s, g_isMobile);
+PropBoolDyn(PluginPUP, Enable, "Enable"s, "Enable PinUp player plugin"s, g_isStandalone);
 PropBoolDyn(PluginScoreView, Enable, "Enable"s, "Enable ScoreView player plugin"s, g_isStandalone);
 PropBoolDyn(PluginSerum, Enable, "Enable"s, "Enable Serum plugin"s, g_isStandalone);
 PropBoolDyn(PluginWMP, Enable, "Enable"s, "Enable WMP plugin"s, g_isStandalone);
+PropBoolDyn(PluginVNI, Enable, "Enable"s, "Enable VNI plugin"s, g_isStandalone);
 
 // Standalone
-PropEnumWithMin(Standalone, RenderingModeOverride, "Override rendering mode"s, ""s, int, -1, g_isMobile ? 0 : -1, "Default"s, "2D"s, "Stereo 3D"s, "VR"s); // Mobile defaults to 2D (was VR)
-PropBool(Standalone, Haptics, "Haptics"s, ""s, g_isMobile);
+PropEnumWithMin(Standalone, RenderingModeOverride, "Override rendering mode"s, ""s, int, -1, -1, "Default"s, "2D"s, "Stereo 3D"s, "VR"s);
 PropBool(Standalone, TouchZonesForced, "Force Touch Zones"s, "Always use hardcoded touch zones, ignoring table overrides"s, false);
-PropBool(Standalone, EmCreditDualSend, "EM Credit Dual-Send"s, "Also deliver the legacy '5' coin key on Add Credit, for EM/original tables that hard-code the '5' credit key instead of '3'. Host sets this for non-PinMAME tables only."s, false);
-PropBool(Standalone, ResetLogOnPlay, "Reset Log on Play"s, ""s, g_isMobile);
-PropString(Standalone, VPRegPath, "VPRegPath"s, ""s, ""s);
+PropBool(Standalone, EmCreditDualSend, "EM Credit Dual-Send"s, "Also deliver the legacy '1' start / '5' coin keys from the Start / Add Credit touch zones, for EM/original tables that hard-code these keys. Host sets this for non-PinMAME tables only."s, false);
 
 // Editor settings
 PropIntUnbounded(Editor, WindowLeft, "WindowLeft"s, "Main window left"s, -1);
@@ -1387,8 +1414,8 @@ PropIntUnbounded(Editor, CodeViewPosX, "CodeViewPosX"s, "Script window X positio
 PropIntUnbounded(Editor, CodeViewPosY, "CodeViewPosY"s, "Script window Y position"s, 0);
 PropIntUnbounded(Editor, CodeViewPosWidth, "CodeViewPosWidth"s, "Script window width"s, 640);
 PropIntUnbounded(Editor, CodeViewPosHeight, "CodeViewPosHeight"s, "Script window height"s, 490);
-PropIntUnbounded(Editor, DebuggerPosX, "DebuggerPosX"s, "Debugger window X position"s, 0);
-PropIntUnbounded(Editor, DebuggerPosY, "DebuggerPosY"s, "Debugger window Y position"s, 0);
+PropIntDyn(Editor, DebuggerPosX, "DebuggerPosX"s, "Debugger window X position"s, INT_MIN, INT_MAX, 0);
+PropIntDyn(Editor, DebuggerPosY, "DebuggerPosY"s, "Debugger window Y position"s, INT_MIN, INT_MAX, 0);
 PropIntUnbounded(Editor, DebuggerWidth, "DebuggerWidth"s, "Debugger window width"s, 1000);
 PropIntUnbounded(Editor, DebuggerHeight, "DebuggerHeight"s, "Debugger window height"s, 800);
 PropIntUnbounded(Editor, MaterialMngPosX, "MaterialMngPosX"s, "Material Manager window X position"s, 0);
@@ -1421,7 +1448,6 @@ PropBool(Editor, AutoSaveOn, "AutoSaveOn"s, "Enable Autosave for table(s)"s, tru
 PropIntUnbounded(Editor, AutoSaveTime, "AutoSaveTime"s, "Time for the Autosave intervals"s, 10);
 PropIntUnbounded(Editor, GridSize, "GridSize"s, "Grid size in viewport/editor"s, 50);
 PropBool(Editor, GroupElementsInCollection, "GroupElementsInCollection"s, "Group Elements in a collection in viewport/editor"s, true);
-PropBool(Editor, LogScriptOutput, "LogScriptOutput"s, "Enable script logging output"s, true);
 PropInt(Editor, DefaultMaterialColor, "DefaultMaterialColor"s, "Default material color in viewport/editor"s, 0x000000, 0xFFFFFF, 0xB469FF);
 PropInt(Editor, ElementSelectColor, "ElementSelectColor"s, "Element selection color in viewport/editor"s, 0x000000, 0xFFFFFF, 0x00FF0000);
 PropInt(Editor, ElementSelectLockedColor, "ElementSelectLockedColor"s, "Locked Element selection color in viewport/editor"s, 0x000000, 0xFFFFFF, 0x00A7726D);

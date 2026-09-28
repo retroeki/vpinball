@@ -58,7 +58,7 @@ void AssetManager::SetBasePath(const string& szBasePath)
    m_szBasePath = normalize_path_separators(szBasePath);
    if (!m_szBasePath.ends_with(PATH_SEPARATOR_CHAR))
       m_szBasePath += PATH_SEPARATOR_CHAR;
-   LOGI("Base path set to: %s", m_szBasePath.c_str());
+   LOGI("Base path set to: " + m_szBasePath);
 }
 
 AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
@@ -66,7 +66,7 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
    string normalizedSrc = normalize_path_separators(src);
 
    if (normalizedSrc.find('|') != string::npos) {
-      LOGE("'|' is not allowed inside file names as it is the separator for image sequences: %s", normalizedSrc.c_str());
+      LOGE("'|' is not allowed inside file names as it is the separator for image sequences: " + normalizedSrc);
       return nullptr;
    }
 
@@ -87,7 +87,7 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
       else if (pBaseSrc->GetSrcType() == AssetSrcType_VPXResource)
          parts[0] = "VPX." + parts[0];
       else if (pBaseSrc->GetSrcType() == AssetSrcType_File) {
-         std::filesystem::path path(pBaseSrc->GetPath() + PATH_SEPARATOR_CHAR + ".." + PATH_SEPARATOR_CHAR + parts[0]);
+         std::filesystem::path path = std::filesystem::path(pBaseSrc->GetPath()).parent_path() / parts[0];
          parts[0] = path.lexically_normal().string();
       }
    }
@@ -135,13 +135,8 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
    }
    else {
       pAssetSrc->SetSrcType(AssetSrcType_File);
-      if (!pBaseSrc) {
-         // Don't prepend base path if already absolute (Unix path starts with /)
-         if (!parts[0].empty() && parts[0][0] == '/')
-            pAssetSrc->SetPath(parts[0]);
-         else
-            pAssetSrc->SetPath(m_szBasePath + parts[0]);
-      }
+      if (!pBaseSrc && !std::filesystem::path(parts[0]).is_absolute())
+         pAssetSrc->SetPath(m_szBasePath + parts[0]);
       else
          pAssetSrc->SetPath(parts[0]);
    }
@@ -155,7 +150,7 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
    else if (ext == "fnt")
       pAssetSrc->SetAssetType(AssetType_BMFont);
    else {
-      LOGE("Unsupported asset extension: %s", ext.c_str());
+      LOGE("Unsupported asset extension: " + ext);
    }
 
    if (pAssetSrc->GetAssetType() == AssetType_Image) {
@@ -207,7 +202,7 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
             pAssetSrc->GetBitmapFilters().push_back(pFilter);
          }
          else {
-            LOGE("Unknown bitmap parameter: %s", definition.c_str());
+            LOGE("Unknown bitmap parameter: " + definition);
          }
       }
    }
@@ -226,12 +221,12 @@ AssetSrc* AssetManager::ResolveSrc(const string& src, AssetSrc* pBaseSrc)
          else if (definition.starts_with("border_size=") && try_parse_int(definition.substr(12), borderSize))
             pAssetSrc->SetFontBorderSize(borderSize);
          else {
-            LOGE("Unknown font definition: %s", definition.c_str());
+            LOGE("Unknown font definition: " + definition);
          }
       }
    }
    else if (pAssetSrc->GetAssetType() == AssetType_Unknown) {
-      LOGE("Failed to resolve asset: %s", normalizedSrc.c_str());
+      LOGE("Failed to resolve asset: " + normalizedSrc);
    }
 
    return pAssetSrc;
@@ -244,36 +239,36 @@ void* AssetManager::Open(AssetSrc* pSrc)
    switch(pSrc->GetSrcType()) {
       case AssetSrcType_File:
       {
-        string path = find_case_insensitive_file_path(pSrc->GetPath());
+        std::filesystem::path path = find_case_insensitive_file_path(pSrc->GetPath());
         if (!path.empty()) {
            if (pSrc->GetAssetType() == AssetType_BMFont)
               pAsset = BitmapFont::Create(path);
            else if (pSrc->GetAssetType() != AssetType_GIF)
-              pAsset = IMG_Load(path.c_str());
+              pAsset = IMG_Load(path.string().c_str());
            else
-              pAsset = IMG_LoadAnimation(path.c_str());
+              pAsset = IMG_LoadAnimation(path.string().c_str());
         }
       }
       break;
       case AssetSrcType_FlexResource:
       {
          // Load assets provided with plugin
-         string path;
+         std::filesystem::path path;
          #if (defined(__APPLE__) && ((defined(TARGET_OS_IOS) && TARGET_OS_IOS) || (defined(TARGET_OS_TV) && TARGET_OS_TV))) || defined(__ANDROID__)
          VPXInfo vpxInfo;
          m_vpxApi->GetVpxInfo(&vpxInfo);
-         path = string(vpxInfo.path) + PATH_SEPARATOR_CHAR + "plugins" + PATH_SEPARATOR_CHAR + "flexdmd" + PATH_SEPARATOR_CHAR;
+         path = std::filesystem::path(vpxInfo.path) / "plugins" / "flexdmd";
          #else
          path = GetPluginPath();
          #endif
-         path = find_case_insensitive_file_path(path + "assets" + PATH_SEPARATOR_CHAR + pSrc->GetPath());
+         path = find_case_insensitive_file_path(path / "assets" / pSrc->GetPath());
          if (!path.empty()) {
             if (pSrc->GetAssetType() == AssetType_BMFont)
                pAsset = BitmapFont::Create(path);
             else if (pSrc->GetAssetType() != AssetType_GIF)
-               pAsset = IMG_Load(path.c_str());
+               pAsset = IMG_Load(path.string().c_str());
             else
-               pAsset = IMG_LoadAnimation(path.c_str());
+               pAsset = IMG_LoadAnimation(path.string().c_str());
          }
       }
       break;
@@ -303,7 +298,7 @@ void* AssetManager::Open(AssetSrc* pSrc)
    }
 
    if (!pAsset) {
-      LOGE("Asset not loaded: %s", pSrc->GetPath().c_str());
+      LOGE("Asset not loaded: " + pSrc->GetPath());
    }
 
    return pAsset;
@@ -312,7 +307,7 @@ void* AssetManager::Open(AssetSrc* pSrc)
 Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
 {
    if (pSrc->GetAssetType() != AssetType_Image && pSrc->GetAssetType() != AssetType_GIF) {
-      LOGE("Asked to load a bitmap from a resource of type: %d", pSrc->GetAssetType());
+      LOGE("Asked to load a bitmap from a resource of type: " + std::to_string(pSrc->GetAssetType()));
    }
    const auto it = m_cachedBitmaps.find(pSrc->GetId());
    if (it != m_cachedBitmaps.end())
@@ -326,7 +321,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
       Bitmap* pCachedBitmap = new Bitmap(itwo->second);
       pCachedBitmap->AddRef();
       m_cachedBitmaps[pSrc->GetId()] = pCachedBitmap;
-      // LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
+      // LOGI("Bitmap added to cache: " + pSrc->GetId());
       if (pSrc->GetAssetType() == AssetType_Image) {
          for (BitmapFilter* pFilter : pSrc->GetBitmapFilters())
             pFilter->Filter(pCachedBitmap);
@@ -340,7 +335,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
           Bitmap* pCachedBitmap = new Bitmap(pData, pSrc->GetAssetType());
           pCachedBitmap->AddRef();
           m_cachedBitmaps[pSrc->GetIdWithoutOptions()] = pCachedBitmap;
-          // LOGI("Bitmap added to cache: %s", pSrc->GetIdWithoutOptions().c_str());
+          // LOGI("Bitmap added to cache: " + pSrc->GetIdWithoutOptions());
           if (pSrc->GetAssetType() == AssetType_Image) {
              if (!pSrc->GetBitmapFilters().empty()) {
                 pCachedBitmap = new Bitmap(pCachedBitmap);
@@ -348,7 +343,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
                 m_cachedBitmaps[pSrc->GetId()] = pCachedBitmap;
                 for (BitmapFilter* pFilter : pSrc->GetBitmapFilters())
                    pFilter->Filter(pCachedBitmap);
-                // LOGI("Bitmap added to cache: %s", pSrc->GetId().c_str());
+                // LOGI("Bitmap added to cache: " + pSrc->GetId());
              }
           }
           return pCachedBitmap;
@@ -360,7 +355,7 @@ Bitmap* AssetManager::GetBitmap(AssetSrc* pSrc)
 Font* AssetManager::GetFont(AssetSrc* pSrc)
 {
    if (pSrc->GetAssetType() != AssetType_BMFont) {
-      LOGE("Asked to load a font from a resource of type: %d", pSrc->GetAssetType());
+      LOGE("Asked to load a font from a resource of type: " + std::to_string(pSrc->GetAssetType()));
    }
    const auto it = m_cachedFonts.find(pSrc->GetId());
    if (it != m_cachedFonts.end())
@@ -371,7 +366,7 @@ Font* AssetManager::GetFont(AssetSrc* pSrc)
    Font* pFont = new Font(this, pSrc);
    pFont->AddRef();
    m_cachedFonts[pSrc->GetId()] = pFont;
-   // LOGI("Font added to cache: %s", pSrc->GetId().c_str());
+   // LOGI("Font added to cache: " + pSrc->GetId());
    return pFont;
 }
 

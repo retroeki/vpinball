@@ -23,6 +23,10 @@
 //   - flipper button press to coil drive is even shorter - again suggesting a faster sample rate of the button is better
 
 #include "core/stdafx.h"
+#include "parts/flipper.h"
+
+#include "ui/live/LiveUI.h"
+#include "imgui/imgui.h"
 
 // Ported at: VisualPinball.Engine/VPT/Flipper/FlipperMover.cs
 
@@ -236,7 +240,7 @@ void HitFlipper::CalcHitBBox()
    aabb = ExtendBoundsAtPosition(aabb, c, m_flipperMover.m_flipperradius, r2, a0);
    aabb = ExtendBoundsAtPosition(aabb, c, m_flipperMover.m_flipperradius, r2, a1);
 
-   // extend with extremes (-90°, 0°, 90° and 180°)
+   // extend with extremes (-90, 0, 90 and 180)
    aabb = ExtendBoundsAtExtreme(aabb, c, m_flipperMover.m_flipperradius, r2, r3, a0, a1, -90.f);
    aabb = ExtendBoundsAtExtreme(aabb, c, m_flipperMover.m_flipperradius, r2, r3, a0, a1, 0.f);
    aabb = ExtendBoundsAtExtreme(aabb, c, m_flipperMover.m_flipperradius, r2, r3, a0, a1, 90.f);
@@ -323,7 +327,7 @@ void FlipperMoverObject::UpdateDisplacements(const float dtime)
             m_startTime = 0;
             PLOGD << "Stroke duration: " << dur << " ms";
             PLOGD << "Ang. velocity: " << m_angleSpeed;
-            PLOGD << "Ball velocity: " << g_pplayer->m_vball[0]->vel.Length();
+            PLOGD << "Ball velocity: " << g_pplayer->m_vball[0]->GetVelocity().Length();
          }
 #endif
          handle_event = true;
@@ -340,17 +344,10 @@ void FlipperMoverObject::UpdateDisplacements(const float dtime)
       const float anglespd = fabsf(RADTOANG(m_angleSpeed));
       m_angularMomentum *= -0.3f; //!! make configurable?
       m_angleSpeed = m_angularMomentum / m_inertia;
-
       if (m_enableRotateEvent > 0)
-      {
          m_pflipper->FireVoidEventParm(DISPID_LimitEvents_EOS, anglespd); // send EOS event
-
-         g_pplayer->m_pininput.m_leftkey_down_usec_EOS = usec(); // debug only
-         g_pplayer->m_pininput.m_leftkey_down_frame_EOS = g_pplayer->m_overall_frames;
-      }
       else if (m_enableRotateEvent < 0)
          m_pflipper->FireVoidEventParm(DISPID_LimitEvents_BOS, anglespd); // send Beginning of Stroke/Park event
-
       m_enableRotateEvent = 0;
    }
 }
@@ -774,7 +771,7 @@ float HitFlipper::HitTestFlipperFace(const BallS& ball, const float dtime, Colli
       dp = bffnd;                        // remember
    } //for loop
 
-   //+++ End time interation loop found time t soultion ++++++
+   //+++ End time interation loop found time t solution ++++++
 
    if (infNaN(t) || t < 0.f || t > dtime                             // time is outside this frame ... no collision
       ||
@@ -887,7 +884,8 @@ void HitFlipper::Collide(const CollisionEvent& coll)
       else return;
 #endif
    }
-   g_pplayer->m_liveUI->m_ballControl.SetDraggedBall(pball); // Ball control most recently collided with flipper
+   if (g_pplayer->m_liveUI)
+      g_pplayer->m_liveUI->m_ballControl.SetDraggedBall(pball->m_pBall); // Ball control most recently collided with flipper
 
 #ifdef C_DISP_GAIN 
    // correct displacements, mostly from low velocity blindness, an alternative to true acceleration processing
@@ -1004,6 +1002,51 @@ void HitFlipper::Collide(const CollisionEvent& coll)
 
    m_last_hittime = g_pplayer->m_time_msec; // keep resetting until idle for 250 milliseconds
 
+   // Haptics use their own trigger rather than the script event gate above: that gate counts from the last
+   // contact of any kind, and a ball resting on the raised flipper touches it every few milliseconds, so the
+   // slap that follows never qualified.
+   //
+   // The impact is the impulse the flipper puts into the ball, and the physics delivers it as a run of contacts:
+   // a ball hitting a resting flipper is one contact with the full relative speed, a ball slapped or riding along
+   // the moving flipper is a dozen small ones a few milliseconds apart. The normal impact speed of a single
+   // contact therefore says little about a slap; the sum over a short window does: it follows the speed the ball
+   // leaves with far better than the strongest single contact. What is summed is the speed the ball itself brings
+   // towards the flipper face, not the speed relative to the moving face: a flipper firing at a resting ball puts
+   // everything into the contact from its own motion, and that is the solenoid the cabinet feels through the
+   // button pulse, not a ball hitting the flipper. Contacts of the last RUMBLE_WINDOW_MS are summed. The
+   // first contact of a run always plays (the ball arriving, however softly: a held ball rolling on the flipper
+   // is felt through these), later ones only when the sum exceeds what was last played by a unit, up to the
+   // saturation of the impact scale, so a hit follows to its full strength through the mixer while a resting
+   // ball stays silent.
+   const float arrival = -normal.Dot(vB); // the ball's own speed towards the face, positive when approaching
+   if (bnv < -0.25f && arrival > 0.25f)
+   {
+      const uint32_t now = g_pplayer->m_time_msec;
+      while (m_rumbleContactCount > 0 && now - m_rumbleContactMs[m_rumbleContactTail] > RUMBLE_WINDOW_MS)
+      {
+         m_rumbleContactTail = (m_rumbleContactTail + 1) % RUMBLE_CONTACTS;
+         m_rumbleContactCount--;
+      }
+      const bool firstOfRun = (m_rumbleContactCount == 0);
+      if (firstOfRun)
+         m_rumblePlayed = 0.f;
+      if (m_rumbleContactCount < RUMBLE_CONTACTS)
+      {
+         const int head = (m_rumbleContactTail + m_rumbleContactCount) % RUMBLE_CONTACTS;
+         m_rumbleContactMs[head] = now;
+         m_rumbleContactImpact[head] = arrival;
+         m_rumbleContactCount++;
+      }
+      float sum = 0.f;
+      for (int i = 0; i < m_rumbleContactCount; i++)
+         sum += m_rumbleContactImpact[(m_rumbleContactTail + i) % RUMBLE_CONTACTS];
+      if (firstOfRun || (sum > m_rumblePlayed + 1.f && m_rumblePlayed < RUMBLE_FULL_IMPACT))
+      {
+         m_rumblePlayed = sum;
+         g_pplayer->m_pininput.PlayFlipperContactRumble(-sum);
+      }
+   }
+
 #ifdef DEBUG_FLIPPERS
    PLOGD << "   ---- after collision ----\n";
    PLOGD << "  ball vel. " << pball->m_vel.x << ' ' << pball->m_vel.y << ' ' << pball->m_vel.z;
@@ -1098,7 +1141,7 @@ void HitFlipper::Contact(CollisionEvent& coll, const float dtime)
 
          numer = -slipDir.Dot(arel);
          crossF = CrossProduct(rF, slipDir);
-         denomF = slipDir.Dot(CrossProduct(crossF / -m_flipperMover.m_inertia, rF));
+         denomF = slipDir.Dot(CrossProduct(crossF / m_flipperMover.m_inertia, rF));
       }
       else // nonzero slip speed - dynamic friction case
       {

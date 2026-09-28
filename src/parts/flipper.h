@@ -1,24 +1,29 @@
 // license:GPLv3+
 
-// Definition of the Flipper class
-
 #pragma once
 
-#include "ui/resource.h"  
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "physics/hitflipper.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
+
+class MeshBuffer;
 
 class FlipperData final : public BaseProperty
 {
 public:
    float m_BaseRadius;
    float m_EndRadius;
-   float m_FlipperRadiusMin; // the flipper length reduction at maximum difficulty 
+   float m_FlipperRadiusMin; // the flipper length reduction at maximum difficulty
    float m_FlipperRadiusMax;
    float m_FlipperRadius;
    float m_StartAngle;
    float m_EndAngle;
    float m_height;
    Vertex2D m_Center;
-   TimerDataRoot m_tdr;
 
    string m_szSurface;
    COLORREF m_color;
@@ -61,24 +66,24 @@ class Flipper :
    public IConnectionPointContainerImpl<Flipper>,
    public IProvideClassInfo2Impl<&CLSID_Flipper, &DIID_IFlipperEvents, &LIBID_VPinballLib>,
    public EventProxy<Flipper, &DIID_IFlipperEvents>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Flipper();
+   Flipper() { }
    virtual ~Flipper();
 
-   STANDARD_EDITABLE_DECLARES(Flipper, eItemFlipper, FLIPPER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Flipper, eItemFlipper, FLIPPER)
 
    BEGIN_COM_MAP(Flipper)
       COM_INTERFACE_ENTRY(IFlipper)
@@ -93,15 +98,12 @@ public:
       CONNECTION_POINT_ENTRY(DIID_IFlipperEvents)
    END_CONNECTION_POINT_MAP()
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
    void SetDefaultPhysics(const bool fromMouseClick) final;
    void ExportMesh(ObjLoader &loader) final;
 
-   ItemTypeEnum HitableGetItemType() const final { return eItemFlipper; }
    void WriteRegDefaults() final;
 
    //DECLARE_NOT_AGGREGATABLE(Flipper)
@@ -147,7 +149,7 @@ public:
       // Discard if return value is overriden
       if (m_phitflipper && (m_d.m_OverridePhysics || (m_ptable->m_overridePhysicsFlipper && m_ptable->m_overridePhysics)))
          return;
-      m_d.m_return = clamp(value, 0.0f, 1.0f);
+      m_d.m_return = saturate(value);
    }
 
    float GetFlipperRadiusMin() const { return m_d.m_FlipperRadiusMin; }
@@ -156,19 +158,20 @@ public:
        m_d.m_FlipperRadiusMin = max(value,0.0f);
    }
 
+   uint64_t GetLastRotateTime() const { return m_lastRotateTime; }
+
    FlipperData m_d;
 
-   PinTable *m_ptable = nullptr;
+   // Computes the 4 tangent vertices and end center of the flipper shape (pure geometry helper)
+   void GetVertices(const float basex, const float basey, const float angle, const float baseradius, const float endradius, Vertex2D &vEndCenter, Vertex2D (&rgvTangents)[4]) const;
 
 private:
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_meshBuffer;
    std::shared_ptr<MeshBuffer> m_meshEdgeBuffer;
    std::shared_ptr<MeshBuffer> m_meshEdgeRubberBuffer;
    Vertex3Ds m_boundingSphereCenter;
    //float m_boundingSphereRadius = -1.f;
-
-   void SetVertices(const float basex, const float basey, const float angle, Vertex2D * const pvEndCenter, Vertex2D * const rgvTangents, const float baseradius, const float endradius) const;
 
    void GenerateBaseMesh(Vertex3D_NoTex2 *buf);
 
@@ -177,7 +180,9 @@ private:
    HitFlipper *m_phitflipper = nullptr;
    float m_lastAngle = 0.f;
 
-// IFlipper
+   uint64_t m_lastRotateTime = 0;
+
+   // IFlipper
 public:
    STDMETHOD(get_Elasticity)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_Elasticity)(/*[in]*/ float newVal);

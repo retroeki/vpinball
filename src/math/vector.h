@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "utils/Logger.h"
+
 #include <cfloat>
 
 // 2D vector
@@ -365,6 +367,11 @@ public:
 
     constexpr Vertex4D() {}
     constexpr Vertex4D(const float _x, const float _y, const float _z, const float _w) : x(_x), y(_y), z(_z), w(_w) {}
+    constexpr Vertex4D(const Vertex3Ds _v, const float _w) : x(_v.x), y(_v.y), z(_v.z), w(_w) {}
+
+   bool operator==(const Vertex4D& v) const { return (x == v.x) && (y == v.y) && (z == v.z) && (w == v.w); }
+
+    Vertex3Ds xyz() const { return {x, y, z}; }
 };
 
 #define vec4 Vertex4D

@@ -44,24 +44,45 @@ public:
    string ToString(bool full = true) const;
 
    Mode GetMode() const { return m_mode; }
-   void SetMode(Mode mode) { m_mode = mode; }
+   void SetMode(Mode mode);
+
    bool IsPop() const { return m_mode == PUPScreen::Mode::ForcePopBack || m_mode == PUPScreen::Mode::ForcePop; }
+
+   bool IsTopmost() const { return m_topmost; }
+   void SetTopmost(bool topmost) { m_topmost = topmost; }
 
    bool IsTransparent() const { return m_transparent; }
 
+   float m_screenAlpha = 1.0f;
+   bool m_hudVisible = true;
+   bool m_padTextAlways = false;
+   // Action queued by LabelShowPage, applied when the main media ends.
+   enum class HudReturn
+   {
+      None,
+      RestoreHud,    // "hidehudplay": re-show the HUD overlay
+      ReplayTrigger, // "returnplay":  re-fire m_lastPlayedTrigger
+   };
+   HudReturn m_hudReturn = HudReturn::None;
+   PUPTrigger* m_lastPlayedTrigger = nullptr;
+   void OnMainMediaEnd();
+
    float GetVolume() const { return m_volume; }
+   void SetMainVolume(float volume); // Set user defined global volume (allow to mute)
    void SetVolume(float volume); // Set default, and apply it to played media
    void SetVolumeCurrent(float volume); // Only modifiy volume of currently playing medias
+   void SetOnMainEndCallback(const std::function<void()>& callback);
 
    const std::unique_ptr<PUPCustomPos>& GetCustomPos() const { return m_pCustomPos; }
    void SetCustomPos(const string& szCustomPos);
-   void SetSize(int w, int h, bool ignoreOwnCustomPos = false);
+   void SetBounds(int x, int y, int w, int h, bool ignoreOwnCustomPos = false);
    void SetFullSize(int w, int h);
-   void SetSizeWithViewport(int w, int h, int viewportX, int viewportY);
 
    void AddChild(std::shared_ptr<PUPScreen> pScreen);
-   void SendToFront();
-   int GetChildCount() const { return static_cast<int>(m_defaultChildren.size() + m_backChildren.size() + m_topChildren.size()); }
+   void ReplaceChild(std::shared_ptr<PUPScreen> pChild, std::shared_ptr<PUPScreen> pScreen);
+   PUPScreen* GetParent() const { return m_pParent; }
+   bool HasChildren() const { return !m_children.empty(); }
+   int GetChildCount() const { return static_cast<int>(m_children.size()); }
 
    void AddTrigger(PUPTrigger* pTrigger);
    vector<PUPTrigger*>* GetTriggers(const string& szTrigger);
@@ -78,23 +99,29 @@ public:
    void AddPlaylist(PUPPlaylist* pPlaylist);
    PUPPlaylist* GetPlaylist(const string& szFolder);
 
-   void SetMask(const string& path);
+   void SetMask(const std::filesystem::path& path);
 
-   void Play(const string& szPlaylist, const string& szPlayFile, float volume, int priority);
-   void Play(PUPPlaylist* playlist, const string& szPlayFile, float volume, int priority, bool skipSamePriority, int length);
+   void SetGameTime(double gameTime);
+
+   void Play(const string& szPlaylist, const std::filesystem::path& szPlayFile, float volume, int priority, PlayAction action = PlayAction::Normal);
+   void Play(PUPPlaylist* playlist, const std::filesystem::path& szPlayFile, float volume, int priority, PlayAction action, int length);
    void Stop();
    void Stop(int priority);
-   void Stop(PUPPlaylist* pPlaylist, const std::string& szPlayFile);
+   void Stop(PUPPlaylist* pPlaylist, const std::filesystem::path& szPlayFile);
    void Pause();
    void Resume();
    void SetLoop(int state);
    void SetLength(int length);
    void SetAsBackGround(int mode);
+   void SetFadeStep(int step);
 
-   bool IsPlaying();
+   bool HasUnderlay() const { return !m_background.GetFile().empty(); }
+   bool IsBackgroundPlaying() const;
+   bool IsMainPlaying() const;
+   bool HasOverlay() const { return !m_overlay.GetFile().empty(); }
 
    const SDL_Rect& GetRect() const { return m_rect; }
-   void Render(VPXRenderContext2D* const ctx, bool skipBackground = false);
+   void Render(VPXRenderContext2D* const ctx, int pass);
    int GetVideoWidth() const;
    int GetVideoHeight() const;
    bool GetBackgroundDimensions(int& width, int& height) const;
@@ -105,15 +132,16 @@ public:
 
 private:
    void LoadTriggers();
-
-   static uint32_t PageTimerElapsed(void* param, SDL_TimerID timerID, uint32_t interval);
+   void UpdateTimers();
 
    PUPManager* const m_pManager = nullptr;
    const int m_screenNum;
    const string m_screenDes;
 
    Mode m_mode;
+   bool m_topmost = false;
    bool m_transparent;
+   float m_mainVolume = 1.f;
    float m_volume;
    std::unique_ptr<PUPCustomPos> m_pCustomPos;
    SDL_Rect m_rect;
@@ -121,17 +149,17 @@ private:
    ankerl::unordered_dense::map<string, PUPLabel*> m_labelMap;
    ankerl::unordered_dense::map<string, PUPPlaylist*> m_playlistMap;
    ankerl::unordered_dense::map<string, vector<PUPTrigger*>> m_triggerMap;
-   PUPImage m_background;
-   PUPImage m_overlay;
+   PUPImage m_background;    // PuPFrames playlist - underlay behind video
+   PUPImage m_staticImage;   // Static PNG/JPG from Default function - renders on video layer, bypasses FFmpeg
+   PUPImage m_overlay;       // PuPOverlays/PuPAlphas playlist - overlay rendered above video
    std::unique_ptr<PUPMediaManager> m_pMediaPlayerManager;
    bool m_labelInit = false;
    int m_pagenum = 0;
    int m_defaultPagenum = 0;
-   SDL_TimerID m_pageTimer = 0;
+   uint64_t m_pageExpiry = 0;
+   uint64_t m_imageExpiry = 0;
    PUPScreen* m_pParent = nullptr;
-   vector<std::shared_ptr<PUPScreen>> m_topChildren;
-   vector<std::shared_ptr<PUPScreen>> m_backChildren;
-   vector<std::shared_ptr<PUPScreen>> m_defaultChildren;
+   vector<std::shared_ptr<PUPScreen>> m_children;
    const std::thread::id m_apiThread;
 };
 

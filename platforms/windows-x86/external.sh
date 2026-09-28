@@ -8,6 +8,8 @@ if [ -z "${MSYS2_PATH}" ]; then
    MSYS2_PATH="/c/msys64"
 fi
 
+export MSYSTEM=MINGW32
+
 echo "MSYS2_PATH: ${MSYS2_PATH}"
 echo ""
 
@@ -48,7 +50,7 @@ if [ "${SDL3_EXPECTED_SHA}" != "${SDL3_FOUND_SHA}" ]; then
    mv SDL-${SDL_SHA} SDL
    cd SDL
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DSDL_SHARED=ON \
       -DSDL_STATIC=OFF \
@@ -63,7 +65,7 @@ if [ "${SDL3_EXPECTED_SHA}" != "${SDL3_FOUND_SHA}" ]; then
    cd SDL_image
    ./external/download.sh
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DBUILD_SHARED_LIBS=ON \
       -DSDLIMAGE_SAMPLES=OFF \
@@ -82,7 +84,7 @@ if [ "${SDL3_EXPECTED_SHA}" != "${SDL3_FOUND_SHA}" ]; then
    cd SDL_ttf
    ./external/download.sh
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DBUILD_SHARED_LIBS=ON \
       -DSDLTTF_SAMPLES=OFF \
@@ -117,7 +119,7 @@ if [ "${FREEIMAGE_EXPECTED_SHA}" != "${FREEIMAGE_FOUND_SHA}" ]; then
    mv freeimage-${FREEIMAGE_SHA} freeimage
    cd freeimage
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DPLATFORM=win \
       -DARCH=x86 \
@@ -153,7 +155,7 @@ if [ "${BGFX_EXPECTED_SHA}" != "${BGFX_FOUND_SHA}" ]; then
    cd bgfx.cmake
    rm -rf bgfx
    mv ../bgfx-${BGFX_PATCH_SHA} bgfx
-   cmake -G "Visual Studio 17 2022" \
+   cmake -G "Visual Studio 18 2026" \
       -S. \
       -A Win32 \
       -DBGFX_LIBRARY_TYPE=STATIC \
@@ -185,13 +187,13 @@ if [ "${PINMAME_EXPECTED_SHA}" != "${PINMAME_FOUND_SHA}" ]; then
    mkdir pinmame
    cd pinmame
 
-   curl -sL https://github.com/vbousquet/pinmame/archive/${PINMAME_SHA}.tar.gz -o pinmame-${PINMAME_SHA}.tar.gz
+   curl -sL https://github.com/vpinball/pinmame/archive/${PINMAME_SHA}.tar.gz -o pinmame-${PINMAME_SHA}.tar.gz
    tar xzf pinmame-${PINMAME_SHA}.tar.gz
    mv pinmame-${PINMAME_SHA} pinmame
    cd pinmame
    cp cmake/libpinmame/CMakeLists.txt .
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DPLATFORM=win \
       -DARCH=x86 \
@@ -225,9 +227,11 @@ if [ "${OPENXR_EXPECTED_SHA}" != "${OPENXR_FOUND_SHA}" ]; then
    mv OpenXR-SDK-Source-${OPENXR_SHA} openxr
    cd openxr
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
+      -DBUILD_WITH_SYSTEM_JSONCPP=OFF \
       -DBUILD_TESTS=OFF \
+      -DBUILD_API_LAYERS=OFF \
       -DDYNAMIC_LOADER=ON \
       -DOPENXR_DEBUG_POSTFIX="" \
       -B build
@@ -259,7 +263,7 @@ if [ "${LIBDMDUTIL_EXPECTED_SHA}" != "${LIBDMDUTIL_FOUND_SHA}" ]; then
    cd libdmdutil
    ./platforms/win/x86/external.sh
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DPLATFORM=win \
       -DARCH=x86 \
@@ -293,7 +297,7 @@ if [ "${LIBALTSOUND_EXPECTED_SHA}" != "${LIBALTSOUND_FOUND_SHA}" ]; then
    mv libaltsound-${LIBALTSOUND_SHA} libaltsound
    cd libaltsound
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DPLATFORM=win \
       -DARCH=x86 \
@@ -322,13 +326,13 @@ if [ "${LIBDOF_EXPECTED_SHA}" != "${LIBDOF_FOUND_SHA}" ]; then
    mkdir libdof
    cd libdof
 
-   curl -sL https://github.com/jsm174/libdof/archive/${LIBDOF_SHA}.tar.gz -o libdof-${LIBDOF_SHA}.tar.gz
+   curl -sL https://github.com/vpinball/libdof/archive/${LIBDOF_SHA}.tar.gz -o libdof-${LIBDOF_SHA}.tar.gz
    tar xzf libdof-${LIBDOF_SHA}.tar.gz
    mv libdof-${LIBDOF_SHA} libdof
    cd libdof
    ./platforms/win/x86/external.sh
    cmake \
-      -G "Visual Studio 17 2022" \
+      -G "Visual Studio 18 2026" \
       -A Win32 \
       -DPLATFORM=win \
       -DARCH=x86 \
@@ -362,7 +366,7 @@ if [ "${FFMPEG_EXPECTED_SHA}" != "${FFMPEG_FOUND_SHA}" ]; then
    mv FFmpeg-${FFMPEG_SHA} ffmpeg
    cd ffmpeg
    CURRENT_DIR="$(pwd)"
-   MSYSTEM=MINGW32 "${MSYS2_PATH}/usr/bin/bash.exe" -l -c "
+   "${MSYS2_PATH}/usr/bin/bash.exe" -l -c "
       cd \"${CURRENT_DIR}\" &&
       ./configure \
          --enable-shared \
@@ -400,7 +404,7 @@ if [ "${LIBZIP_EXPECTED_SHA}" != "${LIBZIP_FOUND_SHA}" ]; then
    mv libzip-${LIBZIP_SHA} libzip
    cd libzip
    CURRENT_DIR="$(pwd)"
-   MSYSTEM=MINGW32 "${MSYS2_PATH}/usr/bin/bash.exe" -l -c "
+   "${MSYS2_PATH}/usr/bin/bash.exe" -l -c "
       cd \"${CURRENT_DIR}\" &&
       cmake \
          -DBUILD_SHARED_LIBS=ON \
@@ -443,7 +447,6 @@ cp freeimage/freeimage/Source/FreeImage.h ../../../third-party/include
 cp bgfx/bgfx.cmake/build/cmake/bgfx/${BUILD_TYPE}/bgfx.lib ../../../third-party/build-libs/windows-x86
 cp -r bgfx/bgfx.cmake/bgfx/include/bgfx ../../../third-party/include/
 cp bgfx/bgfx.cmake/build/cmake/bimg/${BUILD_TYPE}/bimg.lib ../../../third-party/build-libs/windows-x86
-cp bgfx/bgfx.cmake/build/cmake/bimg/${BUILD_TYPE}/bimg_decode.lib ../../../third-party/build-libs/windows-x86
 cp bgfx/bgfx.cmake/build/cmake/bimg/${BUILD_TYPE}/bimg_encode.lib ../../../third-party/build-libs/windows-x86
 cp -r bgfx/bgfx.cmake/bimg/include/bimg ../../../third-party/include/
 cp bgfx/bgfx.cmake/build/cmake/bx/${BUILD_TYPE}/bx.lib ../../../third-party/build-libs/windows-x86
@@ -451,11 +454,14 @@ cp -r bgfx/bgfx.cmake/bx/include/bx ../../../third-party/include/
 
 cp pinmame/pinmame/build/${BUILD_TYPE}/pinmame.lib ../../../third-party/build-libs/windows-x86
 cp pinmame/pinmame/build/${BUILD_TYPE}/pinmame.dll ../../../third-party/runtime-libs/windows-x86
-cp pinmame/pinmame/src/libpinmame/libpinmame.h ../../../third-party/include
+mkdir -p ../../../third-party/include/pinmame
+cp pinmame/pinmame/src/libpinmame/libpinmame.h ../../../third-party/include/pinmame
+cp pinmame/pinmame/src/libpinmame/PinMAMEPlugin.h ../../../third-party/include/pinmame
 
 cp openxr/openxr/build/src/loader/${BUILD_TYPE}/openxr_loader.lib ../../../third-party/build-libs/windows-x86
 cp openxr/openxr/build/src/loader/${BUILD_TYPE}/openxr_loader.dll ../../../third-party/runtime-libs/windows-x86
-cp -r openxr/openxr/include/openxr ../../../third-party/include
+mkdir -p ../../../third-party/include/openxr
+cp openxr/openxr/build/include/openxr/*.h ../../../third-party/include/openxr
 
 cp libdmdutil/libdmdutil/build/${BUILD_TYPE}/dmdutil.lib ../../../third-party/build-libs/windows-x86
 cp libdmdutil/libdmdutil/build/${BUILD_TYPE}/dmdutil.dll ../../../third-party/runtime-libs/windows-x86
@@ -468,7 +474,7 @@ cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/serum.dll ../../../thi
 cp libdmdutil/libdmdutil/third-party/include/serum.h ../../../third-party/include
 cp libdmdutil/libdmdutil/third-party/include/serum-decode.h ../../../third-party/include
 cp libdmdutil/libdmdutil/third-party/build-libs/win/x86/libserialport.lib ../../../third-party/build-libs/windows-x86
-cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/libserialport.dll ../../../third-party/runtime-libs/windows-x86
+cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/libserialport-0.dll ../../../third-party/runtime-libs/windows-x86
 cp libdmdutil/libdmdutil/third-party/build-libs/win/x86/pupdmd.lib ../../../third-party/build-libs/windows-x86
 cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/pupdmd.dll ../../../third-party/runtime-libs/windows-x86
 cp libdmdutil/libdmdutil/third-party/include/pupdmd.h ../../../third-party/include
@@ -476,6 +482,9 @@ cp libdmdutil/libdmdutil/third-party/build-libs/win/x86/sockpp.lib ../../../thir
 cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/sockpp.dll ../../../third-party/runtime-libs/windows-x86
 cp libdmdutil/libdmdutil/third-party/build-libs/win/x86/cargs.lib ../../../third-party/build-libs/windows-x86
 cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/cargs.dll ../../../third-party/runtime-libs/windows-x86
+cp libdmdutil/libdmdutil/third-party/build-libs/win/x86/vni.lib ../../../third-party/build-libs/windows-x86
+cp libdmdutil/libdmdutil/third-party/runtime-libs/win/x86/vni.dll ../../../third-party/runtime-libs/windows-x86
+cp libdmdutil/libdmdutil/third-party/include/vni.h ../../../third-party/include
 
 cp libaltsound/libaltsound/build/${BUILD_TYPE}/altsound.lib ../../../third-party/build-libs/windows-x86
 cp libaltsound/libaltsound/build/${BUILD_TYPE}/altsound.dll ../../../third-party/runtime-libs/windows-x86
@@ -494,7 +503,7 @@ cp libdof/libdof/third-party/runtime-libs/win/x86/libftdi1.dll ../../../third-pa
 for LIB in avcodec avdevice avfilter avformat avutil swresample swscale; do
    DIR="lib${LIB}"
    cp ffmpeg/ffmpeg/${DIR}/${LIB}.lib ../../../third-party/build-libs/windows-x86
-   cp ffmpeg/ffmpeg/${DIR}/${LIB}.dll ../../../third-party/runtime-libs/windows-x86
+   cp ffmpeg/ffmpeg/${DIR}/${LIB}-*.dll ../../../third-party/runtime-libs/windows-x86
    mkdir -p ../../../third-party/include/${DIR}
    cp ffmpeg/ffmpeg/${DIR}/*.h ../../../third-party/include/${DIR}
 done
@@ -504,6 +513,8 @@ cp "${MSYS2_PATH}/mingw32/bin/libiconv-2.dll" ../../../third-party/runtime-libs/
 cp "${MSYS2_PATH}/mingw32/bin/libwinpthread-1.dll" ../../../third-party/runtime-libs/windows-x86
 cp "${MSYS2_PATH}/mingw32/bin/liblzma-5.dll" ../../../third-party/runtime-libs/windows-x86
 cp "${MSYS2_PATH}/mingw32/bin/libbz2-1.dll" ../../../third-party/runtime-libs/windows-x86
+cp "${MSYS2_PATH}/mingw32/bin/libgcc_s_dw2-1.dll" ../../../third-party/runtime-libs/windows-x86
+cp "${MSYS2_PATH}/mingw32/bin/libstdc++-6.dll" ../../../third-party/runtime-libs/windows-x86
 
 cp libzip/libzip/build/lib/libzip.dll ../../../third-party/runtime-libs/windows-x86
 cp libzip/libzip/build/zipconf.h ../../../third-party/include

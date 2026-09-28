@@ -25,8 +25,25 @@
 
 #define COMPRESS_MESHES // uses miniz for compressing the meshes
 
+// Intent named capabilities derived from the target selection (win32ui+com or standalone builds)
 #ifndef __STANDALONE__
 #define CRASH_HANDLER
+// The win32xx based table editor (src/ui/win): its window, the script editor, the
+// debugger and layer panes, and the undo stack that backs them. Only this build can
+// edit a table, so PinTable::m_tableEditor is null everywhere else
+#define VPX_ENABLE_WIN32_EDITOR
+// A registered typelib lets oleaut32 serve IDispatch for every scriptable class by
+// reflecting over ITypeInfo, which is also how IScriptable enumerates method and event names
+#define VPX_HAS_REGISTERED_TYPELIB
+// IProcessDebugManager / IActiveScriptSiteDebug: attaching a script debugger, and recovering a stack trace when a table script faults. Windows Active Script only
+#define VPX_HAS_SCRIPT_DEBUGGER
+// IObjectSafety / IInternetHostSecurityManager: vetting the ActiveX controls a table script instantiates. Windows Active Script only
+#define VPX_HAS_ACTIVEX_SECURITY
+// CryptoAPI, table hashing no longer needs it (utils/TableHash.h only cross checks against it), but the legacy VP8/VP9 script decryption still does
+#define VPX_HAS_CRYPTOAPI
+#else
+// No registered typelib, so scriptable classes instead carry a hand written IDispatch implementation generated from the IDL (see standalone/idl/)
+#define VPX_MANUAL_SCRIPT_DISPATCH
 #endif
 
 //#define _CRTDBG_MAP_ALLOC
@@ -70,7 +87,6 @@
 #define ADAPT_VSYNC_FACTOR 0.95 // safety factor where vsync is turned off (f.e. drops below 60fps * 0.95 = 57fps)
 
 #define ACCURATETIMERS          // if undefd, timers will only be triggered as often as frames are rendered (e.g. they can fall behind)
-#define MAX_TIMER_MSEC_INTERVAL 1 // amount of msecs to wait (at least) until same timer can be triggered again (e.g. they can fall behind, if set to > 1, as update cycle is 1000Hz)
 #define MAX_TIMERS_MSEC_OVERALL 5 // amount of msecs that all timers combined can take per frame (e.g. they can fall behind, if set to < somelargevalue)
 
 //#define PLAYBACK              // bitrotted, also how to record the playback to c:\badlog.txt ?? via LOG ??
@@ -94,13 +110,8 @@
 
 #define NUM_ASSIGN_LAYERS       20
 
-//VR Support
+// VR Support
 
-// No VR support for DX9, BGFX is in progress, Metal VR support under BGFX is still to be implemented
-//#if !defined(__STANDALONE__) && (defined(ENABLE_OPENGL) || defined(ENABLE_BGFX)) && !defined(__APPLE__)
-#if !defined(__STANDALONE__) && defined(ENABLE_OPENGL)
-#define ENABLE_VR
-#endif
 #if !defined(__STANDALONE__) && defined(ENABLE_BGFX)
 #define ENABLE_XR
 #endif
@@ -145,6 +156,12 @@
 #endif
 
 #include "main.h"
+
+#ifndef __STANDALONE__
+#ifdef _WIN32
+__forceinline void ListView_SetItemText_Safe(HWND hwndLV, WPARAM iItem, int iSubItem, LPCSTR pszText) { ListView_SetItemText(hwndLV, iItem, iSubItem, (LPSTR)pszText); }
+#endif
+#endif
 
 //{{AFX_INSERT_LOCATION}}
 // Microsoft Visual C++ will insert additional declarations immediately before the previous line.

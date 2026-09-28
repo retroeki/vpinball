@@ -1,17 +1,25 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "PointOfViewSettingsPage.h"
+
+#include "core/player.h"
 #include "core/TableDB.h"
+#include "parts/pintable.h"
+#include "renderer/Renderer.h"
+#include "ui/live/LiveUI.h"
+
+#include <regex>
 
 namespace VPX::InGameUI
 {
 
 PointOfViewSettingsPage::PointOfViewSettingsPage()
-   : InGameUIPage("Point of View"s, "Point of view's settings page:\nOptions to define rendering's point of view"s, SaveMode::Table)
+   : InGameUIPage("Point of View Table Override"s, "Point of view's settings page:\nOptions to override the table's rendering's point of view"s, SaveMode::Table)
 {
 }
+
+ViewSetup& PointOfViewSettingsPage::GetCurrentViewSetup() const { return m_player->m_ptable->GetViewSetup(); }
 
 void PointOfViewSettingsPage::Open(bool isBackwardAnimation)
 {
@@ -27,7 +35,6 @@ void PointOfViewSettingsPage::Open(bool isBackwardAnimation)
    m_playerPos.y = settings.GetPlayer_ScreenPlayerY();
    m_playerPos.z = settings.GetPlayer_ScreenPlayerZ();
    UpdateDefaults();
-   BuildPage();
 }
 
 void PointOfViewSettingsPage::Close(bool isBackwardAnimation)
@@ -39,13 +46,19 @@ void PointOfViewSettingsPage::Close(bool isBackwardAnimation)
       m_player->m_renderer->DisableStaticPrePass(false);
 }
 
+bool PointOfViewSettingsPage::IsPovEditAction() const
+{
+   // POV edit playtests from the editor run on a live copy of the edited table: only standalone sessions
+   // (PovEdit command line action) are meant to close the application once the user is done
+   return m_player->m_playMode == Player::PlayMode::EditPOV && m_player->m_ptable->m_liveBaseTable == nullptr;
+}
+
 void PointOfViewSettingsPage::Save()
 {
    InGameUIPage::Save();
 
-   // FIXME this should be part of the action, not of the ingameui
-   if (g_pvp->m_povEdit)
-      g_pvp->QuitPlayer(Player::CloseState::CS_CLOSE_APP);
+   if (IsPovEditAction())
+      m_player->SetCloseState(Player::CS_CLOSE_APP);
 }
 
 void PointOfViewSettingsPage::ResetToStoredValues()
@@ -53,26 +66,25 @@ void PointOfViewSettingsPage::ResetToStoredValues()
    InGameUIPage::ResetToStoredValues();
 
    UpdateDefaults();
-   BuildPage();
+   RequestRebuild();
 
-   // FIXME this should be part of the action, not of the ingameui
-   if (g_pvp->m_povEdit)
-      g_pvp->QuitPlayer(Player::CloseState::CS_CLOSE_APP);
+   if (IsPovEditAction())
+      m_player->SetCloseState(Player::CS_CLOSE_APP);
 }
 
 void PointOfViewSettingsPage::ResetToDefaults()
 {
    InGameUIPage::ResetToDefaults();
-   ViewSetup& viewSetup = GetCurrentViewSetup();
-   if (viewSetup.mMode == VLM_WINDOW)
+   
+   if (ViewSetup& viewSetup = GetCurrentViewSetup(); viewSetup.mMode == VLM_WINDOW)
    {
       const PinTable* table = m_player->m_ptable;
-      const float screenInclination = table->m_settings.GetPlayer_ScreenInclination();
+      const float screenInclination = table->GetSettings().GetPlayer_ScreenInclination();
       viewSetup.SetViewPosFromPlayerPosition(table, m_playerPos, screenInclination);
    }
    OnPointOfViewChanged();
    UpdateDefaults();
-   BuildPage();
+   RequestRebuild();
 }
 
 void PointOfViewSettingsPage::OnPointOfViewChanged()
@@ -112,39 +124,10 @@ void PointOfViewSettingsPage::UpdateDefaults()
          AddItem(std::make_unique<InGameUIItem>("Cabinet Settings"s, ""s, "settings/cabinet"s));
          return;
       }
-      else
-      {
-         float topHeight = m_player->m_ptable->m_glassTopHeight;
-         float bottomHeight = m_player->m_ptable->m_glassBottomHeight;
-         if (bottomHeight == topHeight)
-         { // If table does not define the glass position (for table without it, when loading we set the glass as horizontal)
-            TableDB db;
-            db.Load();
-            int bestSizeMatch = db.GetBestSizeMatch(m_player->m_ptable->GetTableWidth(), m_player->m_ptable->GetHeight(), topHeight);
-            if (bestSizeMatch >= 0)
-            {
-               bottomHeight = INCHESTOVPU(db.m_data[bestSizeMatch].glassBottom);
-               topHeight = INCHESTOVPU(db.m_data[bestSizeMatch].glassTop);
-               m_glassNotifId = m_player->m_liveUI->PushNotification("Missing glass position guessed to be " + std::to_string(db.m_data[bestSizeMatch].glassBottom) + "\" / "
-                     + std::to_string(db.m_data[bestSizeMatch].glassTop) + "\" (" + db.m_data[bestSizeMatch].name + ')',
-                  5000, m_glassNotifId);
-            }
-            else
-            {
-               m_glassNotifId = m_player->m_liveUI->PushNotification("The table is missing glass position and no good guess was found."s, 5000, m_glassNotifId);
-            }
-         }
-         const float scale = (screenHeight / m_player->m_ptable->GetTableWidth()) * (m_player->m_ptable->GetHeight() / screenWidth);
-         const bool isFitted = (m_player->m_ptable->GetViewSetup().mViewHOfs == 0.f) && (m_player->m_ptable->GetViewSetup().mViewVOfs == -2.8f)
-            && (m_player->m_ptable->GetViewSetup().mSceneScaleY == scale) && (m_player->m_ptable->GetViewSetup().mSceneScaleX == scale);
-         defViewSetup.mMode = VLM_WINDOW;
-         defViewSetup.mViewHOfs = 0.f;
-         defViewSetup.mViewVOfs = isFitted ? 0.f : -2.8f;
-         defViewSetup.mSceneScaleX = scale;
-         defViewSetup.mSceneScaleY = isFitted ? 1.f : scale;
-         defViewSetup.mWindowBottomZOfs = bottomHeight;
-         defViewSetup.mWindowTopZOfs = topHeight;
-      }
+      const bool isFitted = (m_player->m_ptable->GetViewSetup().mViewHOfs == 0.f) && (m_player->m_ptable->GetViewSetup().mSceneScaleY == m_player->m_ptable->GetViewSetup().mSceneScaleX);
+      defViewSetup.SetWindowAutofit(m_player->m_ptable, m_playerPos, m_player->m_renderer->GetDisplayAspectRatio(), 
+         m_player->GetCabinetAutoFitPos(), isFitted,
+         [this](const string& info) { m_glassNotifId = m_player->m_liveUI->PushNotification(info, 10000, m_glassNotifId); });
    }
    else if (const bool portrait = m_player->m_playfieldWnd->GetWidth() < m_player->m_playfieldWnd->GetHeight(); m_player->m_ptable->GetViewMode() == BG_DESKTOP && !portrait)
    { // Desktop
@@ -202,8 +185,6 @@ void PointOfViewSettingsPage::BuildPage()
    assert(m_opened);
    const PinTable* table = m_player->m_ptable;
 
-   ClearItems();
-
    ViewSetupID vsId = table->GetViewMode();
    const ViewSetup& viewSetup = table->GetViewSetup();
    //const bool isLegacy = viewSetup.mMode == VLM_LEGACY;
@@ -217,7 +198,7 @@ void PointOfViewSettingsPage::BuildPage()
          GetCurrentViewSetup().mMode = static_cast<ViewLayoutMode>(v);
          OnPointOfViewChanged();
          UpdateDefaults();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto lookAt = std::make_unique<InGameUIItem>(
@@ -236,7 +217,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mFOV = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto layback = std::make_unique<InGameUIItem>(
@@ -246,13 +227,13 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mLayback = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto lockScale = std::make_unique<InGameUIItem>(
       VPX::Properties::BoolPropertyDef(""s, ""s, "Lock XYZ Scale"s, "Scale all axis homogeneously (recommended)"s, false, true), //
       [this]() { return m_lockScale; }, //
-      [this](Settings&) { return m_lockScale; }, //
+      [this](const Settings&) { return m_lockScale; }, //
       [this](bool v) { m_lockScale = v; }, [](Settings&) { /* UI state, not persisted */ }, //
       [](bool, const Settings&, bool) { /* UI state, not persisted */ });
 
@@ -270,7 +251,7 @@ void PointOfViewSettingsPage::BuildPage()
             vs.mSceneScaleZ = clamp(vs.mSceneScaleZ + (v - prev), 0.5f, 1.5f);
          }
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
    auto yScale = std::make_unique<InGameUIItem>(
       SelectProp(Settings::m_propTableOverride_ViewDTScaleY, Settings::m_propTableOverride_ViewFSSScaleY, Settings::m_propTableOverride_ViewCabScaleY), zoomDisplayScale, "%4.1f %%"s,
@@ -285,7 +266,7 @@ void PointOfViewSettingsPage::BuildPage()
             vs.mSceneScaleZ = clamp(vs.mSceneScaleZ + (v - prev), 0.5f, 1.5f);
          }
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
    auto zScale = std::make_unique<InGameUIItem>(
       SelectProp(Settings::m_propTableOverride_ViewDTScaleZ, Settings::m_propTableOverride_ViewFSSScaleZ, Settings::m_propTableOverride_ViewCabScaleZ), zoomDisplayScale, "%4.1f %%"s,
@@ -300,7 +281,7 @@ void PointOfViewSettingsPage::BuildPage()
             vs.mSceneScaleY = clamp(vs.mSceneScaleY + (v - prev), 0.5f, 1.5f);
          }
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto playerX = std::make_unique<InGameUIItem>(
@@ -309,11 +290,12 @@ void PointOfViewSettingsPage::BuildPage()
       [this](float, float v)
       {
          m_playerPos.x = v;
-         const float screenInclination = m_player->m_ptable->m_settings.GetPlayer_ScreenInclination();
+         const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
          GetCurrentViewSetup().SetViewPosFromPlayerPosition(m_player->m_ptable, m_playerPos, screenInclination);
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
+   playerX->m_excludeFromDefault = true;
 
    auto playerY = std::make_unique<InGameUIItem>(
       Settings::m_propPlayer_ScreenPlayerY, 1.f, "%4.1f cm"s, //
@@ -321,11 +303,12 @@ void PointOfViewSettingsPage::BuildPage()
       [this](float, float v)
       {
          m_playerPos.y = v;
-         const float screenInclination = m_player->m_ptable->m_settings.GetPlayer_ScreenInclination();
+         const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
          GetCurrentViewSetup().SetViewPosFromPlayerPosition(m_player->m_ptable, m_playerPos, screenInclination);
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
+   playerY->m_excludeFromDefault = true;
 
    auto playerZ = std::make_unique<InGameUIItem>(
       Settings::m_propPlayer_ScreenPlayerZ, 1.f, "%4.1f cm"s, //
@@ -333,11 +316,12 @@ void PointOfViewSettingsPage::BuildPage()
       [this](float, float v)
       {
          m_playerPos.z = v;
-         const float screenInclination = m_player->m_ptable->m_settings.GetPlayer_ScreenInclination();
+         const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
          GetCurrentViewSetup().SetViewPosFromPlayerPosition(m_player->m_ptable, m_playerPos, screenInclination);
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
+   playerZ->m_excludeFromDefault = true;
 
    auto viewX = std::make_unique<InGameUIItem>(
       SelectProp(Settings::m_propTableOverride_ViewDTPlayerX, Settings::m_propTableOverride_ViewFSSPlayerX, Settings::m_propTableOverride_ViewCabPlayerX), VPUTOCM(1.f), "%4.1f cm"s, //
@@ -346,7 +330,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewX = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto viewY = std::make_unique<InGameUIItem>(
@@ -356,7 +340,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewY = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto viewZ = std::make_unique<InGameUIItem>(
@@ -366,7 +350,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewZ = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto hOfs = std::make_unique<InGameUIItem>(
@@ -376,7 +360,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewHOfs = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto vOfs = std::make_unique<InGameUIItem>(
@@ -386,7 +370,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewVOfs = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    auto wndTopZ = std::make_unique<InGameUIItem>(
@@ -395,8 +379,10 @@ void PointOfViewSettingsPage::BuildPage()
       [this](float, float v)
       {
          GetCurrentViewSetup().mWindowTopZOfs = v;
+         const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
+         m_player->m_ptable->GetViewSetup().SetViewPosFromPlayerPosition(m_player->m_ptable, m_playerPos, screenInclination);
          OnPointOfViewChanged();
-         BuildPage(); // As it changes the real to virtual world scale
+         RequestRebuild(); // As it changes the real to virtual world scale
       });
 
    auto wndBotZ = std::make_unique<InGameUIItem>(
@@ -405,8 +391,10 @@ void PointOfViewSettingsPage::BuildPage()
       [this](float, float v)
       {
          GetCurrentViewSetup().mWindowBottomZOfs = v;
+         const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
+         m_player->m_ptable->GetViewSetup().SetViewPosFromPlayerPosition(m_player->m_ptable, m_playerPos, screenInclination);
          OnPointOfViewChanged();
-         BuildPage(); // As it changes the real to virtual world scale
+         RequestRebuild(); // As it changes the real to virtual world scale
       });
 
    auto vpRotation = std::make_unique<InGameUIItem>(
@@ -416,7 +404,7 @@ void PointOfViewSettingsPage::BuildPage()
       {
          GetCurrentViewSetup().mViewportRotation = v;
          OnPointOfViewChanged();
-         BuildPage();
+         RequestRebuild();
       });
 
    AddItem(std::move(viewMode));
@@ -452,19 +440,60 @@ void PointOfViewSettingsPage::BuildPage()
       break;
 
    case VLM_WINDOW:
-      AddItem(std::move(hOfs));
-      AddItem(std::move(vOfs));
-      AddItem(std::move(lockScale));
-      AddItem(std::move(xScale));
-      AddItem(std::move(yScale));
-      AddItem(std::move(wndTopZ));
-      AddItem(std::move(wndBotZ));
-      AddItem(std::move(playerX));
-      AddItem(std::move(playerY));
-      AddItem(std::move(playerZ));
-      AddItem(std::move(vpRotation));
+      AddItem(std::make_unique<InGameUIItem>(
+         Settings::m_propPlayer_CabinetAutofitMode, //
+         [this]() { return m_player->GetCabinetAutoFitMode(); }, // Live
+         [this](int, int v)
+         {
+            m_player->SetCabinetAutoFitMode(v);
+            if (v != 0)
+               OnPointOfViewChanged();
+            RequestRebuild();
+         }));
+      if (m_player->GetCabinetAutoFitMode() == 0)
+      {
+         AddItem(std::move(hOfs));
+         AddItem(std::move(vOfs));
+         AddItem(std::move(lockScale));
+         AddItem(std::move(xScale));
+         AddItem(std::move(yScale));
+         AddItem(std::move(wndTopZ));
+         AddItem(std::move(wndBotZ));
+         AddItem(std::move(vpRotation));
+         AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Global cabinet options"s));
+         AddItem(std::move(playerX));
+         AddItem(std::move(playerY));
+         AddItem(std::move(playerZ));
+      }
+      else if (m_player->GetCabinetAutoFitMode() == 1)
+      {
+         AddItem(std::make_unique<InGameUIItem>(
+            Settings::m_propPlayer_CabinetAutofitPos, 100.f, "%4.1f %%"s, //
+            [this]() { return m_player->GetCabinetAutoFitPos(); },
+            [this](float, float v)
+            {
+               m_player->SetCabinetAutoFitPos(v);
+               OnPointOfViewChanged();
+            }));
+      }
       break;
    }
+}
+
+void PointOfViewSettingsPage::Render(float elapsed)
+{
+   if ((m_player->m_ptable->GetViewMode() == ViewSetupID::BG_FULLSCREEN) && (m_player->m_ptable->GetViewSetup().mMode == VLM_WINDOW))
+   {
+      const float screenInclination = g_settingsService.GetActiveSettings().GetPlayer_ScreenInclination();
+      m_playerPos = m_player->m_ptable->GetViewSetup().GetPlayerPositionFromViewPos(m_player->m_ptable, screenInclination);
+   }
+
+   InGameUIPage::Render(elapsed);
+
+   if ((m_player->m_ptable->GetViewMode() == ViewSetupID::BG_FULLSCREEN) && (m_player->m_ptable->GetViewSetup().mMode == VLM_WINDOW))
+      m_cabinetRender.Render(
+         ImVec4(GetWindowPos().x, GetWindowPos().y - ImGui::GetStyle().ItemSpacing.y, GetWindowSize().x, min(GetWindowSize().x, GetWindowPos().y - 2.f * ImGui::GetStyle().ItemSpacing.y)),
+         m_player->m_ptable, m_playerPos);
 }
 
 }

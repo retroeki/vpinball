@@ -10,7 +10,7 @@ namespace B2SLegacy {
 class B2SSettings final
 {
 public:
-   B2SSettings(MsgPluginAPI* msgApi, unsigned int endpointId);
+   B2SSettings(const MsgPluginAPI* msgApi, unsigned int endpointId);
    ~B2SSettings();
 
    static const string& GetMinimumDirectB2SVersion() { static const string ver = "1.0"s; return ver; }
@@ -58,8 +58,8 @@ public:
    void SetB2SName(const string& szB2SName) { m_szB2SName = szB2SName; Load(false); }
    void Load(bool resetLogs = true);
    void ClearAll();
-   B2SSettingsCheckedState GetHideGrill() const { return m_hideGrill; }
-   B2SSettingsCheckedState GetHideDMD() const { return m_hideDMD; }
+   bool IsHideGrill() const { return m_hideGrill; }
+   bool IsHideDMD() const { return m_hideDMD; }
    bool IsFormToFront() const { return m_formToFront; }
    std::map<string, int>* GetAnimationSlowDowns() { return &m_animationSlowDowns; }
    int GetAllAnimationSlowDown() const { return m_allAnimationSlowDown; }
@@ -67,36 +67,36 @@ public:
 
 private:
    string m_szBackglassFileVersion;
-   eDMDTypes m_dmdType;
-   bool m_allOut;
-   bool m_allOff;
-   bool m_lampsOff;
-   bool m_solenoidsOff;
-   bool m_giStringsOff;
-   bool m_ledsOff;
-   int m_lampsSkipFrames;
-   int m_solenoidsSkipFrames;
-   int m_giStringsSkipFrames;
-   int m_ledsSkipFrames;
-   eLEDTypes m_usedLEDType;
-   bool m_glowBulbOn;
-   int m_glowIndex;
-   int m_defaultGlow;
-   B2SSettingsCheckedState m_hideGrill;
-   bool m_hideB2SDMD;
-   bool m_hideB2SBackglass;
-   B2SSettingsCheckedState m_hideDMD;
-   eDualMode m_currentDualMode;
+   eDMDTypes m_dmdType = eDMDTypes_Standard;
+   bool m_allOut = false;
+   bool m_allOff = false;
+   bool m_lampsOff = false;
+   bool m_solenoidsOff = false;
+   bool m_giStringsOff = false;
+   bool m_ledsOff = false;
+   int m_lampsSkipFrames = 0;
+   int m_solenoidsSkipFrames = 0;
+   int m_giStringsSkipFrames = 0;
+   int m_ledsSkipFrames = 0;
+   eLEDTypes m_usedLEDType = eLEDTypes_Undefined;
+   bool m_glowBulbOn = false;
+   int m_glowIndex = -1;
+   int m_defaultGlow = -1;
+   bool m_hideGrill = false;
+   bool m_hideB2SDMD = false;
+   bool m_hideB2SBackglass = false;
+   bool m_hideDMD = true;
+   eDualMode m_currentDualMode = (eDualMode)eDualMode_2_NotSet;
    string m_szGameName;
-   bool m_gameNameFound;
+   bool m_gameNameFound = false;
    string m_szB2SName;
-   int m_allAnimationSlowDown;
+   int m_allAnimationSlowDown = 1;
    std::map<string, int> m_animationSlowDowns;
-   bool m_formToFront;
-   bool m_formToBack;
-   bool m_formNoFocus;
-   MsgPluginAPI* m_msgApi;
-   unsigned int m_endpointId;
+   bool m_formToFront = true;
+   bool m_formToBack = false;
+   bool m_formNoFocus = false;
+   const MsgPluginAPI* m_msgApi = nullptr;
+   unsigned int m_endpointId = 0;
 };
 
 }

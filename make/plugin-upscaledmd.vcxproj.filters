@@ -15,6 +15,9 @@
     <ClCompile Include="../../plugins/upscaledmd/xbrz/xbrz.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClInclude Include="../../plugins/plugins/ColorSpace.h">
+      <Filter>source</Filter>
+    </ClInclude>
     <ClInclude Include="../../plugins/plugins/ResURIResolver.h">
       <Filter>source</Filter>
     </ClInclude>
@@ -25,6 +28,12 @@
       <Filter>source</Filter>
     </ClInclude>
     <ClInclude Include="../../plugins/upscaledmd/scalefx/scalefx.h">
+      <Filter>source</Filter>
+    </ClInclude>
+    <ClInclude Include="../../plugins/upscaledmd/xbrz/xbrz_tools.h">
+      <Filter>source</Filter>
+    </ClInclude>
+    <ClInclude Include="../../plugins/upscaledmd/mmpx/mmpx.h">
       <Filter>source</Filter>
     </ClInclude>
   </ItemGroup>

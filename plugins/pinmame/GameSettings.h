@@ -4,6 +4,9 @@
 
 #include "common.h"
 #include "plugins/ScriptablePlugin.h"
+#include "SettingsDefaults.h"
+
+#include <unordered_map>
 
 namespace PinMAME {
 
@@ -15,15 +18,18 @@ public:
 
    PSC_IMPLEMENT_REFCOUNT()
 
-   void Clear() { /* Not yet implemented */ }
-   // FIXME implement a dynamically typed variant for arbitrary per-game settings.
-   // Today only `sound` is honored — see GameSettings.cpp.
-   //ScriptVariant GetValue(const string& name) const { return {}; /* Not yet implemented */ }
-   //void PutValue(const string& name, ScriptVariant v) { /* Not yet implemented */ }
+   void Clear();
    int GetValue(const string& key) const;
    void SetValue(const string& key, int v);
-   void SetDisplayPosition(float newValX, float newValY, void* hWnd = nullptr) { /* Not yet implemented */ }
-   void ShowSettingsDlg(void* hParentWnd = nullptr) { /* Not yet implemented */ }
+   // FIXME implement a dynamically typed variant
+   //ScriptVariant GetValue(const string& name) const { return {}; /* Not yet implemented */ }
+   //void PutValue(const string& name, ScriptVariant v) { /* Not yet implemented */ }
+
+   void SetDisplayPosition(float newValX, float newValY, void* hWnd = nullptr) { LOGW("Game.GameSettings.SetDisplayPosition is deprecated (display position is defined in user settings, not through script)."); }
+   void ShowSettingsDlg(void* hParentWnd = nullptr) { LOGW("Game.GameSettings.ShowSettingsDlg is deprecated (settings are managed by the host application, not through script)."); }
+
+private:
+   std::unordered_map<string, int> m_values;
 };
 
 }

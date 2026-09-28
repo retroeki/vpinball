@@ -25,6 +25,7 @@ if "%vsv%" == "2022" copy /V /Y "VisualPinball.sln" "../.build/vsproject/VisualP
 if "%vsv%" == "2026" copy /V /Y "VisualPinball.slnx" "../.build/vsproject/VisualPinball.slnx"
 copy /V /Y "vpx.vcxproj" "../.build/vsproject/vpx.vcxproj"
 copy /V /Y "vpx.vcxproj.filters" "../.build/vsproject/vpx.vcxproj.filters"
+copy /V /Y "vpx-configurations.vcxitems" "../.build/vsproject/vpx-configurations.vcxitems"
 copy /V /Y "vpx-core.vcxitems" "../.build/vsproject/vpx-core.vcxitems"
 copy /V /Y "vpx-core.vcxitems.filters" "../.build/vsproject/vpx-core.vcxitems.filters"
 copy /V /Y "vpx-test.vcxproj" "../.build/vsproject/vpx-test.vcxproj"
@@ -53,6 +54,19 @@ if "%vsv%" == "2019" (
 
 if "%vsv%" == "2026" (
 	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v145" /in:"../.build/vsproject/plugin-alphadmd.vcxproj" /out:"../.build/vsproject/plugin-alphadmd.vcxproj"
+)
+
+
+REM ***************************************************************************************************
+copy /V /Y "plugin-altsound.vcxproj" "../.build/vsproject/plugin-altsound.vcxproj"
+copy /V /Y "plugin-altsound.vcxproj.filters" "../.build/vsproject/plugin-altsound.vcxproj.filters"
+
+if "%vsv%" == "2019" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v142" /in:"../.build/vsproject/plugin-altsound.vcxproj" /out:"../.build/vsproject/plugin-altsound.vcxproj"
+)
+
+if "%vsv%" == "2026" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v145" /in:"../.build/vsproject/plugin-altsound.vcxproj" /out:"../.build/vsproject/plugin-altsound.vcxproj"
 )
 
 
@@ -148,6 +162,19 @@ if "%vsv%" == "2026" (
 
 
 REM ***************************************************************************************************
+copy /V /Y "plugin-inspector.vcxproj" "../.build/vsproject/plugin-inspector.vcxproj"
+copy /V /Y "plugin-inspector.vcxproj.filters" "../.build/vsproject/plugin-inspector.vcxproj.filters"
+
+if "%vsv%" == "2019" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v142" /in:"../.build/vsproject/plugin-inspector.vcxproj" /out:"../.build/vsproject/plugin-inspector.vcxproj"
+)
+
+if "%vsv%" == "2026" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v145" /in:"../.build/vsproject/plugin-inspector.vcxproj" /out:"../.build/vsproject/plugin-inspector.vcxproj"
+)
+
+
+REM ***************************************************************************************************
 copy /V /Y "plugin-pinmame.vcxproj" "../.build/vsproject/plugin-pinmame.vcxproj"
 copy /V /Y "plugin-pinmame.vcxproj.filters" "../.build/vsproject/plugin-pinmame.vcxproj.filters"
 
@@ -237,6 +264,18 @@ if "%vsv%" == "2026" (
 	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v145" /in:"../.build/vsproject/plugin-upscaledmd.vcxproj" /out:"../.build/vsproject/plugin-upscaledmd.vcxproj"
 )
 
+
+REM ***************************************************************************************************
+copy /V /Y "plugin-vni.vcxproj" "../.build/vsproject/plugin-vni.vcxproj"
+copy /V /Y "plugin-vni.vcxproj.filters" "../.build/vsproject/plugin-vni.vcxproj.filters"
+
+if "%vsv%" == "2019" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v142" /in:"../.build/vsproject/plugin-vni.vcxproj" /out:"../.build/vsproject/plugin-vni.vcxproj"
+)
+
+if "%vsv%" == "2026" (
+	cscript "simplereplace.wsf" //nologo /search:"v143" /replace:"v145" /in:"../.build/vsproject/plugin-vni.vcxproj" /out:"../.build/vsproject/plugin-vni.vcxproj"
+)
 
 REM ***************************************************************************************************
 copy /V /Y "plugin-wmp.vcxproj" "../.build/vsproject/plugin-wmp.vcxproj"

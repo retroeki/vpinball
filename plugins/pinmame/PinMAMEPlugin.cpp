@@ -5,13 +5,7 @@
 #include "plugins/LoggingPlugin.h"
 #include "plugins/ScriptablePlugin.h"
 #include "plugins/ControllerPlugin.h"
-#include "plugins/VPXPlugin.h" // Only used for optional feature (locating pinmame files along a VPX table)
-
-#include <filesystem>
-#include <cassert>
-#include <charconv>
-
-using namespace std::string_literals;
+#include "plugins/VPXPlugin.h" // Only used for optional feature (locating PinMAME files along a VPX table)
 
 #include "Rom.h"
 #include "Roms.h"
@@ -22,7 +16,14 @@ using namespace std::string_literals;
 #include "ControllerSettings.h"
 #include "Controller.h"
 
-namespace PinMAME {
+#include <filesystem>
+#include <cassert>
+#include <charconv>
+#include <cstring>
+#include <mutex>
+
+namespace PinMAME
+{
 
 // Gate for verbose per-event PinMAME host-bridge diagnostics: the per-switch read/write
 // traces below fire on every host switch set/get during play. Off by default; set to 1
@@ -34,59 +35,59 @@ namespace PinMAME {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Scriptable object definitions
 
-#define PSC_VAR_SET_Rom(variant, value) PSC_VAR_SET_object(Rom, variant, value)
-PSC_CLASS_START(Rom)
-   PSC_PROP_R(Rom, string, Name)
-   PSC_PROP_R(Rom, int32, State)
-   PSC_PROP_R(Rom, string, StateDescription)
-   PSC_PROP_R(Rom, int32, Length)
-   PSC_PROP_R(Rom, int32, ExpLength)
-   PSC_PROP_R(Rom, int32, Checksum)
-   PSC_PROP_R(Rom, int32, ExpChecksum)
-   PSC_PROP_R(Rom, int32, Flags)
-   //PSC_FUNCTION0(Rom, void, Audit) // not yet supported (2 functions with the same name, matched by their arguments)
-   PSC_FUNCTION1(Rom, void, Audit, bool)
-PSC_CLASS_END(Rom)
+#define PSC_VAR_SET_PinMAME_Rom(variant, value) PSC_VAR_SET_object(Rom, variant, value)
+PSC_CLASS_START(PinMAME_Rom, Rom)
+   PSC_PROP_R(string, Name)
+   PSC_PROP_R(int32, State)
+   PSC_PROP_R(string, StateDescription)
+   PSC_PROP_R(int32, Length)
+   PSC_PROP_R(int32, ExpLength)
+   PSC_PROP_R(int32, Checksum)
+   PSC_PROP_R(int32, ExpChecksum)
+   PSC_PROP_R(int32, Flags)
+   //PSC_FUNCTION0(void, Audit) // not yet supported (2 functions with the same name, matched by their arguments)
+   PSC_FUNCTION1(void, Audit, bool)
+PSC_CLASS_END()
 
-PSC_CLASS_START(Roms)
-PSC_CLASS_END(Roms)
+PSC_CLASS_START(PinMAME_Roms, Roms)
+PSC_CLASS_END()
 
-#define PSC_VAR_SET_Settings(variant, value) PSC_VAR_SET_object(Settings, variant, value)
-PSC_CLASS_START(Settings)
-   PSC_PROP_RW_ARRAY1(Settings, int, Value, string)
-PSC_CLASS_END(Settings)
+#define PSC_VAR_SET_PinMAME_Settings(variant, value) PSC_VAR_SET_object(Settings, variant, value)
+PSC_CLASS_START(PinMAME_Settings, Settings)
+   PSC_PROP_RW_ARRAY1(int, Value, string)
+PSC_CLASS_END()
 
-#define PSC_VAR_SET_GameSettings(variant, value) PSC_VAR_SET_object(GameSettings, variant, value)
-PSC_CLASS_START(GameSettings)
-   PSC_PROP_RW_ARRAY1(GameSettings, int, Value, string)
-PSC_CLASS_END(GameSettings)
+#define PSC_VAR_SET_PinMAME_GameSettings(variant, value) PSC_VAR_SET_object(GameSettings, variant, value)
+PSC_CLASS_START(PinMAME_GameSettings, GameSettings)
+   PSC_PROP_RW_ARRAY1(int, Value, string)
+PSC_CLASS_END()
 
-#define PSC_VAR_SET_Game(variant, value) PSC_VAR_SET_object(Game, variant, value)
-PSC_CLASS_START(Game)
-   PSC_PROP_R(Game, string, Name)
-   PSC_PROP_R(Game, string, Description)
-   PSC_PROP_R(Game, string, Year)
-   PSC_PROP_R(Game, string, Manufacturer)
-   PSC_PROP_R(Game, string, CloneOf)
-   PSC_PROP_R(Game, GameSettings, Settings)
-PSC_CLASS_END(Game)
+#define PSC_VAR_SET_PinMAME_Game(variant, value) PSC_VAR_SET_object(Game, variant, value)
+PSC_CLASS_START(PinMAME_Game, Game)
+   PSC_PROP_R(string, Name)
+   PSC_PROP_R(string, Description)
+   PSC_PROP_R(string, Year)
+   PSC_PROP_R(string, Manufacturer)
+   PSC_PROP_R(string, CloneOf)
+   PSC_PROP_R(PinMAME_GameSettings, Settings)
+PSC_CLASS_END()
 
-PSC_CLASS_START(Games)
-PSC_CLASS_END(Games)
+PSC_CLASS_START(PinMAME_Games, Games)
+PSC_CLASS_END()
 
-PSC_CLASS_START(ControllerSettings)
-PSC_CLASS_END(ControllerSettings)
+PSC_CLASS_START(PinMAME_ControllerSettings, ControllerSettings)
+PSC_CLASS_END()
 
-PSC_ARRAY1(ByteArray, uint8, 0)
-#define PSC_VAR_SET_ByteArray(variant, value) PSC_VAR_SET_array1(ByteArray, variant, value)
-#define PSC_VAR_ByteArray(variant) PSC_VAR_array1(uint8_t, variant)
+PSC_ARRAY1(PinMAME_ByteArray, uint8, 0)
+#define PSC_VAR_SET_PinMAME_ByteArray(variant, value) PSC_VAR_SET_array1(PinMAME_ByteArray, variant, value)
+#define PSC_VAR_PinMAME_ByteArray(variant) PSC_VAR_array1(uint8_t, variant)
 
-PSC_ARRAY1(IntArray, int32, 0)
-#define PSC_VAR_SET_IntArray(variant, value) PSC_VAR_SET_array1(IntArray, variant, value)
+PSC_ARRAY1(PinMAME_IntArray, int32, 0)
+#define PSC_VAR_SET_PinMAME_IntArray(variant, value) PSC_VAR_SET_array1(PinMAME_IntArray, variant, value)
 
 // Map a an array of struct to a 2 dimensions array of int32_t
-PSC_ARRAY2(StructArray, int32, 0, 0)
-#define PSC_VAR_SET_StructArray2(structType, fieldName1, fieldName2, variant, value) { \
+PSC_ARRAY2(PinMAME_StructArray, int32, 0, 0)
+#define PSC_VAR_SET_PinMAME_StructArray2(structType, fieldName1, fieldName2, variant, value) { \
       const unsigned int nDimensions = 2; \
       const std::vector<structType>& vec = (value); \
       const size_t size0 = vec.size(); \
@@ -101,7 +102,7 @@ PSC_ARRAY2(StructArray, int32, 0, 0)
       } \
       (variant).vArray = array; \
    }
-#define PSC_VAR_SET_StructArray3(structType, fieldName1, fieldName2, fieldName3, variant, value) { \
+#define PSC_VAR_SET_PinMAME_StructArray3(structType, fieldName1, fieldName2, fieldName3, variant, value) { \
       const unsigned int nDimensions = 3; \
       const std::vector<structType>& vec = (value); \
       const size_t size0 = vec.size(); \
@@ -118,89 +119,89 @@ PSC_ARRAY2(StructArray, int32, 0, 0)
       (variant).vArray = array; \
    }
 
-#define PSC_PROP_R_StructArray2(className, type, fieldName1, fieldName2, name) \
-   members.push_back( { { #name }, { "StructArray" }, 0, { }, \
+#define PSC_PROP_R_StructArray2(type, fieldName1, fieldName2, name) \
+   members.push_back( { { #name }, { "PinMAME_StructArray" }, 0, { }, \
       [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { \
-         PSC_VAR_SET_StructArray2(type, fieldName1, fieldName2, *pRet, static_cast<className*>(me)->Get##name()); } });
+         PSC_VAR_SET_PinMAME_StructArray2(type, fieldName1, fieldName2, *pRet, static_cast<_BindedClass*>(me)->Get##name()); } });
 
-#define PSC_PROP_R_StructArray3(className, type, fieldName1, fieldName2, fieldName3, name) \
-   members.push_back( { { #name }, { "StructArray" }, 0, { }, \
+#define PSC_PROP_R_StructArray3(type, fieldName1, fieldName2, fieldName3, name) \
+   members.push_back( { { #name }, { "PinMAME_StructArray" }, 0, { }, \
       [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { \
-         PSC_VAR_SET_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<className*>(me)->Get##name()); } });
-#define PSC_PROP_R_StructArray3_2(className, type, fieldName1, fieldName2, fieldName3, name, arg1, arg2) \
-   members.push_back( { { #name }, { "StructArray" }, 2, { { #arg1 }, { #arg2 } }, \
+         PSC_VAR_SET_PinMAME_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<_BindedClass*>(me)->Get##name()); } });
+#define PSC_PROP_R_StructArray3_2(type, fieldName1, fieldName2, fieldName3, name, arg1, arg2) \
+   members.push_back( { { #name }, { "PinMAME_StructArray" }, 2, { { #arg1 }, { #arg2 } }, \
       [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { \
-         PSC_VAR_SET_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<className*>(me)->Get##name( PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]) )); } } );
-#define PSC_PROP_R_StructArray3_3(className, type, fieldName1, fieldName2, fieldName3, name, arg1, arg2, arg3) \
-   members.push_back( { { #name }, { "StructArray"}, 3, { { #arg1 }, { #arg2 }, { #arg3 } }, \
+         PSC_VAR_SET_PinMAME_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<_BindedClass*>(me)->Get##name(PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]))); } });
+#define PSC_PROP_R_StructArray3_3(type, fieldName1, fieldName2, fieldName3, name, arg1, arg2, arg3) \
+   members.push_back( { { #name }, { "PinMAME_StructArray"}, 3, { { #arg1 }, { #arg2 }, { #arg3 } }, \
       [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { \
-         PSC_VAR_SET_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<className*>(me)->Get##name( PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]), PSC_VAR_##arg3(pArgs[2]) )); } } );
-#define PSC_PROP_R_StructArray3_4(className, type, fieldName1, fieldName2, fieldName3, name, arg1, arg2, arg3, arg4) \
-   members.push_back( { { #name }, { "StructArray" }, 4, { { #arg1 }, { #arg2 }, { #arg3 }, { #arg4 } }, \
+         PSC_VAR_SET_PinMAME_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<_BindedClass*>(me)->Get##name( PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]), PSC_VAR_##arg3(pArgs[2]) )); } } );
+#define PSC_PROP_R_StructArray3_4(type, fieldName1, fieldName2, fieldName3, name, arg1, arg2, arg3, arg4) \
+   members.push_back( { { #name }, { "PinMAME_StructArray" }, 4, { { #arg1 }, { #arg2 }, { #arg3 }, { #arg4 } }, \
       [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { \
-         PSC_VAR_SET_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<className*>(me)->Get##name( PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]), PSC_VAR_##arg3(pArgs[2]), PSC_VAR_##arg4(pArgs[3]) )); } } );
+         PSC_VAR_SET_PinMAME_StructArray3(type, fieldName1, fieldName2, fieldName3, *pRet, static_cast<_BindedClass*>(me)->Get##name( PSC_VAR_##arg1(pArgs[0]), PSC_VAR_##arg2(pArgs[1]), PSC_VAR_##arg3(pArgs[2]), PSC_VAR_##arg4(pArgs[3]) )); } } );
 
 
-PSC_CLASS_START(Controller)
+PSC_CLASS_START(PinMAME_Controller, Controller)
    // Overall setup
-   PSC_PROP_R(Controller, string, Version)
-   PSC_PROP_RW(Controller, string, GameName)
-   PSC_PROP_R(Controller, string, ROMName)
-   PSC_PROP_RW(Controller, string, SplashInfoLine)
-   PSC_PROP_RW(Controller, bool, ShowTitle)
-   PSC_PROP_RW(Controller, bool, HandleKeyboard)
-   PSC_PROP_RW(Controller, bool, HandleMechanics)
-   PSC_PROP_RW_ARRAY1(Controller, int32, SolMask, int)
+   PSC_PROP_R(string, Version)
+   PSC_PROP_RW(string, GameName)
+   PSC_PROP_R(string, ROMName)
+   PSC_PROP_RW(string, SplashInfoLine)
+   PSC_PROP_RW(bool, HandleKeyboard)
+   PSC_PROP_RW(int32, HandleMechanics)
+   PSC_PROP_R(PinMAME_Settings, Settings)
+   PSC_PROP_RW_ARRAY1(int32, SolMask, int)
    // Run/Pause/Stop
-   PSC_FUNCTION0(Controller, void, Run)
-   PSC_FUNCTION1(Controller, void, Run, int32)
-   PSC_FUNCTION2(Controller, void, Run, int32, int)
-   PSC_PROP_W(Controller, double, TimeFence)
-   PSC_PROP_R(Controller, bool, Running)
-   PSC_PROP_RW(Controller, bool, Pause)
-   PSC_FUNCTION0(Controller, void, Stop)
-   PSC_PROP_RW(Controller, bool, Hidden)
+   PSC_FUNCTION0(void, Run)
+   PSC_FUNCTION1(void, Run, int32)
+   PSC_FUNCTION2(void, Run, int32, int)
+   PSC_PROP_W(double, TimeFence)
+   PSC_PROP_R(bool, Running)
+   PSC_PROP_RW(bool, Pause)
+   PSC_FUNCTION0(void, Stop)
+   PSC_PROP_RW(bool, Hidden)
    // Emulated machine state access
-   PSC_PROP_RW_ARRAY1(Controller, bool, Switch, int)
-   PSC_PROP_W_ARRAY1(Controller, int32, Mech, int)
-   PSC_PROP_R_ARRAY1(Controller, int32, GetMech, int)
-   PSC_PROP_R_ARRAY1(Controller, bool, Lamp, int)
-   PSC_PROP_R_ARRAY1(Controller, bool, LampCallback, int)
-   PSC_PROP_R_ARRAY1(Controller, bool, Solenoid, int)
-   PSC_FUNCTION2(Controller, void, B2SSetScore, int, int)
-   PSC_FUNCTION2(Controller, void, B2SSetData, int, int)
-   PSC_PROP_R_ARRAY1(Controller, int32, GIString, int)
-   PSC_PROP_RW_ARRAY1(Controller, int32, Dip, int)
-   PSC_PROP_R(Controller, ByteArray, NVRAM)
-   PSC_PROP_R_StructArray3(Controller, PinmameNVRAMState, nvramNo, oldStat, currStat, ChangedNVRAM);
-   PSC_PROP_R_StructArray2(Controller, PinmameLampState, lampNo, state, ChangedLamps);
-   PSC_PROP_R_StructArray2(Controller, PinmameGIState, giNo, state, ChangedGIStrings);
-   PSC_PROP_R_StructArray2(Controller, PinmameSolenoidState, solNo, state, ChangedSolenoids);
-   PSC_PROP_R_StructArray2(Controller, PinmameSoundCommand, sndNo, sndNo, NewSoundCommands); // 2nd field is unused
-   PSC_PROP_R_StructArray3_2(Controller, PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int);
-   PSC_PROP_R_StructArray3_3(Controller, PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int, int);
-   PSC_PROP_R_StructArray3_4(Controller, PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int, int, int);
-   PSC_PROP_R(Controller, int, RawDmdWidth)
-   PSC_PROP_R(Controller, int, RawDmdHeight)
-   PSC_PROP_R(Controller, ByteArray, RawDmdPixels)
-   PSC_PROP_R(Controller, IntArray, RawDmdColoredPixels)
+   PSC_PROP_RW_ARRAY1(bool, Switch, int)
+   PSC_PROP_W_ARRAY1(int32, Mech, int)
+   PSC_PROP_R_ARRAY1(int32, GetMech, int)
+   PSC_PROP_R_ARRAY1(bool, Lamp, int)
+   PSC_PROP_R_ARRAY1(bool, LampCallback, int)
+   PSC_PROP_R_ARRAY1(bool, Solenoid, int)
+   PSC_FUNCTION2(void, B2SSetScore, int, int)
+   PSC_FUNCTION2(void, B2SSetData, int, int)
+   PSC_PROP_R_ARRAY1(int32, GIString, int)
+   PSC_PROP_RW_ARRAY1(int32, Dip, int)
+   PSC_PROP_R(PinMAME_ByteArray, NVRAM)
+   PSC_PROP_R_StructArray3(PinmameNVRAMState, nvramNo, oldStat, currStat, ChangedNVRAM);
+   PSC_PROP_R_StructArray2(PinmameLampState, lampNo, state, ChangedLamps);
+   PSC_PROP_R_StructArray2(PinmameGIState, giNo, state, ChangedGIStrings);
+   PSC_PROP_R_StructArray2(PinmameSolenoidState, solNo, state, ChangedSolenoids);
+   PSC_PROP_R_StructArray2(PinmameSoundCommand, sndNo, sndNo, NewSoundCommands); // 2nd field is unused
+   PSC_PROP_R_StructArray3_2(PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int);
+   PSC_PROP_R_StructArray3_3(PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int, int);
+   PSC_PROP_R_StructArray3_4(PinmameLEDState, ledNo, chgSeg, state, ChangedLEDs, int, int, int, int);
+   PSC_PROP_R(int, RawDmdWidth)
+   PSC_PROP_R(int, RawDmdHeight)
+   PSC_PROP_R(PinMAME_ByteArray, RawDmdPixels)
+   PSC_PROP_R(PinMAME_IntArray, RawDmdColoredPixels)
    // Overall information
-   PSC_PROP_R_ARRAY1(Controller, Game, Games, string)
+   PSC_PROP_R_ARRAY1(PinMAME_Game, Games, string)
    // Deprecated properties
-   PSC_PROP_RW(Controller, bool, DoubleSize)
-   PSC_PROP_RW(Controller, bool, LockDisplay)
-   PSC_PROP_RW(Controller, bool, ShowFrame)
-   PSC_PROP_RW(Controller, bool, ShowDMDOnly)
-   PSC_PROP_RW(Controller, bool, ShowTitle)
-   PSC_PROP_RW(Controller, int, FastFrames)
-   PSC_PROP_RW(Controller, bool, IgnoreRomCrc)
-   PSC_PROP_RW(Controller, bool, CabinetMode)
-   PSC_PROP_RW(Controller, int, SoundMode)
-   PSC_FUNCTION0(Controller, void, ShowOptsDialog)
-   PSC_FUNCTION1(Controller, void, ShowOptsDialog, int32)
+   PSC_PROP_RW(bool, DoubleSize)
+   PSC_PROP_RW(bool, LockDisplay)
+   PSC_PROP_RW(bool, ShowFrame)
+   PSC_PROP_RW(bool, ShowDMDOnly)
+   PSC_PROP_RW(bool, ShowTitle)
+   PSC_PROP_RW(int, FastFrames)
+   PSC_PROP_RW(bool, IgnoreRomCrc)
+   PSC_PROP_RW(bool, CabinetMode)
+   PSC_PROP_RW(int, SoundMode)
+   PSC_FUNCTION0(void, ShowOptsDialog)
+   PSC_FUNCTION1(void, ShowOptsDialog, int32)
    // Custom property to allow host to identify the object as the plugin version
-   members.push_back({ { "IsPlugin" }, { "bool" }, 0, {}, [](void* me, int, ScriptVariant* pArgs, ScriptVariant* pRet) { pRet->vBool = true; } });
-PSC_CLASS_END(Controller)
+   PSC_PROP_R(bool, IsPlugin)
+PSC_CLASS_END()
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -208,6 +209,8 @@ PSC_CLASS_END(Controller)
 
 static const MsgPluginAPI* msgApi = nullptr;
 static ScriptablePluginAPI* scriptApi = nullptr;
+static unsigned int getScriptApiMsgId = 0;
+static unsigned int getVpxApiMsgId = 0;
 
 static uint32_t endpointId;
 
@@ -256,12 +259,12 @@ static void OnSetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, 
 {
    PinMAMESwitchSet* s = static_cast<PinMAMESwitchSet*>(msgData);
    if (s == nullptr) {
-      LOGE("[SetSwitch] msgData=nullptr");
+      LOGE("[SetSwitch] msgData=nullptr"s);
       return;
    }
    s->handled = 0;
    if (controller == nullptr) {
-      LOGE("[SetSwitch] no controller running, sw=%d state=%d ignored", s->switchNum, s->state);
+      LOGE(std::format("[SetSwitch] no controller running, sw={} state={} ignored", s->switchNum, s->state));
       return;
    }
 #if PINMAME_DEBUG_LOG
@@ -270,7 +273,7 @@ static void OnSetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, 
    controller->SetSwitch(s->switchNum, s->state != 0);
 #if PINMAME_DEBUG_LOG
    const bool now = controller->GetSwitch(s->switchNum);
-   LOGI("[SetSwitch] sw=%d state=%d (prev=%d → now=%d)", s->switchNum, s->state, prev ? 1 : 0, now ? 1 : 0);
+   LOGI(std::format("[SetSwitch] sw={} state={} (prev={} → now={})", s->switchNum, s->state, prev ? 1 : 0, now ? 1 : 0));
 #endif
    s->handled = 1;
 }
@@ -292,17 +295,16 @@ static void OnGetSwitchRequest(const unsigned int /*msgId*/, void* /*context*/, 
    g->value = controller->GetSwitch(g->switchNum) ? 1 : 0;
    g->handled = 1;
 #if PINMAME_DEBUG_LOG
-   LOGI("[GetSwitch] sw=%d value=%d", g->switchNum, g->value);
+   LOGI(std::format("[GetSwitch] sw={} value={}", g->switchNum, g->value));
 #endif
 }
 
 PSC_ERROR_IMPLEMENT(scriptApi); // Implement script error
 
-LPI_IMPLEMENT // Implement shared log support
+LPI_IMPLEMENT_CPP // Implement shared log support
 
-MSGPI_BOOL_VAL_SETTING(enableSoundProp, "Sound", "Enable Sound", "Enable sound emulation", true, true);
 MSGPI_STRING_VAL_SETTING(pinMAMEPathProp, "PinMAMEPath", "PinMAME Path", "Folder that contains PinMAME subfolders (roms, nvram, ...)", true, "", 1024);
-MSGPI_INT_VAL_SETTING(cheatProp, "Cheat", "Cheat Mode", "", true, 0, 0xFFFF, 0);
+MSGPI_BOOL_VAL_SETTING(cheatProp, "Cheat", "Cheat Mode", "", true, false);
 // Output sample rate from PinMAME, in Hz. The default 0 means "auto":
 // on Android the host audio engine (AAudio) runs at 48000 so we pick that
 // to skip one resample stage in our pipeline. Manual values worth trying
@@ -326,103 +328,22 @@ void PINMAMECALLBACK OnLogMessage(PINMAME_LOG_LEVEL logLevel, const char* format
    int size = vsnprintf(nullptr, 0, format, args_copy);
    va_end(args_copy);
    if (size > 0) {
-      char* const buffer = static_cast<char*>(malloc(size + 1));
-      vsnprintf(buffer, size + 1, format, args);
-      if (logLevel == PINMAME_LOG_LEVEL_INFO)
+      string buffer(size + 1, '\0');
+      vsnprintf(buffer.data(), size + 1, format, args);
+      buffer.pop_back(); // remove null terminator
+      if (buffer.starts_with("Average FPS:"s))
       {
-         LOGI("%s", buffer);
+         // Skip as the FPS does not correspond to anything here
+      }
+      else if (logLevel == PINMAME_LOG_LEVEL_INFO)
+      {
+         LOGI(buffer);
       }
       else if (logLevel == PINMAME_LOG_LEVEL_ERROR)
       {
-         LOGE("%s", buffer);
+         LOGE(buffer);
       }
-      free(buffer);
    }
-}
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Audio
-
-static unsigned int onAudioUpdateId;
-static AudioUpdateMsg* audioSrc = nullptr;
-
-// Mirrors the per-game `Settings.Value("sound")` flag from VBScript. Defaults to true at each
-// Controller creation; flipped to false by GameSettings::SetValue when a table wants to silence
-// the ROM emulation (typically because it overlays its own MP3 music via PlayMusic).
-static bool g_runtimeSoundEnabled = true;
-
-static void StopAudioStream()
-{
-   if (audioSrc != nullptr)
-   {
-      // Send an end of stream message
-      AudioUpdateMsg* pendingAudioUpdate = new AudioUpdateMsg(); 
-      memcpy(pendingAudioUpdate, audioSrc, sizeof(AudioUpdateMsg));
-      msgApi->RunOnMainThread(0, [](void* userData) {
-            AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
-            msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
-            delete msg;
-         }, pendingAudioUpdate);
-      delete audioSrc;
-      audioSrc = nullptr;
-   }
-}
-
-int PINMAMECALLBACK OnAudioAvailable(PinmameAudioInfo* p_audioInfo, void* const pUserData)
-{
-   LOGI("format=%d, channels=%d, sampleRate=%.2f, framesPerSecond=%.2f, samplesPerFrame=%d, bufferSize=%d", p_audioInfo->format, p_audioInfo->channels, p_audioInfo->sampleRate,
-      p_audioInfo->framesPerSecond, p_audioInfo->samplesPerFrame, p_audioInfo->bufferSize);
-   if (!enableSoundProp_Val || !g_runtimeSoundEnabled)
-   {
-      StopAudioStream();
-      return p_audioInfo->samplesPerFrame;
-   }
-   if (((p_audioInfo->format == PINMAME_AUDIO_FORMAT_INT16) || (p_audioInfo->format == PINMAME_AUDIO_FORMAT_FLOAT))
-      && ((p_audioInfo->channels == 1) || (p_audioInfo->channels == 2)))
-   {
-      audioSrc = new AudioUpdateMsg();
-      audioSrc->volume = 1.0f;
-      audioSrc->id = { endpointId, 0 };
-      audioSrc->type = (p_audioInfo->channels == 1) ? CTLPI_AUDIO_SRC_BACKGLASS_MONO : CTLPI_AUDIO_SRC_BACKGLASS_STEREO;
-      audioSrc->format = (p_audioInfo->format == PINMAME_AUDIO_FORMAT_INT16) ? CTLPI_AUDIO_FORMAT_SAMPLE_INT16 : CTLPI_AUDIO_FORMAT_SAMPLE_FLOAT;
-      audioSrc->sampleRate = p_audioInfo->sampleRate;
-   }
-   else
-   {
-      StopAudioStream();
-   }
-   return p_audioInfo->samplesPerFrame;
-}
-
-int PINMAMECALLBACK OnAudioUpdated(void* p_buffer, int samples, void* const pUserData)
-{
-   if (!enableSoundProp_Val || !g_runtimeSoundEnabled)
-      return samples;
-   if (audioSrc != nullptr)
-   {
-      // This callback is invoked on the emulation thread, with data only valid in the context of the call.
-      // Therefore, we need to copy the data to feed them on the message thread.
-      const int bytePerSample = (audioSrc->format == CTLPI_AUDIO_FORMAT_SAMPLE_INT16) ? 2 : 4;
-      const int nChannels = (audioSrc->type == CTLPI_AUDIO_SRC_BACKGLASS_MONO) ? 1 : 2;
-      AudioUpdateMsg* pendingAudioUpdate = new AudioUpdateMsg(); 
-      memcpy(pendingAudioUpdate, audioSrc, sizeof(AudioUpdateMsg));
-      pendingAudioUpdate->bufferSize = samples * bytePerSample * nChannels;
-      pendingAudioUpdate->buffer = new uint8_t[pendingAudioUpdate->bufferSize];
-      memcpy(pendingAudioUpdate->buffer, p_buffer, pendingAudioUpdate->bufferSize);
-      msgApi->RunOnMainThread(0, [](void* userData) {
-            AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
-            msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
-            delete[] msg->buffer;
-            delete msg;
-         }, pendingAudioUpdate);
-   }
-   return samples;
-}
-
-void SetRuntimeSoundEnabled(bool enabled)
-{
-   g_runtimeSoundEnabled = enabled;
 }
 
 
@@ -432,16 +353,15 @@ void SetRuntimeSoundEnabled(bool enabled)
 static void OnControllerGameStart(Controller*)
 {
    assert(controller->GetRunning());
+
 }
 
 static void OnControllerGameEnd(Controller*)
 {
-   StopAudioStream();
 }
 
 static void OnControllerDestroyed(Controller*)
 {
-   StopAudioStream();
    controller = nullptr;
 }
 
@@ -459,49 +379,36 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
    endpointId = sessionId;
    msgApi = api;
 
+   // Optional VPX API
+   getVpxApiMsgId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API);
+
    // Request and setup shared login API
    LPISetup(endpointId, msgApi);
 
-   msgApi->RegisterSetting(endpointId, &enableSoundProp);
    msgApi->RegisterSetting(endpointId, &pinMAMEPathProp);
    msgApi->RegisterSetting(endpointId, &cheatProp);
    msgApi->RegisterSetting(endpointId, &audioSampleRateProp);
 
-   // Setup our contribution to the controller messages
-   onAudioUpdateId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_AUDIO_ON_UPDATE_MSG);
-
    // Contribute our API to the script engine
-   const unsigned int getScriptApiId = msgApi->GetMsgID(SCRIPTPI_NAMESPACE, SCRIPTPI_MSG_GET_API);
-   msgApi->BroadcastMsg(endpointId, getScriptApiId, &scriptApi);
-   msgApi->ReleaseMsgID(getScriptApiId);
-   auto regLambda = [&](ScriptClassDef* scd) { scriptApi->RegisterScriptClass(scd); };
-   auto aliasLambda = [&](const char* name, const char* aliasedType) { scriptApi->RegisterScriptTypeAlias(name, aliasedType); };
-   auto arrayLambda = [&](ScriptArrayDef* sad) { scriptApi->RegisterScriptArrayType(sad); };
-   RegisterRomSCD(regLambda);
-   RegisterRomsSCD(regLambda);
-   RegisterGameSCD(regLambda);
-   RegisterGamesSCD(regLambda);
-   RegisterSettingsSCD(regLambda);
-   RegisterGameSettingsSCD(regLambda);
-   RegisterControllerSCD(regLambda);
-   RegisterControllerSettingsSCD(regLambda);
-   RegisterByteArraySCD(arrayLambda);
-   RegisterIntArraySCD(arrayLambda);
-   RegisterStructArraySCD(arrayLambda);
-   Controller_SCD->CreateObject = []()
+   getScriptApiMsgId = msgApi->GetMsgID(SCRIPTPI_NAMESPACE, SCRIPTPI_MSG_GET_API);
+   msgApi->BroadcastMsg(endpointId, getScriptApiMsgId, &scriptApi);
+   auto regLambda = [](ScriptClassDef* scd) { scriptApi->RegisterScriptClass(scd); };
+   auto arrayLambda = [](ScriptArrayDef* sad) { scriptApi->RegisterScriptArrayType(sad); };
+   RegisterPinMAME_Rom(regLambda);
+   RegisterPinMAME_Roms(regLambda);
+   RegisterPinMAME_Game(regLambda);
+   RegisterPinMAME_Games(regLambda);
+   RegisterPinMAME_Settings(regLambda);
+   RegisterPinMAME_GameSettings(regLambda);
+   RegisterPinMAME_Controller(regLambda);
+   RegisterPinMAME_ControllerSettings(regLambda);
+   RegisterPinMAME_ByteArray(arrayLambda);
+   RegisterPinMAME_IntArray(arrayLambda);
+   RegisterPinMAME_StructArray(arrayLambda);
+   PinMAME_Controller_SCD->CreateObject = []()
    {
       assert(controller == nullptr); // We do not support having multiple instance running concurrently
 
-      // Default the per-game runtime gate to enabled. Tables override via
-      // `Game.Settings.Value("sound") = 0` after construction; the global plugin
-      // setting `enableSoundProp_Val` still acts as a master toggle inside the callbacks.
-      g_runtimeSoundEnabled = true;
-
-      // Always register the audio callbacks so per-game runtime overrides can take effect
-      // after the Controller has been constructed (script flow is CreateObject → set
-      // properties → Controller.Run, so config-time gating misses anything the script
-      // does between those steps). The callbacks gate themselves on enableSoundProp_Val
-      // and g_runtimeSoundEnabled.
       // Pick the output sample rate. 0 in the INI means "auto" — on Android
       // we default to 48000 to match AAudio's device rate so miniaudio does no
       // resampling. Without this auto path the host pipeline would do
@@ -517,7 +424,7 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
          requestedSampleRate = 44100;
 #endif
       }
-      LOGI("PinMAME audio sample rate: %d Hz (user setting: %d, 0=auto)", requestedSampleRate, audioSampleRateProp_Val);
+      LOGI(std::format("PinMAME audio sample rate: {} Hz (user setting: {}, 0=auto)", requestedSampleRate, audioSampleRateProp_Val));
 
       PinmameConfig config = {
          PINMAME_AUDIO_FORMAT_INT16,
@@ -526,58 +433,61 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
          NULL, // State update => prefer update on request
          NULL, // Display available => prefer state block
          NULL, // Display updated => prefer update on request
-         &OnAudioAvailable,
-         &OnAudioUpdated,
+         NULL, //
+         NULL, //
          NULL, // Mech available
          NULL, // Mech updated
          NULL, // Solenoid updated => prefer update on request
          NULL, // Console updated => TODO implement (for Stern SAM)
          NULL, // Is key pressed => TODO implement ?
          &OnLogMessage,
-         NULL, // &OnSoundCommand, => see https://github.com/vpinball/libaltsound (implement inside this plugin or as another plugin ?)
+         NULL, // Sound command callback - libpinmame broadcasts via message API directly
       };
 
       // Define pinmame directory (for ROM, NVRAM, ... eventually using VPX API if available)
-      string pinmamePath;
+      std::filesystem::path pinmamePath;
+      std::filesystem::path memmapPath;
       VPXPluginAPI* vpxApi = nullptr;
-      unsigned int getVpxApiId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_MSG_GET_API);
-      msgApi->BroadcastMsg(endpointId, getVpxApiId, &vpxApi);
-      msgApi->ReleaseMsgID(getVpxApiId);
+      msgApi->BroadcastMsg(endpointId, getVpxApiMsgId, &vpxApi);
+      
+      // Prioritize a pinmame folder along the table
       if (vpxApi != nullptr)
       {
          VPXTableInfo tableInfo;
          vpxApi->GetTableInfo(&tableInfo);
          std::filesystem::path tablePath = tableInfo.path;
-         pinmamePath = find_case_insensitive_directory_path(tablePath.parent_path().string() + PATH_SEPARATOR_CHAR + "pinmame");
+         pinmamePath = find_case_insensitive_directory_path(tablePath.parent_path() / "pinmame"sv / "roms"sv);
+         if (!pinmamePath.empty())
+            pinmamePath = pinmamePath.parent_path();
+         memmapPath = find_case_insensitive_directory_path(tablePath.parent_path() / "pinmame"sv / "memmaps"sv);
       }
-      if (pinmamePath.empty())
-      {
-         pinmamePath = pinMAMEPathProp_Get();
-         if (!pinmamePath.empty() && !pinmamePath.ends_with(PATH_SEPARATOR_CHAR))
-            pinmamePath += PATH_SEPARATOR_CHAR;
-      }
-      if (pinmamePath.empty())
-      {
-         #if (defined(__APPLE__) && ((defined(TARGET_OS_IOS) && TARGET_OS_IOS) || (defined(TARGET_OS_TV) && TARGET_OS_TV))) || defined(__ANDROID__)
-            if (vpxApi != nullptr)
-            { 
-               VPXInfo vpxInfo;
-               vpxApi->GetVpxInfo(&vpxInfo);
-               pinmamePath = find_case_insensitive_directory_path(vpxInfo.prefPath + "pinmame"s);
-            }
-            else {
-               LOGE("PinMAME path is not defined.");
-            }
-         #elif defined(__APPLE__) || defined(__linux__)
-            pinmamePath = string(getenv("HOME")) + PATH_SEPARATOR_CHAR + ".pinmame" + PATH_SEPARATOR_CHAR;
-         #else
-            // FIXME implement a last resort or just ask the user to define its path setup in the settings ?
-            LOGE("PinMAME path is not defined.");
-         #endif
-      }
-      strncpy_s(const_cast<char*>(config.vpmPath), PINMAME_MAX_PATH, pinmamePath.c_str());
 
-      Controller* pController = new Controller(msgApi, endpointId, config);
+      // Defaults to the global setting
+      if (pinmamePath.empty())
+         pinmamePath = pinMAMEPathProp_Get();
+      if (memmapPath.empty())
+         memmapPath = std::filesystem::path(pinMAMEPathProp_Get()) / "memmaps"sv;
+
+      // Custom platforms defaults
+      #if (defined(__APPLE__) && ((defined(TARGET_OS_IOS) && TARGET_OS_IOS) || (defined(TARGET_OS_TV) && TARGET_OS_TV))) || defined(__ANDROID__)
+      if (pinmamePath.empty() && vpxApi != nullptr)
+      {
+         VPXInfo vpxInfo;
+         vpxApi->GetVpxInfo(&vpxInfo);
+         pinmamePath = find_case_insensitive_directory_path(std::filesystem::path(vpxInfo.prefPath) / "pinmame"sv);
+      }
+      #elif defined(__APPLE__) || defined(__linux__)
+      if (pinmamePath.empty())
+         pinmamePath = std::filesystem::path(getenv("HOME")) / ".pinmame"sv;
+      #endif
+
+      // FIXME implement a last resort or just ask the user to define its path setup in the settings ?
+      if (pinmamePath.empty())
+         LOGE("PinMAME path is not defined."s);
+      else
+         strncpy_s(const_cast<char*>(config.vpmPath), PINMAME_MAX_PATH, (pinmamePath / ""sv).string().c_str());
+
+      Controller* pController = new Controller(msgApi, endpointId, config, memmapPath);
       pController->SetOnDestroyHandler(OnControllerDestroyed);
       pController->SetOnGameStartHandler(OnControllerGameStart);
       pController->SetOnGameEndHandler(OnControllerGameEnd);
@@ -586,8 +496,8 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
 
       return static_cast<void*>(pController);
    };
-   scriptApi->SubmitTypeLibrary();
-   scriptApi->SetCOMObjectOverride("VPinMAME.Controller", Controller_SCD);
+   scriptApi->SubmitTypeLibrary(endpointId);
+   scriptApi->SetCOMObjectOverride("VPinMAME.Controller", PinMAME_Controller_SCD);
 
    PinmameSetMsgAPI(const_cast<MsgPluginAPI*>(msgApi), endpointId);
 
@@ -609,28 +519,52 @@ MSGPI_EXPORT void MSGPIAPI PinMAMEPluginLoad(const uint32_t sessionId, const Msg
 
 MSGPI_EXPORT void MSGPIAPI PinMAMEPluginUnload()
 {
-   PinmameSetMsgAPI(nullptr, 0);
+   if (controller)
+   {
+      int nRemainingRef = 0;
+      while (controller)
+      {
+         controller->Release();
+         nRemainingRef++;
+      }
+      LOGE(std::format("PinMAME Controller was not destroyed before unloading the plugin ({} remaining references)", nRemainingRef));
+   }
 
    if (getNvramMsgId != 0) {
-      msgApi->UnsubscribeMsg(getNvramMsgId, &OnGetNvramRequest);
+      msgApi->UnsubscribeMsg(getNvramMsgId, &OnGetNvramRequest, nullptr);
       msgApi->ReleaseMsgID(getNvramMsgId);
       getNvramMsgId = 0;
    }
 
    if (setSwitchMsgId != 0) {
-      msgApi->UnsubscribeMsg(setSwitchMsgId, &OnSetSwitchRequest);
+      msgApi->UnsubscribeMsg(setSwitchMsgId, &OnSetSwitchRequest, nullptr);
       msgApi->ReleaseMsgID(setSwitchMsgId);
       setSwitchMsgId = 0;
    }
 
    if (getSwitchMsgId != 0) {
-      msgApi->UnsubscribeMsg(getSwitchMsgId, &OnGetSwitchRequest);
+      msgApi->UnsubscribeMsg(getSwitchMsgId, &OnGetSwitchRequest, nullptr);
       msgApi->ReleaseMsgID(getSwitchMsgId);
       getSwitchMsgId = 0;
    }
 
-   msgApi->ReleaseMsgID(onAudioUpdateId);
    scriptApi->SetCOMObjectOverride("VPinMAME.Controller", nullptr);
-   // TODO we should unregister the script API contribution
+   auto regLambda = [](ScriptClassDef* scd) { scriptApi->UnregisterScriptClass(scd); };
+   auto arrayLambda = [](ScriptArrayDef* sad) { scriptApi->UnregisterScriptArrayType(sad); };
+   UnregisterPinMAME_Rom(regLambda);
+   UnregisterPinMAME_Roms(regLambda);
+   UnregisterPinMAME_Game(regLambda);
+   UnregisterPinMAME_Games(regLambda);
+   UnregisterPinMAME_Settings(regLambda);
+   UnregisterPinMAME_GameSettings(regLambda);
+   UnregisterPinMAME_Controller(regLambda);
+   UnregisterPinMAME_ControllerSettings(regLambda);
+   UnregisterPinMAME_ByteArray(arrayLambda);
+   UnregisterPinMAME_IntArray(arrayLambda);
+   UnregisterPinMAME_StructArray(arrayLambda);
+
+   msgApi->ReleaseMsgID(getVpxApiMsgId);
+   msgApi->ReleaseMsgID(getScriptApiMsgId);
+   PinmameSetMsgAPI(nullptr, 0);
    msgApi = nullptr;
 }

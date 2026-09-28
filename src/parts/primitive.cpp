@@ -1,223 +1,46 @@
 // license:GPLv3+
 
-// implementation of the Primitive class.
-
 #include "core/stdafx.h" 
-#include "forsyth.h"
-#include "utils/objloader.h"
-#include "miniz/miniz.h"
-#include "progmesh.h"
-#include "ThreadPool.h"
+#include "primitive.h"
+
+#include "core/VPApp.h"
+#include "math/matrix.h"
+#include "parts/light.h"
+#include "parts/Collection.h"
+#include "renderer/Renderer.h"
+#include "renderer/RenderCommand.h"
 #include "renderer/Shader.h"
+#include "renderer/trace.h"
+#include "utils/objloader.h"
+#include "utils/color.h"
 
-ThreadPool *g_pPrimitiveDecompressThreadPool = nullptr;
+#include "forsyth.h"
+#include "progmesh.h"
+#include "miniz/miniz.h"
 
-void Mesh::Clear()
-{
-   m_vertices.clear();
-   m_indices.clear();
-   for (size_t i = 0; i < m_animationFrames.size(); i++)
-      m_animationFrames[i].m_frameVerts.clear();
-   m_animationFrames.clear();
-   middlePoint.x = 0.0f;
-   middlePoint.y = 0.0f;
-   middlePoint.z = 0.0f;
-   m_validBounds = false;
-}
-
-bool Mesh::LoadAnimation(const char *fname, const bool flipTV, const bool convertToLeftHanded)
-{
-   m_validBounds = false;
-   string name(fname);
-   size_t idx = name.find_last_of('_');
-   if (idx == string::npos)
-   {
-      ShowError("Can't find sequence of obj files! The file name of the sequence must be <meshname>_x.obj where x is the frame number!");
-      return false;
-   }
-#ifndef __STANDALONE__
-   idx++;
-   name = name.substr(0,idx);
-   string sname = name + "*.obj";
-   WIN32_FIND_DATA data;
-   const HANDLE h = FindFirstFile(sname.c_str(), &data);
-   vector<string> allFiles;
-   int frameCounter = 0;
-   if (h != INVALID_HANDLE_VALUE)
-   {
-      do
-      {
-         allFiles.push_back(data.cFileName);
-         frameCounter++;
-      } while (FindNextFile(h, &data));
-   }
-   m_animationFrames.resize(frameCounter);
-   for (size_t i = 0; i < allFiles.size(); i++)
-   {
-      sname = allFiles[i];
-      ObjLoader loader;
-      if (loader.Load(sname, flipTV, convertToLeftHanded))
-      {
-         const vector<Vertex3D_NoTex2>& verts = loader.GetVertices();
-         const vector<unsigned int>& indices = loader.GetIndices();
-         if ((m_indices.size() != indices.size()) || (m_vertices.size() != verts.size()) || (memcmp(m_indices.data(), indices.data(), indices.size()*sizeof(unsigned int)) != 0))
-         {
-            ShowError("Error: frames of animation do not share the same data layout.");
-            return false;
-         }
-         for (size_t t = 0; t < verts.size(); t++)
-         {
-            VertData vd;
-            vd.x = verts[t].x; vd.y = verts[t].y; vd.z = verts[t].z;
-            vd.nx = verts[t].nx; vd.ny = verts[t].ny; vd.nz = verts[t].nz;
-            m_animationFrames[i].m_frameVerts.push_back(vd);
-         }
-      }
-      else
-      {
-         name = "Unable to load file " + sname;
-         ShowError(name);
-         return false;
-      }
-
-   }
-   sname = std::to_string(frameCounter)+" frames imported!";
-   g_pvp->MessageBox(sname.c_str(), "Info", MB_OK | MB_ICONEXCLAMATION);
-#endif
-   return true;
-}
-
-bool Mesh::LoadWavefrontObj(const string& fname, const bool flipTV, const bool convertToLeftHanded)
-{
-   m_validBounds = false;
-   Clear();
-   ObjLoader loader;
-   if (loader.Load(fname, flipTV, convertToLeftHanded))
-   {
-      m_vertices = loader.GetVertices();
-      m_indices = loader.GetIndices();
-      float maxX = -FLT_MAX, minX = FLT_MAX;
-      float maxY = -FLT_MAX, minY = FLT_MAX;
-      float maxZ = -FLT_MAX, minZ = FLT_MAX;
-
-      for (size_t i = 0; i < m_vertices.size(); i++)
-      {
-         if (m_vertices[i].x > maxX) maxX = m_vertices[i].x;
-         if (m_vertices[i].x < minX) minX = m_vertices[i].x;
-         if (m_vertices[i].y > maxY) maxY = m_vertices[i].y;
-         if (m_vertices[i].y < minY) minY = m_vertices[i].y;
-         if (m_vertices[i].z > maxZ) maxZ = m_vertices[i].z;
-         if (m_vertices[i].z < minZ) minZ = m_vertices[i].z;
-      }
-      middlePoint.x = (maxX + minX)*0.5f;
-      middlePoint.y = (maxY + minY)*0.5f;
-      middlePoint.z = (maxZ + minZ)*0.5f;
-
-      return true;
-   }
-   else
-      return false;
-}
-
-void Mesh::SaveWavefrontObj(const string& fname, const string& description)
-{
-   ObjLoader loader;
-   loader.Save(fname, description.empty() ? fname : description, *this);
-}
-
-void Mesh::UploadToVB(std::shared_ptr<VertexBuffer> vb, const float frame) 
-{
-   if(!vb)
-      return;
-
-   if (frame >= 0.f)
-   {
-      float intPart;
-      const float fractpart = modff(frame, &intPart);
-      const int iFrame = (int)intPart;
-
-      if (iFrame+1 < (int)m_animationFrames.size())
-      {
-          for (size_t i = 0; i < m_vertices.size(); i++)
-          {
-              const VertData& v  = m_animationFrames[iFrame  ].m_frameVerts[i];
-              const VertData& v2 = m_animationFrames[iFrame+1].m_frameVerts[i];
-              m_vertices[i].x  = v.x  + (v2.x  - v.x) *fractpart;
-              m_vertices[i].y  = v.y  + (v2.y  - v.y) *fractpart;
-              m_vertices[i].z  = v.z  + (v2.z  - v.z) *fractpart;
-              m_vertices[i].nx = v.nx + (v2.nx - v.nx)*fractpart;
-              m_vertices[i].ny = v.ny + (v2.ny - v.ny)*fractpart;
-              m_vertices[i].nz = v.nz + (v2.nz - v.nz)*fractpart;
-          }
-      }
-      else
-          for (size_t i = 0; i < m_vertices.size(); i++)
-          {
-              const VertData& v = m_animationFrames[iFrame].m_frameVerts[i];
-              m_vertices[i].x  = v.x;
-              m_vertices[i].y  = v.y;
-              m_vertices[i].z  = v.z;
-              m_vertices[i].nx = v.nx;
-              m_vertices[i].ny = v.ny;
-              m_vertices[i].nz = v.nz;
-          }
-   }
-
-   Vertex3D_NoTex2 *buf;
-   vb->Lock(buf);
-   memcpy(buf, m_vertices.data(), sizeof(Vertex3D_NoTex2)*m_vertices.size());
-   vb->Unlock();
-}
-
-void Mesh::UpdateBounds()
-{
-   if (!m_validBounds)
-   {
-      m_validBounds = true;
-      m_minAABound = Vertex3Ds(FLT_MAX, FLT_MAX, FLT_MAX);
-      m_maxAABound = Vertex3Ds(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-      for (const Vertex3D_NoTex2 &v : m_vertices)
-      {
-          m_minAABound.x = min(m_minAABound.x, v.x);
-          m_minAABound.y = min(m_minAABound.y, v.y);
-          m_minAABound.z = min(m_minAABound.z, v.z);
-          m_maxAABound.x = max(m_maxAABound.x, v.x);
-          m_maxAABound.y = max(m_maxAABound.y, v.y);
-          m_maxAABound.z = max(m_maxAABound.z, v.z);
-      }
-   }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-Primitive::Primitive()
-{
-}
 
 Primitive::~Primitive()
 {
-   WaitForMeshDecompression(); //!! needed nowadays due to multithreaded mesh decompression
-   assert(m_rd == nullptr); // RenderRelease must be explicitly called before deleting this object
+   assert(m_renderer == nullptr); // RenderRelease must be explicitly called before deleting this object
 }
 
-Primitive *Primitive::CopyForPlay(PinTable *live_table) const
+Primitive *Primitive::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Primitive, live_table)
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Primitive)
    dst->m_mesh = m_mesh;
    return dst;
 }
 
-HRESULT Primitive::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT Primitive::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_vPosition.x = x;
    m_d.m_vPosition.y = y;
-   UpdateStatusBarInfo();
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   CalculateBuiltinOriginal();
+   return S_OK;
 }
 
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsPrimitive_##prop() : Settings::GetDefaultPropsPrimitive_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsPrimitive_##prop() : Settings::GetDefaultPropsPrimitive_##prop##_Default()
 void Primitive::SetDefaults(const bool fromMouseClick)
 {
    LinkProp(m_d.m_SideColor, SideColor);
@@ -263,9 +86,9 @@ void Primitive::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_objectSpaceNormalMap, ObjectSpaceNormalMap);
 
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
-   
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
+
    SetDefaultPhysics(fromMouseClick);
 
    m_d.m_use3DMesh = false;
@@ -284,7 +107,7 @@ void Primitive::SetDefaultPhysics(const bool fromMouseClick)
 
 void Primitive::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsPrimitive_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsPrimitive_##prop(field, false)
    LinkProp(m_d.m_SideColor, SideColor);
    LinkProp(m_d.m_visible, Visible);
    LinkProp(m_d.m_staticRendering, StaticRendering);
@@ -333,8 +156,8 @@ void Primitive::WriteRegDefaults()
    LinkProp(m_d.m_scatter, Scatter);
 
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
@@ -370,7 +193,7 @@ void Primitive::PhysicSetup(PhysicsEngine* physics, const bool isUI)
    //
 
    // TODO limit vertex count for UI
-   const unsigned int reduced_vertices = max((unsigned int)pow((double)m_vertices.size(), clamp(1.f - m_d.m_collision_reductionFactor, 0.f, 1.f) * 0.25f + 0.75f), 420u); //!! 420 = magic
+   const unsigned int reduced_vertices = max((unsigned int)pow((double)m_vertices.size(), saturate(1.f - m_d.m_collision_reductionFactor) * 0.25f + 0.75f), 420u); //!! 420 = magic
 
    // Ported at: VisualPinball.Engine/VPT/Primitive/PrimitiveHitGenerator.cs
 
@@ -544,7 +367,7 @@ void Primitive::SetupHitObject(PhysicsEngine* physics, HitObject *obj, const boo
 
 // Ported at: VisualPinball.Engine/VPT/Primitive/PrimitiveMeshGenerator.cs
 
-void Primitive::RecalculateMatrices()
+const Matrix3D& Primitive::RecalculateMatrices()
 {
    // scale * rotation * translation
 
@@ -560,6 +383,7 @@ void Primitive::RecalculateMatrices()
    m_fullMatrix = (Matrix3D::MatrixScale(m_d.m_vSize.x, m_d.m_vSize.y, m_d.m_vSize.z)
                  * RTmatrix)
                  * Matrix3D::MatrixTranslate(m_d.m_vPosition.x, m_d.m_vPosition.y, m_d.m_vPosition.z);
+   return m_fullMatrix;
 }
 
 // recalculate vertices for editor display & physics setup
@@ -581,217 +405,84 @@ void Primitive::TransformVertices()
    }
 }
 
-//////////////////////////////
-// Rendering
-//////////////////////////////
-
-// 2D
-
-void Primitive::UIRenderPass1(Sur * const psur)
+void Primitive::GetEditorTriangles(vector<Vertex2D> &triangles) const
 {
-}
-
-void Primitive::UIRenderPass2(Sur * const psur)
-{
-   RecalculateMatrices();
-   TransformVertices();
-
-   psur->SetLineColor(RGB(0, 0, 0), false, 1);
-   psur->SetObject(this);
-   if (!m_d.m_displayTexture)
+   triangles.reserve(m_mesh.NumIndices());
+   for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
    {
-      if ((m_d.m_edgeFactorUI <= 0.0f) || (m_d.m_edgeFactorUI >= 1.0f) || !m_d.m_use3DMesh)
-      {
-         if (!m_d.m_use3DMesh || (m_d.m_edgeFactorUI >= 1.0f) || (m_mesh.NumVertices() <= 100)) // small mesh: draw all triangles
-         {
-            for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
-            {
-               const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-               const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-               const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
-               psur->Line(A->x, A->y, B->x, B->y);
-               psur->Line(B->x, B->y, C->x, C->y);
-               psur->Line(C->x, C->y, A->x, A->y);
-            }
-         }
-         else // large mesh: draw a simplified mesh for performance reasons, does not approximate the shape well
-         {
-            if (m_mesh.NumIndices() > 0)
-            {
-               const size_t numPts = m_mesh.NumIndices() / 3 + 1;
-               vector<Vertex2D> drawVertices(numPts);
-
-               const Vertex3Ds& A = m_vertices[m_mesh.m_indices[0]];
-               drawVertices[0] = Vertex2D(A.x, A.y);
-
-               unsigned int o = 1;
-               for (size_t i = 0; i < m_mesh.NumIndices(); i += 3, ++o)
-               {
-                  const Vertex3Ds& B = m_vertices[m_mesh.m_indices[i + 1]];
-                  drawVertices[o] = Vertex2D(B.x, B.y);
-               }
-
-               psur->Polyline(drawVertices.data(), (int)drawVertices.size());
-            }
-         }
-      }
-      else
-      {
-         vector<Vertex2D> drawVertices;
-         for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
-         {
-            const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-            const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-            const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
-            const float An = m_normals[m_mesh.m_indices[i]];
-            const float Bn = m_normals[m_mesh.m_indices[i + 1]];
-            const float Cn = m_normals[m_mesh.m_indices[i + 2]];
-            if (fabsf(An + Bn) < m_d.m_edgeFactorUI)
-            {
-               drawVertices.emplace_back(A->x, A->y);
-               drawVertices.emplace_back(B->x, B->y);
-            }
-            if (fabsf(Bn + Cn) < m_d.m_edgeFactorUI)
-            {
-               drawVertices.emplace_back(B->x, B->y);
-               drawVertices.emplace_back(C->x, C->y);
-            }
-            if (fabsf(Cn + An) < m_d.m_edgeFactorUI)
-            {
-               drawVertices.emplace_back(C->x, C->y);
-               drawVertices.emplace_back(A->x, A->y);
-            }
-         }
-
-         if (!drawVertices.empty())
-            psur->Lines(drawVertices.data(), (int)(drawVertices.size() / 2));
-      }
-   }
-
-   // draw center marker
-   psur->SetLineColor(RGB(128, 128, 128), false, 1);
-   psur->Line(m_d.m_vPosition.x - 10.0f, m_d.m_vPosition.y, m_d.m_vPosition.x + 10.0f, m_d.m_vPosition.y);
-   psur->Line(m_d.m_vPosition.x, m_d.m_vPosition.y - 10.0f, m_d.m_vPosition.x, m_d.m_vPosition.y + 10.0f);
-   
-   if (m_d.m_displayTexture)
-   {
-      Texture * const ppi = m_ptable->GetImage(m_d.m_szImage);
-      if (ppi && ppi->GetGDIBitmap())
-      {
-         vector<RenderVertex> vvertex;
-         vvertex.reserve(m_mesh.NumIndices());
-         for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
-         {
-            const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-            const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-            const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
-            RenderVertex rvA;
-            RenderVertex rvB;
-            RenderVertex rvC;
-            rvA.x = A->x;
-            rvA.y = A->y;
-            rvB.x = B->x;
-            rvB.y = B->y;
-            rvC.x = C->x;
-            rvC.y = C->y;
-            vvertex.push_back(rvC);
-            vvertex.push_back(rvB);
-            vvertex.push_back(rvA);
-         }
-         psur->PolygonImage(vvertex, ppi->GetGDIBitmap(), m_ptable->m_left, m_ptable->m_top, m_ptable->m_right, m_ptable->m_bottom, ppi->m_width, ppi->m_height);
-      }
+      const Vertex3Ds &A = m_vertices[m_mesh.m_indices[i]];
+      const Vertex3Ds &B = m_vertices[m_mesh.m_indices[i + 1]];
+      const Vertex3Ds &C = m_vertices[m_mesh.m_indices[i + 2]];
+      triangles.emplace_back(C.x, C.y);
+      triangles.emplace_back(B.x, B.y);
+      triangles.emplace_back(A.x, A.y);
    }
 }
 
-void Primitive::RenderBlueprint(Sur *psur, const bool solid)
+void Primitive::GetEditorWireframe(vector<Vertex2D> &edges, vector<Vertex2D> &polyline) const
 {
-   psur->SetFillColor(solid ? BLUEPRINT_SOLID_COLOR : -1);
-   psur->SetLineColor(RGB(0, 0, 0), false, 1);
-   psur->SetObject(this);
-
-   if (solid && m_d.m_use3DMesh)
-   {
-       for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
-       {
-           const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-           const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-           const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
-
-           Vertex2D rv[3];
-           rv[0].x = C->x; rv[0].y = C->y;
-           rv[1].x = B->x; rv[1].y = B->y;
-           rv[2].x = A->x; rv[2].y = A->y;
-           psur->Polygon(rv, 3);
-       }
-       return;
-   }
    if ((m_d.m_edgeFactorUI <= 0.0f) || (m_d.m_edgeFactorUI >= 1.0f) || !m_d.m_use3DMesh)
    {
       if (!m_d.m_use3DMesh || (m_d.m_edgeFactorUI >= 1.0f) || (m_mesh.NumVertices() <= 100)) // small mesh: draw all triangles
       {
+         edges.reserve(m_mesh.NumIndices() * 2);
          for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
          {
-            const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-            const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-            const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
-            psur->Line(A->x, A->y, B->x, B->y);
-            psur->Line(B->x, B->y, C->x, C->y);
-            psur->Line(C->x, C->y, A->x, A->y);
+            const Vertex3Ds &A = m_vertices[m_mesh.m_indices[i]];
+            const Vertex3Ds &B = m_vertices[m_mesh.m_indices[i + 1]];
+            const Vertex3Ds &C = m_vertices[m_mesh.m_indices[i + 2]];
+            edges.emplace_back(A.x, A.y);
+            edges.emplace_back(B.x, B.y);
+            edges.emplace_back(B.x, B.y);
+            edges.emplace_back(C.x, C.y);
+            edges.emplace_back(C.x, C.y);
+            edges.emplace_back(A.x, A.y);
          }
       }
-      else // large mesh: draw a simplified mesh for performance reasons, does not approximate the shape well
+      else if (m_mesh.NumIndices() > 0) // large mesh: draw a simplified mesh for performance reasons, does not approximate the shape well
       {
-         if (m_mesh.NumIndices() > 0)
+         polyline.reserve(m_mesh.NumIndices() / 3 + 1);
+         const Vertex3Ds &A = m_vertices[m_mesh.m_indices[0]];
+         polyline.emplace_back(A.x, A.y);
+         for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
          {
-            const size_t numPts = m_mesh.NumIndices() / 3 + 1;
-            vector<Vertex2D> drawVertices(numPts);
-
-            const Vertex3Ds& A = m_vertices[m_mesh.m_indices[0]];
-            drawVertices[0] = Vertex2D(A.x, A.y);
-
-            unsigned int o = 1;
-            for (size_t i = 0; i < m_mesh.NumIndices(); i += 3, ++o)
-            {
-               const Vertex3Ds& B = m_vertices[m_mesh.m_indices[i + 1]];
-               drawVertices[o] = Vertex2D(B.x, B.y);
-            }
-
-            psur->Polyline(drawVertices.data(), (int)drawVertices.size());
+            const Vertex3Ds &B = m_vertices[m_mesh.m_indices[i + 1]];
+            polyline.emplace_back(B.x, B.y);
          }
       }
    }
    else
    {
-      vector<Vertex2D> drawVertices;
       for (size_t i = 0; i < m_mesh.NumIndices(); i += 3)
       {
-         const Vertex3Ds * const A = &m_vertices[m_mesh.m_indices[i]];
-         const Vertex3Ds * const B = &m_vertices[m_mesh.m_indices[i + 1]];
-         const Vertex3Ds * const C = &m_vertices[m_mesh.m_indices[i + 2]];
+         const Vertex3Ds &A = m_vertices[m_mesh.m_indices[i]];
+         const Vertex3Ds &B = m_vertices[m_mesh.m_indices[i + 1]];
+         const Vertex3Ds &C = m_vertices[m_mesh.m_indices[i + 2]];
          const float An = m_normals[m_mesh.m_indices[i]];
          const float Bn = m_normals[m_mesh.m_indices[i + 1]];
          const float Cn = m_normals[m_mesh.m_indices[i + 2]];
          if (fabsf(An + Bn) < m_d.m_edgeFactorUI)
          {
-            drawVertices.emplace_back(A->x, A->y);
-            drawVertices.emplace_back(B->x, B->y);
+            edges.emplace_back(A.x, A.y);
+            edges.emplace_back(B.x, B.y);
          }
          if (fabsf(Bn + Cn) < m_d.m_edgeFactorUI)
          {
-            drawVertices.emplace_back(B->x, B->y);
-            drawVertices.emplace_back(C->x, C->y);
+            edges.emplace_back(B.x, B.y);
+            edges.emplace_back(C.x, C.y);
          }
          if (fabsf(Cn + An) < m_d.m_edgeFactorUI)
          {
-            drawVertices.emplace_back(C->x, C->y);
-            drawVertices.emplace_back(A->x, A->y);
+            edges.emplace_back(C.x, C.y);
+            edges.emplace_back(A.x, A.y);
          }
       }
-
-      if (!drawVertices.empty())
-         psur->Lines(drawVertices.data(), (int)(drawVertices.size() / 2));
    }
 }
+
+//////////////////////////////
+// Rendering
+//////////////////////////////
 
 // VPX before 10.8 computed the viewer position based on a partial bounding volume that would not include primitives, so never fill legacy_bounds in here, only bounds
 void Primitive::GetBoundingVertices(vector<Vertex3Ds> &bounds, vector<Vertex3Ds> *const legacy_bounds)
@@ -1011,19 +702,6 @@ void Primitive::CalculateBuiltinOriginal()
    //ComputeNormals(m_mesh.m_vertices, m_mesh.m_indices);
 }
 
-void Primitive::UpdateStatusBarInfo()
-{
-   CalculateBuiltinOriginal();
-   if (m_d.m_use3DMesh)
-   {
-       const string tbuf = "Vertices: " + std::to_string(m_mesh.NumVertices()) + " | Polygons: " + std::to_string(m_mesh.NumIndices());
-       m_vpinball->SetStatusBarUnitInfo(tbuf, false);
-   }
-   else
-       m_vpinball->SetStatusBarUnitInfo(string(), false);
-
-}
-
 void Primitive::ExportMesh(ObjLoader& loader)
 {
    if (m_d.m_visible)
@@ -1058,10 +736,10 @@ void Primitive::ExportMesh(ObjLoader& loader)
    }
 }
 
-void Primitive::RenderSetup(RenderDevice *device)
+void Primitive::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
 
    // Check if we are part of a group, and if so if we are a child or the base
    m_groupdRendering = false;
@@ -1079,13 +757,12 @@ void Primitive::RenderSetup(RenderDevice *device)
       size_t overall_size = 0;
       bool partOfGroup = false;
       vector<Primitive *> prims;
-      for (int i = 0; i < collection->m_visel.size(); i++)
+      for (IEditable *const part : collection->GetParts())
       {
-         ISelect *const pisel = collection->m_visel.ElementAt(i);
-         if (pisel->GetItemType() != eItemPrimitive)
+         if (part->GetItemType() != eItemPrimitive)
             continue;
 
-         Primitive *const prim = (Primitive *)pisel;
+         Primitive *const prim = (Primitive *)part;
          // only support dynamic mesh primitives for now
          if (!prim->m_d.m_use3DMesh || prim->m_d.m_staticRendering)
             continue;
@@ -1117,7 +794,7 @@ void Primitive::RenderSetup(RenderDevice *device)
          m_groupdRendering = true;
 
          std::shared_ptr<IndexBuffer> indexBuffer
-            = std::make_shared<IndexBuffer>(m_rd, static_cast<unsigned int>(overall_size), false, overall_size < 65536 ? IndexBuffer::FMT_INDEX16 : IndexBuffer::FMT_INDEX32);
+            = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, static_cast<unsigned int>(overall_size), false, overall_size < 65536 ? IndexBuffer::FMT_INDEX16 : IndexBuffer::FMT_INDEX32);
          void *indices;
          indexBuffer->Lock(indices);
          m_numGroupVertices = 0;
@@ -1142,7 +819,7 @@ void Primitive::RenderSetup(RenderDevice *device)
          }
          indexBuffer->Unlock();
 
-         std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numGroupVertices);
+         std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numGroupVertices);
          unsigned int ofs = 0;
          Vertex3D_NoTex2 *buf;
          vertexBuffer->Lock(buf);
@@ -1174,31 +851,38 @@ void Primitive::RenderSetup(RenderDevice *device)
    m_lightmap = m_ptable->GetLight(m_d.m_szLightmap);
 
    m_currentFrame = -1.f;
-   m_isBackGlassImage = IsBackglass();
 
-   std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_rd, (unsigned int)m_mesh.NumVertices(), nullptr, !(m_d.m_staticRendering || m_mesh.m_animationFrames.empty()));
-   std::shared_ptr<IndexBuffer> indexBuffer = std::make_shared<IndexBuffer>(m_rd, m_mesh.m_indices);
-   m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), vertexBuffer, indexBuffer, true);
+   if (m_mesh.NumVertices() > 0 && !m_mesh.m_indices.empty())
+   {
+      std::shared_ptr<VertexBuffer> vertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, (unsigned int)m_mesh.NumVertices(), nullptr, !(m_d.m_staticRendering || m_mesh.m_animationFrames.empty()));
+      std::shared_ptr<IndexBuffer> indexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_mesh.m_indices);
+      m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), vertexBuffer, indexBuffer, true);
 
-   // Compute and upload mesh to let a chance for renderdevice to share the buffers with other static objects
-   RecalculateMatrices();
-   m_mesh.UploadToVB(vertexBuffer, m_currentFrame);
+      // Compute and upload mesh to let a chance for renderdevice to share the buffers with other static objects
+      RecalculateMatrices();
+      m_mesh.UploadToVB(vertexBuffer, m_currentFrame);
+   }
+   else
+   {
+      m_meshBuffer = nullptr;
+      m_skipRendering = true;
+   }
    m_vertexBufferRegenerate = false;
 }
 
 void Primitive::RenderRelease()
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    m_meshBuffer = nullptr;
    m_meshEdgeBuffer = nullptr;
    m_lightmap = nullptr;
-   m_rd = nullptr;
+   m_renderer = nullptr;
 }
 
 void Primitive::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
 
    if (!m_d.m_visible || m_skipRendering)
       return;
@@ -1210,18 +894,18 @@ void Primitive::Render(const unsigned int renderMask)
    TRACE_FUNCTION();
 
    // Update playfield primitive settings from table settings
-   SamplerFilter pinf = SF_UNDEFINED; // Use the default filtering of the sampler (trilinear or anisotropic, depending on user choice)
+   SamplerFilter pinf = SamplerFilter::SF_UNDEFINED; // Use the default filtering of the sampler (trilinear or anisotropic, depending on user choice)
    if (m_useAsPlayfield)
    {
-      m_d.m_szMaterial = g_pplayer->m_ptable->m_playfieldMaterial;
-      m_d.m_szImage = g_pplayer->m_ptable->m_image;
+      m_d.m_szMaterial = m_ptable->m_playfieldMaterial;
+      m_d.m_szImage = m_ptable->m_image;
       m_d.m_szReflectionProbe = RenderProbe::PLAYFIELD_REFLECTION_RENDERPROBE_NAME;
       m_d.m_reflectionStrength = m_ptable->m_playfieldReflectionStrength;
-      pinf = SF_ANISOTROPIC;
+      pinf = SamplerFilter::SF_ANISOTROPIC;
    }
 
    // Do not render ourself inside our reflection probe (no self reflection)
-   RenderProbe * const reflection_probe = m_d.m_reflectionStrength <= 0 ? nullptr : m_ptable->GetRenderProbe(m_d.m_szReflectionProbe);
+   RenderProbe * const reflection_probe = (isUIPass || m_d.m_reflectionStrength <= 0) ? nullptr : m_ptable->GetRenderProbe(m_d.m_szReflectionProbe);
    if (reflection_probe != nullptr && reflection_probe->IsRendering())
       return;
    
@@ -1231,8 +915,8 @@ void Primitive::Render(const unsigned int renderMask)
    // EXPERIMENTAL (ExperimentalAutoStatic): bake primitives whose world transform has been stable >= 1.5s into the
    // static prepass instead of redrawing them every dynamic frame. Excludes grouped, already-static and reflective prims.
    // Runs once per frame BEFORE the gates (so even already-baked prims are re-checked for movement); dirty coalesces.
-   const bool autoStaticOn = m_rd->m_experimentalAutoStaticOpt && !m_groupdRendering && !m_d.m_staticRendering
-      && (reflection_probe == nullptr) && g_pplayer->m_renderer->IsUsingStaticPrepass();
+   const bool autoStaticOn = m_renderer->m_renderDevice->m_experimentalAutoStaticOpt && !m_groupdRendering && !m_d.m_staticRendering
+      && (reflection_probe == nullptr) && m_renderer->IsUsingStaticPrepass();
    if (autoStaticOn && m_autoStaticLastEvalFrame != g_pplayer->m_overall_frames)
    {
       m_autoStaticLastEvalFrame = g_pplayer->m_overall_frames;
@@ -1241,18 +925,18 @@ void Primitive::Render(const unsigned int renderMask)
       {
          m_autoStaticLastMatrix = m_fullMatrix;
          m_autoStaticStableSinceMs = g_pplayer->m_time_msec;
-         if (m_autoStaticEligible) { m_autoStaticEligible = false; g_pplayer->m_renderer->InvalidateStaticPrepass(); }
+         if (m_autoStaticEligible) { m_autoStaticEligible = false; m_renderer->InvalidateStaticPrepass(); }
       }
       else if (!m_autoStaticEligible && (g_pplayer->m_time_msec - m_autoStaticStableSinceMs) >= 1500u)
       {
          m_autoStaticEligible = true;
-         g_pplayer->m_renderer->InvalidateStaticPrepass();
+         m_renderer->InvalidateStaticPrepass();
       }
    }
    else if (!autoStaticOn && m_autoStaticEligible)
    {
       m_autoStaticEligible = false; // no longer eligible (flag off / became reflective) -> render dynamically again
-      g_pplayer->m_renderer->InvalidateStaticPrepass();
+      m_renderer->InvalidateStaticPrepass();
    }
 
    if (isStaticOnly && !m_d.m_staticRendering && !m_autoStaticEligible)
@@ -1293,22 +977,24 @@ void Primitive::Render(const unsigned int renderMask)
       }
    }
 
+   // set transform
+   m_renderer->UpdateBasicShaderMatrix(m_fullMatrix);
+
    if (isUIPass)
    {
       // FIXME use correct point for depth sorting
-      g_pplayer->m_renderer->UpdateBasicShaderMatrix(m_fullMatrix);
       if (renderMask & Renderer::UI_FILL)
-         m_rd->DrawMesh(
-            m_rd->m_basicShader, true, Vertex3Ds(), 10000.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
+         m_renderer->m_renderDevice->DrawMesh(
+            m_renderer->m_renderDevice->m_basicShader, true, Vertex3Ds(0.f, 0.f, 0.f), 10000.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
       if (renderMask & Renderer::UI_EDGES && m_meshEdgeBuffer == nullptr)
          m_meshEdgeBuffer = m_meshBuffer->CreateEdgeMeshBuffer(m_mesh.m_indices, m_mesh.m_vertices);
       if (renderMask & Renderer::UI_EDGES)
-         m_rd->DrawMesh(m_rd->m_basicShader, false, Vertex3Ds(), 10000.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_meshEdgeBuffer->m_ib->m_count);
-      g_pplayer->m_renderer->UpdateBasicShaderMatrix();
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, Vertex3Ds(0.f, 0.f, 0.f), 10000.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_meshEdgeBuffer->m_ib->m_count);
+      m_renderer->UpdateBasicShaderMatrix();
       return;
    }
 
-   m_rd->ResetRenderState();
+   m_renderer->m_renderDevice->ResetRenderState();
 
    // Request probes before setting up state since this can trigger a renderprobe update which modifies the render state
    RenderProbe *const refraction_probe = m_ptable->GetRenderProbe(m_d.m_szRefractionProbe);
@@ -1318,76 +1004,61 @@ void Primitive::Render(const unsigned int renderMask)
 
    const bool depthMask = m_d.m_useDepthMask && !m_d.m_addBlend;
 
-   RenderState::RenderStateValue cullMode = m_rd->GetRenderState().GetRenderState(RenderState::CULLMODE);
+   RenderState::RenderStateValue cullMode = m_renderer->m_renderDevice->GetRenderState().GetRenderState(RenderState::CULLMODE);
    RenderState::RenderStateValue reversedCullMode = cullMode == RenderState::CULL_CCW ? RenderState::CULL_CW : RenderState::CULL_CCW;
-   m_rd->SetRenderState(RenderState::CULLMODE, depthMask ? ((m_d.m_backfacesEnabled && mat->m_bOpacityActive) ? reversedCullMode : cullMode) : RenderState::CULL_NONE);
+   m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, depthMask ? ((m_d.m_backfacesEnabled && mat->m_bOpacityActive) ? reversedCullMode : cullMode) : RenderState::CULL_NONE);
 
    // Force disable light from below for objects marked as static since there is no light from below during pre-render pass (to get the same result in dynamic mode & static mode)
-   m_rd->m_basicShader->SetVector(SHADER_fDisableLighting_top_below, m_d.m_disableLightingTop, m_d.m_staticRendering ? 1.0f : m_d.m_disableLightingBelow, 0.f, 0.f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::fDisableLighting_top_below, m_d.m_disableLightingTop, m_d.m_staticRendering ? 1.0f : m_d.m_disableLightingBelow, 0.f, 0.f);
 
    // Select textures, replacing backglass image by capture if it is available
    Texture * const nMap = m_ptable->GetImage(m_d.m_szNormalMap);
-   ITexManCacheable *pin = nullptr;
-   float pinAlphaTest;
-   if (g_pplayer->m_texPUP && m_isBackGlassImage)
-   {
-      pin = g_pplayer->m_texPUP.get();
-      pinAlphaTest = 0.f;
-   }
-   else
-   {
-      Texture * const img = m_ptable->GetImage(m_d.m_szImage);
-      pin = img;
-      pinAlphaTest = img != nullptr ? img->m_alphaTestValue : -1.f;
-   }
-   m_rd->m_basicShader->SetAlphaTestValue(pinAlphaTest);
+   Texture * const img = m_ptable->GetImage(m_d.m_szImage);
+   const float pinAlphaTest = img != nullptr ? img->m_alphaTestValue : -1.f;
+   m_renderer->m_renderDevice->m_basicShader->SetAlphaTestValue(pinAlphaTest);
 
    // accommodate models with UV coords outside of [0,1] by using Repeat address mode
-   if (pin && nMap)
+   if (img && nMap)
    {
-      m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, pin, false, pinf, SA_REPEAT, SA_REPEAT);
-      m_rd->m_basicShader->SetTexture(SHADER_tex_base_normalmap, nMap, true);
-      m_rd->m_basicShader->SetBool(SHADER_objectSpaceNormalMap, m_d.m_objectSpaceNormalMap);
-      m_rd->m_basicShader->SetMaterial(mat, !pin->IsOpaque() || alpha != 100.f);
+      m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, img, false, pinf, SamplerAddressMode::SA_REPEAT, SamplerAddressMode::SA_REPEAT);
+      m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_normalmap, nMap, true);
+      m_renderer->m_renderDevice->m_basicShader->SetBool(ShaderUniform::objectSpaceNormalMap, m_d.m_objectSpaceNormalMap);
+      m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, !img->IsOpaque() || alpha != 100.f);
    }
-   else if (pin)
+   else if (img)
    {
-      m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, pin, false, pinf, SA_REPEAT, SA_REPEAT);
-      m_rd->m_basicShader->SetMaterial(mat, !pin->IsOpaque() || alpha != 100.f);
+      m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, img, false, pinf, SamplerAddressMode::SA_REPEAT, SamplerAddressMode::SA_REPEAT);
+      m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, !img->IsOpaque() || alpha != 100.f);
    }
    else
    {
-      m_rd->m_basicShader->SetMaterial(mat, alpha != 100.f);
+      m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, alpha != 100.f);
    }
-
-   // set transform
-   g_pplayer->m_renderer->UpdateBasicShaderMatrix(m_fullMatrix);
 
    // Check if this primitive is used as a lightmap and should be convoluted with the light shadows
    const bool lightmap = m_lightmap != nullptr && m_lightmap->m_d.m_shadows == ShadowMode::RAYTRACED_BALL_SHADOWS;
    if (lightmap)
-      m_rd->m_basicShader->SetVector(SHADER_lightCenter_doShadow, m_lightmap->m_d.m_vCenter.x, m_lightmap->m_d.m_vCenter.y, m_lightmap->GetCurrentHeight(), 1.0f);
+      m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::lightCenter_doShadow, m_lightmap->m_d.m_vCenter.x, m_lightmap->m_d.m_vCenter.y, m_lightmap->GetCurrentHeight(), 1.0f);
 
    if (m_d.m_addBlend)
    {
       // Additive blending is a special unlit mode with depth mask disabled
-      m_rd->EnableAlphaBlend(true);
-      m_rd->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
+      m_renderer->m_renderDevice->EnableAlphaBlend(true);
+      m_renderer->m_renderDevice->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
       const vec4 color = convertColor(m_d.m_color, alpha * (float)(1.0 / 100.0));
-      m_rd->m_basicShader->SetVector(SHADER_staticColor_Alpha, color.x * color.w, color.y * color.w, color.z * color.w, color.w);
-      m_rd->m_basicShader->SetTechnique(lightmap ? (pin ? SHADER_TECHNIQUE_unshaded_with_texture_shadow : SHADER_TECHNIQUE_unshaded_without_texture_shadow)
-                                                 : (pin ? SHADER_TECHNIQUE_unshaded_with_texture : SHADER_TECHNIQUE_unshaded_without_texture));
-
-      m_rd->DrawMesh(m_rd->m_basicShader, true, m_d.m_vPosition, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
+      m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::staticColor_Alpha, color.x * color.w, color.y * color.w, color.z * color.w, color.w);
+      m_renderer->m_renderDevice->m_basicShader->SetTechnique(lightmap ? (img ? ShaderTechnique::unshaded_with_texture_shadow : ShaderTechnique::unshaded_without_texture_shadow)
+                                                 : (img ? ShaderTechnique::unshaded_with_texture : ShaderTechnique::unshaded_without_texture));
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_d.m_vPosition, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
    }
    else
    {
       // Default lit primitive rendering
-      m_rd->SetRenderState(RenderState::ZWRITEENABLE, depthMask ? RenderState::RS_TRUE : RenderState::RS_FALSE);
+      m_renderer->m_renderDevice->SetRenderState(RenderState::ZWRITEENABLE, depthMask ? RenderState::RS_TRUE : RenderState::RS_FALSE);
       const vec4 color = convertColor(m_d.m_color, alpha * (float)(1.0 / 100.0));
-      m_rd->m_basicShader->SetVector(SHADER_staticColor_Alpha, &color);
-      m_rd->m_basicShader->SetTechniqueMaterial(pin ? SHADER_TECHNIQUE_basic_with_texture : SHADER_TECHNIQUE_basic_without_texture, 
-         *mat, pin ? pinAlphaTest >= 0.f && !pin->IsOpaque() : false, nMap, reflections, refractions);
+      m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::staticColor_Alpha, &color);
+      m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(img ? ShaderTechnique::basic_with_texture : ShaderTechnique::basic_without_texture, 
+         *mat, img ? pinAlphaTest >= 0.f && !img->IsOpaque() : false, nMap, reflections, refractions);
       bool is_reflection_only_pass = false;
 
       // Handle render probes
@@ -1395,9 +1066,9 @@ void Primitive::Render(const unsigned int renderMask)
       {
          m_mesh.UpdateBounds();
          float xMin = 1.f, yMin = 1.f, xMax = -1.f, yMax = -1.f;
-         for (int eye = 0; eye < m_rd->m_nEyes; eye++)
+         for (int eye = 0; eye < m_renderer->m_renderDevice->m_nEyes; eye++)
          {
-            const Matrix3D & mvp = g_pplayer->m_renderer->GetMVP().GetModelViewProj(eye);
+            const Matrix3D & mvp = m_renderer->GetMVP().GetModelViewProj(eye);
             for (int i = 0; i < 8; i++)
             {
                Vertex3Ds p;
@@ -1427,66 +1098,67 @@ void Primitive::Render(const unsigned int renderMask)
          if (reflections)
          {
             reflection_probe->ExtendAreaOfInterest(xMin, xMax, yMin, yMax);
-            m_rd->AddRenderTargetDependency(reflections);
+            m_renderer->m_renderDevice->AddRenderTargetDependency(reflections);
             Vertex3Ds plane_normal = reflection_probe->GetReflectionPlaneNormal();
-            const Matrix3D matWorldViewInverseTranspose = g_pplayer->m_renderer->GetMVP().GetModelViewInverseTranspose();
-            plane_normal = matWorldViewInverseTranspose.MultiplyVectorNoTranslate(plane_normal);
+            // In stereo, using a single view (from left eye) is ok enough as this is just to weight the probe
+            plane_normal = m_renderer->GetMVP().GetModelViewInverseTranspose(0).MultiplyVectorNoTranslate(plane_normal);
             Vertex3Ds n(plane_normal.x, plane_normal.y, plane_normal.z);
             n.Normalize();
-            m_rd->m_basicShader->SetVector(SHADER_mirrorNormal_factor, n.x, n.y, n.z, m_d.m_reflectionStrength);
-            m_rd->m_basicShader->SetTexture(SHADER_tex_reflection, reflections->GetColorSampler());
+            m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::mirrorNormal_factor, n.x, n.y, n.z, m_d.m_reflectionStrength);
+            m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_reflection, reflections->GetColorSampler());
             is_reflection_only_pass = m_d.m_staticRendering && isDynamicOnly;
-            if (!is_reflection_only_pass && !m_rd->GetRenderState().IsOpaque())
+            if (!is_reflection_only_pass && !m_renderer->m_renderDevice->GetRenderState().IsOpaque())
             { // Primitive uses alpha transparency => render in 2 passes, one for the texture with alpha blending, one for the reflections which can happen above a transparent part (like for a glass or insert plastic)
-               m_rd->m_basicShader->SetTechniqueMaterial(pin ? SHADER_TECHNIQUE_basic_with_texture : SHADER_TECHNIQUE_basic_without_texture, 
-                  *mat, pin ? pinAlphaTest >= 0.f && !pin->IsOpaque() : false, nMap, false, false);
-               m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive && !m_d.m_staticRendering, m_d.m_vPosition, m_d.m_depthBias, 
+               m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(
+                  img ? ShaderTechnique::basic_with_texture : ShaderTechnique::basic_without_texture, 
+                  *mat, img ? pinAlphaTest >= 0.f && !img->IsOpaque() : false, nMap, false, false);
+               m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive && !m_d.m_staticRendering, m_d.m_vPosition, m_d.m_depthBias, 
                   m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
                is_reflection_only_pass = true;
             }
             if (is_reflection_only_pass)
             { // If the primitive is already rendered (dynamic pass after a static prepass, or multipass rendering due to alpha blending) => only render additive reflections
-               m_rd->EnableAlphaBlend(true);
-               m_rd->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
-               m_rd->m_basicShader->SetTechnique(SHADER_TECHNIQUE_basic_reflection_only);
+               m_renderer->m_renderDevice->EnableAlphaBlend(true);
+               m_renderer->m_renderDevice->SetRenderState(RenderState::ZWRITEENABLE, RenderState::RS_FALSE);
+               m_renderer->m_renderDevice->m_basicShader->SetTechnique(ShaderTechnique::basic_reflection_only);
             }
          }
          if (refractions)
          {
             refraction_probe->ExtendAreaOfInterest(xMin, xMax, yMin, yMax);
             const vec4 colorR = convertColor(mat->m_cRefractionTint, m_d.m_refractionThickness);
-            m_rd->m_basicShader->SetVector(SHADER_refractionTint_thickness, &colorR);
-            m_rd->m_basicShader->SetTexture(SHADER_tex_refraction, refractions->GetColorSampler());
-            m_rd->m_basicShader->SetTexture(SHADER_tex_probe_depth, refractions->GetDepthSampler());
-            m_rd->SetRenderState(RenderState::ALPHABLENDENABLE, RenderState::RS_FALSE);
+            m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::refractionTint_thickness, &colorR);
+            m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_refraction, refractions->GetColorSampler());
+            m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_probe_depth, refractions->GetDepthSampler());
+            m_renderer->m_renderDevice->SetRenderState(RenderState::ALPHABLENDENABLE, RenderState::RS_FALSE);
             if (!is_reflection_only_pass)
-               m_rd->AddRenderTargetDependencyOnNextRenderCommand(refractions); // Add a renderpass dependency on the render command (instead of in the renderframe) for the pass to be sorted with the command
+               m_renderer->m_renderDevice->AddRenderTargetDependencyOnNextRenderCommand(refractions); // Add a renderpass dependency on the render command (instead of in the renderframe) for the pass to be sorted with the command
          }
       }
 
       // draw the mesh (back of it if backface enabled)
-      m_rd->DrawMesh(m_rd->m_basicShader, 
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, 
             is_reflection_only_pass // The reflection pass is an additive (so transparent) pass to be drawn after the opaque one
          || refractions // Refractions must be rendered back to front since they rely on what is behind
-         || (mat->m_bOpacityActive && !m_d.m_staticRendering /* && !m_rd->GetRenderState().IsOpaque() */), // We can not use the real render state opaque state since Blood Machine and other tables use depth masks
+         || (mat->m_bOpacityActive && !m_d.m_staticRendering /* && !m_renderer->m_renderDevice->GetRenderState().IsOpaque() */), // We can not use the real render state opaque state since Blood Machine and other tables use depth masks
          m_d.m_vPosition, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
    }
 
    // Draw the front of the primitive if backface enabled
    if (depthMask && m_d.m_backfacesEnabled && mat->m_bOpacityActive)
    {
-      m_rd->SetRenderState(RenderState::CULLMODE, cullMode);
-      m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_d.m_vPosition, m_d.m_depthBias, 
+      m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, cullMode);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_d.m_vPosition, m_d.m_depthBias, 
          m_meshBuffer, RenderDevice::TRIANGLELIST, 0,
          m_groupdRendering ? m_numGroupIndices : (uint32_t)m_mesh.NumIndices());
    }
 
    // Restore state
-   g_pplayer->m_renderer->UpdateBasicShaderMatrix();
-   m_rd->m_basicShader->SetVector(SHADER_mirrorNormal_factor, 0.f, 0.f, 0.f, 0.f);
-   m_rd->m_basicShader->SetVector(SHADER_lightCenter_doShadow, 0.0f, 0.0f, 0.0f, 0.0f);
-   m_rd->m_basicShader->SetVector(SHADER_staticColor_Alpha, 1.0f, 1.0f, 1.0f, 1.0f);
-   m_rd->m_basicShader->SetVector(SHADER_fDisableLighting_top_below, 0.f, 0.f, 0.f, 0.f);
+   m_renderer->UpdateBasicShaderMatrix();
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::mirrorNormal_factor, 0.f, 0.f, 0.f, 0.f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::lightCenter_doShadow, 0.0f, 0.0f, 0.0f, 0.0f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::staticColor_Alpha, 1.0f, 1.0f, 1.0f, 1.0f);
+   m_renderer->m_renderDevice->m_basicShader->SetVector(ShaderUniform::fDisableLighting_top_below, 0.f, 0.f, 0.f, 0.f);
 }
 
 void Primitive::UpdateAnimation(const float diff_time_msec)
@@ -1495,17 +1167,16 @@ void Primitive::UpdateAnimation(const float diff_time_msec)
    {
       const float previousFrame = m_currentFrame;
       m_currentFrame += m_speed * (diff_time_msec * (float)(60. / 1000.));
-      if (m_currentFrame >= (float)m_mesh.m_animationFrames.size())
+      const float maxFrame = (float)(m_mesh.m_animationFrames.size()-1);
+      if (m_currentFrame > maxFrame)
       {
-          if (m_endless)
-          {
-             m_currentFrame = 0.0f;
-          }
-          else
-          {
-             m_currentFrame = (float)(m_mesh.m_animationFrames.size() - 1);
-             m_doAnimation = false;
-          }
+         if (m_endless)
+            m_currentFrame = fminf(m_currentFrame-maxFrame, maxFrame);
+         else
+         {
+            m_currentFrame = maxFrame;
+            m_doAnimation = false;
+         }
       }
       m_vertexBufferRegenerate |= m_currentFrame != previousFrame;
    }
@@ -1515,16 +1186,11 @@ void Primitive::UpdateAnimation(const float diff_time_msec)
 // Positioning
 //////////////////////////////
 
-void Primitive::SetObjectPos()
+void Primitive::Translate(const Vertex2D &offset)
 {
-    m_vpinball->SetObjectPosCur(m_d.m_vPosition.x, m_d.m_vPosition.y);
-}
-
-void Primitive::MoveOffset(const float dx, const float dy)
-{
-   m_d.m_vPosition.x += dx;
-   m_d.m_vPosition.y += dy;
-   UpdateStatusBarInfo();
+   m_d.m_vPosition.x += offset.x;
+   m_d.m_vPosition.y += offset.y;
+   CalculateBuiltinOriginal();
 }
 
 Vertex2D Primitive::GetCenter() const
@@ -1532,74 +1198,60 @@ Vertex2D Primitive::GetCenter() const
    return {m_d.m_vPosition.x, m_d.m_vPosition.y};
 }
 
-void Primitive::PutCenter(const Vertex2D& pv)
-{
-   m_d.m_vPosition.x = pv.x;
-   m_d.m_vPosition.y = pv.y;
-   UpdateStatusBarInfo();
-}
-
 //////////////////////////////
 // Save and Load
 //////////////////////////////
 
-HRESULT Primitive::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
+void Primitive::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   BiffWriter bw(pstm, hcrypthash);
-
-   /*
-    * Someone decided that it was a good idea to write these vectors including
-    * the fourth padding float that they used to have, so now we have to write
-    * them padded to 4 floats to maintain compatibility.
-    */
-   bw.WriteVector3Padded(FID(VPOS), m_d.m_vPosition);
-   bw.WriteVector3Padded(FID(VSIZ), m_d.m_vSize);
-   bw.WriteFloat(FID(RTV0), m_d.m_aRotAndTra[0]);
-   bw.WriteFloat(FID(RTV1), m_d.m_aRotAndTra[1]);
-   bw.WriteFloat(FID(RTV2), m_d.m_aRotAndTra[2]);
-   bw.WriteFloat(FID(RTV3), m_d.m_aRotAndTra[3]);
-   bw.WriteFloat(FID(RTV4), m_d.m_aRotAndTra[4]);
-   bw.WriteFloat(FID(RTV5), m_d.m_aRotAndTra[5]);
-   bw.WriteFloat(FID(RTV6), m_d.m_aRotAndTra[6]);
-   bw.WriteFloat(FID(RTV7), m_d.m_aRotAndTra[7]);
-   bw.WriteFloat(FID(RTV8), m_d.m_aRotAndTra[8]);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteString(FID(NRMA), m_d.m_szNormalMap);
-   bw.WriteInt(FID(SIDS), m_d.m_Sides);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteInt(FID(SCOL), m_d.m_SideColor);
-   bw.WriteBool(FID(TVIS), m_d.m_visible);
-   bw.WriteBool(FID(DTXI), m_d.m_drawTexturesInside);
-   bw.WriteBool(FID(HTEV), m_d.m_hitEvent);
-   bw.WriteFloat(FID(THRS), m_d.m_threshold);
-   bw.WriteFloat(FID(ELAS), m_d.m_elasticity);
-   bw.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
-   bw.WriteFloat(FID(RFCT), m_d.m_friction);
-   bw.WriteFloat(FID(RSCT), m_d.m_scatter);
-   bw.WriteFloat(FID(EFUI), m_d.m_edgeFactorUI);
-   bw.WriteFloat(FID(CORF), m_d.m_collision_reductionFactor);
-   bw.WriteBool(FID(CLDR), m_d.m_collidable);
-   bw.WriteBool(FID(ISTO), m_d.m_toy);
-   bw.WriteBool(FID(U3DM), m_d.m_use3DMesh);
-   bw.WriteBool(FID(STRE), m_d.m_staticRendering);
-   bw.WriteFloat(FID(DILT), m_d.m_disableLightingTop);
-   bw.WriteFloat(FID(DILB), m_d.m_disableLightingBelow);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-   bw.WriteBool(FID(EBFC), m_d.m_backfacesEnabled);
-   bw.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
-   bw.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
-   bw.WriteBool(FID(DIPT), m_d.m_displayTexture);
-   bw.WriteBool(FID(OSNM), m_d.m_objectSpaceNormalMap);
+   writer.WriteVector4(FID(VPOS), vec4(m_d.m_vPosition.x, m_d.m_vPosition.y, m_d.m_vPosition.z, 0.f));
+   writer.WriteVector4(FID(VSIZ), vec4(m_d.m_vSize.x, m_d.m_vSize.y, m_d.m_vSize.z, 0.f));
+   writer.WriteFloat(FID(RTV0), m_d.m_aRotAndTra[0]);
+   writer.WriteFloat(FID(RTV1), m_d.m_aRotAndTra[1]);
+   writer.WriteFloat(FID(RTV2), m_d.m_aRotAndTra[2]);
+   writer.WriteFloat(FID(RTV3), m_d.m_aRotAndTra[3]);
+   writer.WriteFloat(FID(RTV4), m_d.m_aRotAndTra[4]);
+   writer.WriteFloat(FID(RTV5), m_d.m_aRotAndTra[5]);
+   writer.WriteFloat(FID(RTV6), m_d.m_aRotAndTra[6]);
+   writer.WriteFloat(FID(RTV7), m_d.m_aRotAndTra[7]);
+   writer.WriteFloat(FID(RTV8), m_d.m_aRotAndTra[8]);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteString(FID(NRMA), m_d.m_szNormalMap);
+   writer.WriteInt(FID(SIDS), m_d.m_Sides);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteInt(FID(SCOL), m_d.m_SideColor);
+   writer.WriteBool(FID(TVIS), m_d.m_visible);
+   writer.WriteBool(FID(DTXI), m_d.m_drawTexturesInside);
+   writer.WriteBool(FID(HTEV), m_d.m_hitEvent);
+   writer.WriteFloat(FID(THRS), m_d.m_threshold);
+   writer.WriteFloat(FID(ELAS), m_d.m_elasticity);
+   writer.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
+   writer.WriteFloat(FID(RFCT), m_d.m_friction);
+   writer.WriteFloat(FID(RSCT), m_d.m_scatter);
+   writer.WriteFloat(FID(EFUI), m_d.m_edgeFactorUI);
+   writer.WriteFloat(FID(CORF), m_d.m_collision_reductionFactor);
+   writer.WriteBool(FID(CLDR), m_d.m_collidable);
+   writer.WriteBool(FID(ISTO), m_d.m_toy);
+   writer.WriteBool(FID(U3DM), m_d.m_use3DMesh);
+   writer.WriteBool(FID(STRE), m_d.m_staticRendering);
+   writer.WriteFloat(FID(DILT), m_d.m_disableLightingTop);
+   writer.WriteFloat(FID(DILB), m_d.m_disableLightingBelow);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+   writer.WriteBool(FID(EBFC), m_d.m_backfacesEnabled);
+   writer.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
+   writer.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
+   writer.WriteBool(FID(DIPT), m_d.m_displayTexture);
+   writer.WriteBool(FID(OSNM), m_d.m_objectSpaceNormalMap);
 
    // Don't save the meshes for undo/redo
    if (m_d.m_use3DMesh && !saveForUndo)
    {
-      bw.WriteString(FID(M3DN), m_d.m_meshFileName);
-      bw.WriteInt(FID(M3VN), (int)m_mesh.NumVertices());
+      writer.WriteString(FID(M3DN), m_d.m_meshFileName);
+      writer.WriteInt(FID(M3VN), (int)m_mesh.NumVertices());
 
 #ifndef COMPRESS_MESHES
-      bw.WriteStruct(FID(M3DX), m_mesh.m_vertices.data(), (int)(sizeof(Vertex3D_NoTex2)*m_mesh.NumVertices()));
+      writer.WriteRaw(FID(M3DX), m_mesh.m_vertices.data(), (int)(sizeof(Vertex3D_NoTex2)*m_mesh.NumVertices()));
 #else
       {
       const mz_ulong slen = (mz_ulong)(sizeof(Vertex3D_NoTex2)*m_mesh.NumVertices());
@@ -1607,25 +1259,25 @@ HRESULT Primitive::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool sav
       mz_uint8 * const c = new mz_uint8[clen];
       if (compress2(c, &clen, (const unsigned char *)m_mesh.m_vertices.data(), slen, MZ_BEST_COMPRESSION) != Z_OK)
          ShowError("Could not compress primitive vertex data");
-      bw.WriteInt(FID(M3CY), (int)clen);
-      bw.WriteStruct(FID(M3CX), c, clen);
+      writer.WriteInt(FID(M3CY), (int)clen);
+      writer.WriteRaw(FID(M3CX), c, clen);
       delete [] c;
       }
 #endif
 
-      bw.WriteInt(FID(M3FN), (int)m_mesh.NumIndices());
+      writer.WriteInt(FID(M3FN), (int)m_mesh.NumIndices());
       if (m_mesh.NumVertices() > 65535)
       {
 #ifndef COMPRESS_MESHES
-         bw.WriteStruct(FID(M3DI), m_mesh.m_indices.data(), (int)(sizeof(unsigned int)*m_mesh.NumIndices()));
+         writer.WriteRaw(FID(M3DI), m_mesh.m_indices.data(), (int)(sizeof(unsigned int)*m_mesh.NumIndices()));
 #else
          const mz_ulong slen = (mz_ulong)(sizeof(unsigned int)*m_mesh.NumIndices());
          mz_ulong clen = compressBound(slen);
          mz_uint8 * const c = new mz_uint8[clen];
          if (compress2(c, &clen, (const unsigned char *)m_mesh.m_indices.data(), slen, MZ_BEST_COMPRESSION) != Z_OK)
             ShowError("Could not compress primitive index data");
-         bw.WriteInt(FID(M3CJ), (int)clen);
-         bw.WriteStruct(FID(M3CI), c, clen);
+         writer.WriteInt(FID(M3CJ), (int)clen);
+         writer.WriteRaw(FID(M3CI), c, clen);
          delete [] c;
 #endif
       }
@@ -1635,15 +1287,15 @@ HRESULT Primitive::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool sav
          for (size_t i = 0; i < m_mesh.NumIndices(); ++i)
             tmp[i] = m_mesh.m_indices[i];
 #ifndef COMPRESS_MESHES
-         bw.WriteStruct(FID(M3DI), tmp.data(), (int)(sizeof(WORD)*m_mesh.NumIndices()));
+         writer.WriteRaw(FID(M3DI), tmp.data(), (int)(sizeof(WORD)*m_mesh.NumIndices()));
 #else
          const mz_ulong slen = (mz_ulong)(sizeof(WORD)*m_mesh.NumIndices());
          mz_ulong clen = compressBound(slen);
          mz_uint8 * const c = new mz_uint8[clen];
          if (compress2(c, &clen, (const unsigned char *)tmp.data(), slen, MZ_BEST_COMPRESSION) != Z_OK)
             ShowError("Could not compress primitive index data");
-         bw.WriteInt(FID(M3CJ), (int)clen);
-         bw.WriteStruct(FID(M3CI), c, clen);
+         writer.WriteInt(FID(M3CJ), (int)clen);
+         writer.WriteRaw(FID(M3CI), c, clen);
          delete [] c;
 #endif
       }
@@ -1657,501 +1309,308 @@ HRESULT Primitive::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool sav
             mz_uint8 * const c = new mz_uint8[clen];
             if (compress2(c, &clen, (const unsigned char *)m_mesh.m_animationFrames[i].m_frameVerts.data(), slen, MZ_BEST_COMPRESSION) != Z_OK)
                ShowError("Could not compress primitive animation vertex data");
-            bw.WriteInt(FID(M3AY), (int)clen);
-            bw.WriteStruct(FID(M3AX), c, clen);
+            writer.WriteInt(FID(M3AY), (int)clen);
+            writer.WriteRaw(FID(M3AX), c, clen);
             delete [] c;
          }
 
       }
    }
-   bw.WriteFloat(FID(PIDB), m_d.m_depthBias);
-   bw.WriteBool(FID(ADDB), m_d.m_addBlend);
-   bw.WriteBool(FID(ZMSK), m_d.m_useDepthMask);
-   bw.WriteFloat(FID(FALP), m_d.m_alpha);
-   bw.WriteInt(FID(COLR), m_d.m_color);
+   writer.WriteFloat(FID(PIDB), m_d.m_depthBias);
+   writer.WriteBool(FID(ADDB), m_d.m_addBlend);
+   writer.WriteBool(FID(ZMSK), m_d.m_useDepthMask);
+   writer.WriteFloat(FID(FALP), m_d.m_alpha);
+   writer.WriteInt(FID(COLR), m_d.m_color);
 
-   bw.WriteString(FID(LMAP), m_d.m_szLightmap);
+   writer.WriteString(FID(LMAP), m_d.m_szLightmap);
 
-   bw.WriteString(FID(REFL), m_d.m_szReflectionProbe);
-   bw.WriteFloat(FID(RSTR), m_d.m_reflectionStrength);
-   bw.WriteString(FID(REFR), m_d.m_szRefractionProbe);
-   bw.WriteFloat(FID(RTHI), m_d.m_refractionThickness);
+   writer.WriteString(FID(REFL), m_d.m_szReflectionProbe);
+   writer.WriteFloat(FID(RSTR), m_d.m_reflectionStrength);
+   writer.WriteString(FID(REFR), m_d.m_szRefractionProbe);
+   writer.WriteFloat(FID(RTHI), m_d.m_refractionThickness);
 
-   ISelect::SaveData(pstm, hcrypthash);
+   SaveSharedEditableFields(writer);
 
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
+   writer.EndObject();
 }
 
-HRESULT Primitive::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Primitive::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
    m_mesh.m_validBounds = false;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break; // Deprecated (unique part id, now the name is guaranteed to be unique)
+         case FID(BMIN): reader.AsVector3(); break; // Deprecated (bounding box min)
+         case FID(BMAX): reader.AsVector3(); break; // Deprecated (bounding box max)
+         case FID(VPOS): m_d.m_vPosition = reader.AsVector4().xyz(); break;
+         case FID(VSIZ): m_d.m_vSize = reader.AsVector4().xyz(); break;
+         case FID(RTV0): m_d.m_aRotAndTra[0] = reader.AsFloat(); break;
+         case FID(RTV1): m_d.m_aRotAndTra[1] = reader.AsFloat(); break;
+         case FID(RTV2): m_d.m_aRotAndTra[2] = reader.AsFloat(); break;
+         case FID(RTV3): m_d.m_aRotAndTra[3] = reader.AsFloat(); break;
+         case FID(RTV4): m_d.m_aRotAndTra[4] = reader.AsFloat(); break;
+         case FID(RTV5): m_d.m_aRotAndTra[5] = reader.AsFloat(); break;
+         case FID(RTV6): m_d.m_aRotAndTra[6] = reader.AsFloat(); break;
+         case FID(RTV7): m_d.m_aRotAndTra[7] = reader.AsFloat(); break;
+         case FID(RTV8): m_d.m_aRotAndTra[8] = reader.AsFloat(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(NRMA): m_d.m_szNormalMap = reader.AsString(); break;
+         case FID(SIDS): m_d.m_Sides = reader.AsInt(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(SCOL): m_d.m_SideColor = reader.AsInt(); break;
+         case FID(TVIS): m_d.m_visible = reader.AsBool(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         case FID(DTXI): m_d.m_drawTexturesInside = reader.AsBool(); break;
+         case FID(HTEV): m_d.m_hitEvent = reader.AsBool(); break;
+         case FID(THRS): m_d.m_threshold = reader.AsFloat(); break;
+         case FID(ELAS): m_d.m_elasticity = reader.AsFloat(); break;
+         case FID(ELFO): m_d.m_elasticityFalloff = reader.AsFloat(); break;
+         case FID(RFCT): m_d.m_friction = reader.AsFloat(); break;
+         case FID(RSCT): m_d.m_scatter = reader.AsFloat(); break;
+         case FID(EFUI): m_d.m_edgeFactorUI = reader.AsFloat(); break;
+         case FID(CORF): m_d.m_collision_reductionFactor = reader.AsFloat(); break;
+         case FID(CLDR): m_d.m_collidable = reader.AsBool(); break;
+         case FID(ISTO): m_d.m_toy = reader.AsBool(); break;
+         case FID(MAPH): m_d.m_szPhysicsMaterial = reader.AsString(); break;
+         case FID(OVPH): m_d.m_overwritePhysics = reader.AsBool(); break;
+         case FID(STRE): m_d.m_staticRendering = reader.AsBool(); break;
+         case FID(DILI):
+         {
+            int tmp;
+            tmp = reader.AsInt();
+            m_d.m_disableLightingTop = (tmp == 1) ? 1.f : dequantizeUnsigned<8>(tmp);
+            break;
+         } // Pre 10.8 compatible hacky loading!
+         case FID(DILT): m_d.m_disableLightingTop = reader.AsFloat(); break;
+         case FID(DILB): m_d.m_disableLightingBelow = reader.AsFloat(); break;
+         case FID(U3DM): m_d.m_use3DMesh = reader.AsBool(); break;
+         case FID(EBFC): m_d.m_backfacesEnabled = reader.AsBool(); break;
+         case FID(DIPT): m_d.m_displayTexture = reader.AsBool(); break;
+         case FID(M3DN): m_d.m_meshFileName = reader.AsString(); break;
+         case FID(M3VN):
+         {
+            m_numVertices = reader.AsInt();
+            if (!m_mesh.m_animationFrames.empty())
+            {
+               for (size_t i = 0; i < m_mesh.m_animationFrames.size(); i++)
+                  m_mesh.m_animationFrames[i].m_frameVerts.clear();
+               m_mesh.m_animationFrames.clear();
+            }
+            break;
+         }
+         case FID(M3DX):
+         {
+            m_mesh.m_vertices.clear();
+            m_mesh.m_vertices.resize(m_numVertices);
+            reader.AsRaw(m_mesh.m_vertices.data(), (int)sizeof(Vertex3D_NoTex2) * m_numVertices);
+            break;
+         }
+#ifdef COMPRESS_MESHES
+         case FID(M3AY): m_compressedAnimationVertices = reader.AsInt(); break;
+         case FID(M3AX):
+         {
+            Mesh::FrameData frameData;
+            frameData.m_frameVerts.clear();
+            frameData.m_frameVerts.resize(m_numVertices);
 
-   br.Load();
+            mz_ulong uclen = (mz_ulong)(sizeof(Mesh::VertData) * m_mesh.NumVertices());
+            mz_uint8 *const c = new mz_uint8[m_compressedAnimationVertices];
+            reader.AsRaw(c, m_compressedAnimationVertices);
+            const int error = uncompress((unsigned char *)frameData.m_frameVerts.data(), &uclen, c, m_compressedAnimationVertices);
+            if (error != Z_OK)
+               ShowError("Could not uncompress primitive animation vertex data, error " + std::to_string(error));
+            delete[] c;
+            m_mesh.m_animationFrames.push_back(frameData);
+            break;
+         }
+         case FID(M3CY): m_compressedVertices = reader.AsInt(); break;
+         case FID(M3CX):
+         {
+            m_mesh.m_vertices.clear();
+            m_mesh.m_vertices.resize(m_numVertices);
+            const mz_ulong uclen = (mz_ulong)(sizeof(Vertex3D_NoTex2) * m_mesh.NumVertices());
+            mz_uint8 *const c = new mz_uint8[m_compressedVertices];
+            reader.AsRaw(c, m_compressedVertices);
+            mz_ulong uclen2 = uclen;
+            const int error = uncompress((unsigned char *)m_mesh.m_vertices.data(), &uclen2, c, m_compressedVertices);
+            if (error != Z_OK)
+               ShowError("Could not uncompress primitive vertex data, error " + std::to_string(error));
+            delete[] c;
+            break;
+         }
+#endif
+         case FID(M3FN): m_numIndices = reader.AsInt(); break;
+         case FID(M3DI):
+         {
+            m_mesh.m_indices.resize(m_numIndices);
+            if (m_numVertices > 65535)
+               reader.AsRaw(m_mesh.m_indices.data(), (int)sizeof(unsigned int) * m_numIndices);
+            else
+            {
+               vector<WORD> tmp(m_numIndices);
+               reader.AsRaw(tmp.data(), (int)sizeof(WORD) * m_numIndices);
+               for (int i = 0; i < m_numIndices; ++i)
+                  m_mesh.m_indices[i] = tmp[i];
+            }
+            break;
+         }
+#ifdef COMPRESS_MESHES
+         case FID(M3CJ): m_compressedIndices = reader.AsInt(); break;
+         case FID(M3CI):
+         {
+            m_mesh.m_indices.resize(m_numIndices);
+            if (m_numVertices > 65535)
+            {
+               const mz_ulong uclen = (mz_ulong)(sizeof(unsigned int) * m_mesh.NumIndices());
+               mz_uint8 *const c = new mz_uint8[m_compressedIndices];
+               reader.AsRaw(c, m_compressedIndices);
+               mz_ulong uclen2 = uclen;
+               const int error = uncompress((unsigned char *)m_mesh.m_indices.data(), &uclen2, c, m_compressedIndices);
+               if (error != Z_OK)
+                  ShowError("Could not uncompress (large) primitive index data, error " + std::to_string(error));
+               delete[] c;
+            }
+            else
+            {
+               const mz_ulong uclen = (mz_ulong)(sizeof(WORD) * m_mesh.NumIndices());
+               mz_uint8 *const c = new mz_uint8[m_compressedIndices];
+               reader.AsRaw(c, m_compressedIndices);
+               vector<WORD> tmp(m_numIndices);
 
-   if(version < 1011) // so that old tables do the reorderForsyth on each load, new tables only on mesh import, so a simple resave of a old table will also skip this step
+               mz_ulong uclen2 = uclen;
+               const int error = uncompress((unsigned char *)tmp.data(), &uclen2, c, m_compressedIndices);
+               if (error != Z_OK)
+                  ShowError("Could not uncompress (small) primitive index data, error " + std::to_string(error));
+               delete[] c;
+               for (int i = 0; i < m_numIndices; ++i)
+                  m_mesh.m_indices[i] = tmp[i];
+            }
+            break;
+         }
+#endif
+         case FID(PIDB): m_d.m_depthBias = reader.AsFloat(); break;
+         case FID(OSNM): m_d.m_objectSpaceNormalMap = reader.AsBool(); break;
+         case FID(ADDB): m_d.m_addBlend = reader.AsBool(); break;
+         case FID(ZMSK): m_d.m_useDepthMask = reader.AsBool(); break;
+         case FID(FALP): m_d.m_alpha = reader.AsFloat(); break;
+         case FID(COLR): m_d.m_color = reader.AsInt(); break;
+
+         case FID(LMAP): m_d.m_szLightmap = reader.AsString(); break;
+
+         case FID(REFL): m_d.m_szReflectionProbe = reader.AsString(); break;
+         case FID(RSTR): m_d.m_reflectionStrength = reader.AsFloat(); break;
+         case FID(REFR): m_d.m_szRefractionProbe = reader.AsString(); break;
+         case FID(RTHI): m_d.m_refractionThickness = reader.AsFloat(); break;
+
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
+
+   if (reader.GetVersion() < 1011) // so that old tables do the reorderForsyth on each load, new tables only on mesh import, so a simple resave of a old table will also skip this step
    {
-      WaitForMeshDecompression(); //!! needed nowadays due to multithreaded mesh decompression
-
-      unsigned int* const tmp = reorderForsyth(m_mesh.m_indices, (int)m_mesh.NumVertices());
+      unsigned int *const tmp = reorderForsyth(m_mesh.m_indices, (int)m_mesh.NumVertices());
       if (tmp != nullptr)
       {
          memcpy(m_mesh.m_indices.data(), tmp, m_mesh.NumIndices() * sizeof(unsigned int));
          delete[] tmp;
       }
    }
-
    m_inPlayState = m_d.m_visible;
-
-   return S_OK;
+   CalculateBuiltinOriginal();
 }
 
-bool Primitive::LoadToken(const int id, BiffReader * const pbr)
+bool Primitive::LoadMesh(
+   const string &filename, const MeshUnits units, const bool importAbsolutePosition, const bool centerMesh, const bool importMaterial, const bool importAnimation, const bool doForsyth)
 {
-   switch(id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(VPOS): pbr->GetVector3Padded(m_d.m_vPosition); break;
-   case FID(VSIZ): pbr->GetVector3Padded(m_d.m_vSize); break;
-   case FID(RTV0): pbr->GetFloat(m_d.m_aRotAndTra[0]); break;
-   case FID(RTV1): pbr->GetFloat(m_d.m_aRotAndTra[1]); break;
-   case FID(RTV2): pbr->GetFloat(m_d.m_aRotAndTra[2]); break;
-   case FID(RTV3): pbr->GetFloat(m_d.m_aRotAndTra[3]); break;
-   case FID(RTV4): pbr->GetFloat(m_d.m_aRotAndTra[4]); break;
-   case FID(RTV5): pbr->GetFloat(m_d.m_aRotAndTra[5]); break;
-   case FID(RTV6): pbr->GetFloat(m_d.m_aRotAndTra[6]); break;
-   case FID(RTV7): pbr->GetFloat(m_d.m_aRotAndTra[7]); break;
-   case FID(RTV8): pbr->GetFloat(m_d.m_aRotAndTra[8]); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(NRMA): pbr->GetString(m_d.m_szNormalMap); break;
-   case FID(SIDS): pbr->GetInt(m_d.m_Sides); break;
-   case FID(NAME): pbr->GetWideString(m_wzName,std::size(m_wzName)); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(SCOL): pbr->GetInt(m_d.m_SideColor); break;
-   case FID(TVIS): pbr->GetBool(m_d.m_visible); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   case FID(DTXI): pbr->GetBool(m_d.m_drawTexturesInside); break;
-   case FID(HTEV): pbr->GetBool(m_d.m_hitEvent); break;
-   case FID(THRS): pbr->GetFloat(m_d.m_threshold); break;
-   case FID(ELAS): pbr->GetFloat(m_d.m_elasticity); break;
-   case FID(ELFO): pbr->GetFloat(m_d.m_elasticityFalloff); break;
-   case FID(RFCT): pbr->GetFloat(m_d.m_friction); break;
-   case FID(RSCT): pbr->GetFloat(m_d.m_scatter); break;
-   case FID(EFUI): pbr->GetFloat(m_d.m_edgeFactorUI); break;
-   case FID(CORF): pbr->GetFloat(m_d.m_collision_reductionFactor); break;
-   case FID(CLDR): pbr->GetBool(m_d.m_collidable); break;
-   case FID(ISTO): pbr->GetBool(m_d.m_toy); break;
-   case FID(MAPH): pbr->GetString(m_d.m_szPhysicsMaterial); break;
-   case FID(OVPH): pbr->GetBool(m_d.m_overwritePhysics); break;
-   case FID(STRE): pbr->GetBool(m_d.m_staticRendering); break;
-   case FID(DILI): { int tmp; pbr->GetInt(tmp); m_d.m_disableLightingTop = (tmp == 1) ? 1.f : dequantizeUnsigned<8>(tmp); break; } // Pre 10.8 compatible hacky loading!
-   case FID(DILT): pbr->GetFloat(m_d.m_disableLightingTop); break;
-   case FID(DILB): pbr->GetFloat(m_d.m_disableLightingBelow); break;
-   case FID(U3DM): pbr->GetBool(m_d.m_use3DMesh); break;
-   case FID(EBFC): pbr->GetBool(m_d.m_backfacesEnabled); break;
-   case FID(DIPT): pbr->GetBool(m_d.m_displayTexture); break;
-   case FID(M3DN): pbr->GetString(m_d.m_meshFileName); break;
-   case FID(M3VN):
-   {
-      pbr->GetInt(m_numVertices);
-      if (!m_mesh.m_animationFrames.empty())
-      {
-         for (size_t i = 0; i < m_mesh.m_animationFrames.size(); i++)
-            m_mesh.m_animationFrames[i].m_frameVerts.clear();
-         m_mesh.m_animationFrames.clear();
-      }
-      break;
-   }
-   case FID(M3DX):
-   {
-      m_mesh.m_vertices.clear();
-      m_mesh.m_vertices.resize(m_numVertices);
-      pbr->GetStruct(m_mesh.m_vertices.data(), (int)sizeof(Vertex3D_NoTex2)*m_numVertices);
-      break;
-   }
-#ifdef COMPRESS_MESHES
-   case FID(M3AY): pbr->GetInt(m_compressedAnimationVertices); break;
-   case FID(M3AX):
-   {
-      Mesh::FrameData frameData;
-      frameData.m_frameVerts.clear();
-      frameData.m_frameVerts.resize(m_numVertices);
-
-      mz_ulong uclen = (mz_ulong)(sizeof(Mesh::VertData)*m_mesh.NumVertices());
-      mz_uint8 * const c = new mz_uint8[m_compressedAnimationVertices];
-      pbr->GetStruct(c, m_compressedAnimationVertices);
-      const int error = uncompress((unsigned char *)frameData.m_frameVerts.data(), &uclen, c, m_compressedAnimationVertices);
-      if (error != Z_OK)
-         ShowError("Could not uncompress primitive animation vertex data, error "+std::to_string(error));
-      delete [] c;
-      m_mesh.m_animationFrames.push_back(frameData);
-      break;
-   }
-   case FID(M3CY): pbr->GetInt(m_compressedVertices); break;
-   case FID(M3CX):
-   {
-      m_mesh.m_vertices.clear();
-      m_mesh.m_vertices.resize(m_numVertices);
-      const mz_ulong uclen = (mz_ulong)(sizeof(Vertex3D_NoTex2)*m_mesh.NumVertices());
-      mz_uint8 * const c = new mz_uint8[m_compressedVertices];
-      pbr->GetStruct(c, m_compressedVertices);
-      if (g_pPrimitiveDecompressThreadPool == nullptr)
-		  g_pPrimitiveDecompressThreadPool = new ThreadPool(g_pvp->GetLogicalNumberOfProcessors());
-
-      g_pPrimitiveDecompressThreadPool->enqueue([uclen, c, this] {
-		  mz_ulong uclen2 = uclen;
-		  const int error = uncompress((unsigned char *)m_mesh.m_vertices.data(), &uclen2, c, m_compressedVertices);
-		  if (error != Z_OK)
-			  ShowError("Could not uncompress primitive vertex data, error "+std::to_string(error));
-        delete [] c;
-      });
-      break;
-   }
-#endif
-   case FID(M3FN): pbr->GetInt(m_numIndices); break;
-   case FID(M3DI):
-   {
-      m_mesh.m_indices.resize(m_numIndices);
-      if (m_numVertices > 65535)
-         pbr->GetStruct(m_mesh.m_indices.data(), (int)sizeof(unsigned int)*m_numIndices);
-      else
-      {
-         vector<WORD> tmp(m_numIndices);
-         pbr->GetStruct(tmp.data(), (int)sizeof(WORD)*m_numIndices);
-         for (int i = 0; i < m_numIndices; ++i)
-            m_mesh.m_indices[i] = tmp[i];
-      }
-      break;
-   }
-#ifdef COMPRESS_MESHES
-   case FID(M3CJ): pbr->GetInt(m_compressedIndices); break;
-   case FID(M3CI):
-   {
-      m_mesh.m_indices.resize(m_numIndices);
-      if (m_numVertices > 65535)
-      {
-         const mz_ulong uclen = (mz_ulong)(sizeof(unsigned int)*m_mesh.NumIndices());
-         mz_uint8 * const c = new mz_uint8[m_compressedIndices];
-         pbr->GetStruct(c, m_compressedIndices);
-         if (g_pPrimitiveDecompressThreadPool == nullptr)
-			 g_pPrimitiveDecompressThreadPool = new ThreadPool(g_pvp->GetLogicalNumberOfProcessors());
-
-         g_pPrimitiveDecompressThreadPool->enqueue([uclen, c, this] {
-			 mz_ulong uclen2 = uclen;
-			 const int error = uncompress((unsigned char *)m_mesh.m_indices.data(), &uclen2, c, m_compressedIndices);
-			 if (error != Z_OK)
-				 ShowError("Could not uncompress (large) primitive index data, error "+std::to_string(error));
-			 delete [] c;
-         });
-      }
-      else
-      {
-         const mz_ulong uclen = (mz_ulong)(sizeof(WORD)*m_mesh.NumIndices());
-         mz_uint8 * const c = new mz_uint8[m_compressedIndices];
-         pbr->GetStruct(c, m_compressedIndices);
-         if (g_pPrimitiveDecompressThreadPool == nullptr)
-            g_pPrimitiveDecompressThreadPool = new ThreadPool(g_pvp->GetLogicalNumberOfProcessors());
-
-         g_pPrimitiveDecompressThreadPool->enqueue([uclen, c, this] {
-            vector<WORD> tmp(m_numIndices);
-
-            mz_ulong uclen2 = uclen;
-            const int error = uncompress((unsigned char *)tmp.data(), &uclen2, c, m_compressedIndices);
-            if (error != Z_OK)
-               ShowError("Could not uncompress (small) primitive index data, error "+std::to_string(error));
-            delete [] c;
-            for (int i = 0; i < m_numIndices; ++i)
-               m_mesh.m_indices[i] = tmp[i];
-         });
-      }
-      break;
-   }
-#endif
-   case FID(PIDB): pbr->GetFloat(m_d.m_depthBias); break;
-   case FID(OSNM): pbr->GetBool(m_d.m_objectSpaceNormalMap); break;
-   case FID(ADDB): pbr->GetBool(m_d.m_addBlend); break;
-   case FID(ZMSK): pbr->GetBool(m_d.m_useDepthMask); break;
-   case FID(FALP): pbr->GetFloat(m_d.m_alpha); break;
-   case FID(COLR): pbr->GetInt(m_d.m_color); break;
-
-   case FID(LMAP): pbr->GetString(m_d.m_szLightmap); break;
-
-   case FID(REFL): pbr->GetString(m_d.m_szReflectionProbe); break;
-   case FID(RSTR): pbr->GetFloat(m_d.m_reflectionStrength); break;
-   case FID(REFR): pbr->GetString(m_d.m_szRefractionProbe); break;
-   case FID(RTHI): pbr->GetFloat(m_d.m_refractionThickness); break;
-
-   default: ISelect::LoadToken(id, pbr); break;
-   }
-   return true;
-}
-
-void Primitive::WaitForMeshDecompression()
-{
-   if (g_pPrimitiveDecompressThreadPool)
-   {
-      // This will wait for the threads to finish decompressing meshes.
-      g_pPrimitiveDecompressThreadPool->wait_until_empty();
-      g_pPrimitiveDecompressThreadPool->wait_until_nothing_in_flight();
-      delete g_pPrimitiveDecompressThreadPool;
-      g_pPrimitiveDecompressThreadPool = nullptr;
-   }
-}
-
-HRESULT Primitive::InitPostLoad()
-{
-   WaitForMeshDecompression(); //!! needed nowadays due to multithreaded mesh decompression
-   UpdateStatusBarInfo();
-   return S_OK;
-}
-
-INT_PTR CALLBACK Primitive::ObjImportProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-#ifndef __STANDALONE__
-   static Primitive *prim = nullptr;
-   switch (uMsg)
-   {
-   case WM_INITDIALOG:
-   {
-      static constexpr char nullstring[8] = {};
-
-      prim = (Primitive*)lParam;
-      SetDlgItemText(hwndDlg, IDC_FILENAME_EDIT, nullstring);
-      CheckDlgButton(hwndDlg, IDC_CONVERT_COORD_CHECK, BST_CHECKED);
-      CheckDlgButton(hwndDlg, IDC_REL_POSITION_RADIO, BST_CHECKED);
-      CheckDlgButton(hwndDlg, IDC_ABS_POSITION_RADIO, BST_UNCHECKED);
-      CheckDlgButton(hwndDlg, IDC_CENTER_MESH, BST_UNCHECKED);
-      CheckDlgButton(hwndDlg, IDC_IMPORT_NO_FORSYTH, BST_UNCHECKED);
-      EnableWindow(GetDlgItem(hwndDlg, IDOK), FALSE);
-      return TRUE;
-   }
-   case WM_CLOSE:
-   {
-      prim = nullptr;
-      EndDialog(hwndDlg, FALSE);
-      break;
-   }
-   case WM_COMMAND:
-      switch (HIWORD(wParam))
-      {
-      case BN_CLICKED:
-         switch (LOWORD(wParam))
-         {
-         case IDOK:
-         {
-            char szFileName[MAXSTRING];
-            szFileName[0] = '\0';
-
-            GetDlgItemText(hwndDlg, IDC_FILENAME_EDIT, szFileName, MAXSTRING);
-            if (szFileName[0] == '\0')
-            {
-               ShowError("No .obj file selected!");
-               break;
-            }
-            prim->m_mesh.Clear();
-            prim->m_d.m_use3DMesh = false;
-            prim->m_meshBuffer = nullptr;
-
-            constexpr bool flipTV = false;
-            const bool convertToLeftHanded = IsDlgButtonChecked(hwndDlg, IDC_CONVERT_COORD_CHECK) == BST_CHECKED;
-            const bool importAbsolutePosition = IsDlgButtonChecked(hwndDlg, IDC_ABS_POSITION_RADIO) == BST_CHECKED;
-            const bool centerMesh = IsDlgButtonChecked(hwndDlg, IDC_CENTER_MESH) == BST_CHECKED;
-            const bool importMaterial = IsDlgButtonChecked(hwndDlg, IDC_IMPORT_MATERIAL) == BST_CHECKED;
-            const bool importAnimation = IsDlgButtonChecked(hwndDlg, IDC_IMPORT_ANIM_SEQUENCE) == BST_CHECKED;
-            const bool doForsyth = IsDlgButtonChecked(hwndDlg, IDC_IMPORT_NO_FORSYTH) == BST_UNCHECKED;
-            if (importMaterial)
-            {
-               string szMatName = szFileName;
-               if (ReplaceExtensionFromFilename(szMatName, "mtl"s))
-               {
-                  Material * const mat = new Material();
-                  if (ObjLoader::LoadMaterial(szMatName, mat))
-                  {
-                     CComObject<PinTable> * const pActiveTable = g_pvp->GetActiveTable();
-                     if (pActiveTable)
-                         pActiveTable->AddMaterial(mat);
-
-                     prim->m_d.m_szMaterial = mat->m_name;
-                  }
-               }
-               else
-                  ShowError("Could not load material file.");
-            }
-            if (prim->m_mesh.LoadWavefrontObj(szFileName, flipTV, convertToLeftHanded))
-            {
-               if (importAbsolutePosition || centerMesh)
-               {
-                  for (size_t i = 0; i < prim->m_mesh.m_vertices.size(); i++)
-                  {
-                     prim->m_mesh.m_vertices[i].x -= prim->m_mesh.middlePoint.x;
-                     prim->m_mesh.m_vertices[i].y -= prim->m_mesh.middlePoint.y;
-                     prim->m_mesh.m_vertices[i].z -= prim->m_mesh.middlePoint.z;
-                  }
-                  if (importAbsolutePosition)
-                  {
-                     prim->m_d.m_vPosition.x = prim->m_mesh.middlePoint.x;
-                     prim->m_d.m_vPosition.y = prim->m_mesh.middlePoint.y;
-                     prim->m_d.m_vPosition.z = prim->m_mesh.middlePoint.z;
-                     prim->m_d.m_vSize.x = 1.0f;
-                     prim->m_d.m_vSize.y = 1.0f;
-                     prim->m_d.m_vSize.z = 1.0f;
-                  }
-               }
-               if (importAnimation)
-               {
-                  if (prim->m_mesh.LoadAnimation(szFileName, flipTV, convertToLeftHanded))
-                  {
-                     if (centerMesh)
-                     {
-                        for (size_t t = 0; t < prim->m_mesh.m_animationFrames.size(); t++)
-                        {
-                           for (size_t i = 0; i < prim->m_mesh.m_vertices.size(); i++)
-                           {
-                              prim->m_mesh.m_animationFrames[t].m_frameVerts[i].x -= prim->m_mesh.middlePoint.x;
-                              prim->m_mesh.m_animationFrames[t].m_frameVerts[i].y -= prim->m_mesh.middlePoint.y;
-                              prim->m_mesh.m_animationFrames[t].m_frameVerts[i].z -= prim->m_mesh.middlePoint.z;
-                           }
-                        }
-                     }
-                  }
-               }
-               prim->m_d.m_use3DMesh = true;
-               if (doForsyth)
-               {
-                   unsigned int* const tmp = reorderForsyth(prim->m_mesh.m_indices, (int)prim->m_mesh.NumVertices());
-                   if (tmp != nullptr)
-                   {
-                       memcpy(prim->m_mesh.m_indices.data(), tmp, prim->m_mesh.NumIndices() * sizeof(unsigned int));
-                       delete[] tmp;
-                   }
-               }
-               prim->UpdateStatusBarInfo();
-               prim = nullptr;
-               EndDialog(hwndDlg, TRUE);
-            }
-            else
-               ShowError("Unable to open file!");
-            break;
-         }
-         case IDC_BROWSE_BUTTON:
-         {
-            if (prim == nullptr)
-               break;
-
-            SetForegroundWindow(hwndDlg);
-
-            const string& szInitialDir = g_pvp->m_settings.GetRecentDir_ImportDir();
-
-            vector<string> szFileName;
-            if (g_pvp->OpenFileDialog(szInitialDir, szFileName, "Wavefront obj file (*.obj)\0*.obj\0", "obj", 0))
-            {
-               SetDlgItemText(hwndDlg, IDC_FILENAME_EDIT, szFileName[0].c_str());
-
-               size_t index = szFileName[0].find_last_of(PATH_SEPARATOR_CHAR);
-               if (index != string::npos)
-               {
-                  g_pvp->m_settings.SetRecentDir_ImportDir(szFileName[0].substr(0, index), false);
-                  index++;
-                  prim->m_d.m_meshFileName = szFileName[0].substr(index, szFileName[0].length() - index);
-               }
-
-               EnableWindow(GetDlgItem(hwndDlg, IDOK), TRUE);
-            }
-            break;
-         }
-         case IDCANCEL:
-         {
-            prim = nullptr;
-            EndDialog(hwndDlg, FALSE);
-            break;
-         }
-         }
-      }
-   }
-#endif
-   return FALSE;
-}
-
-bool Primitive::BrowseFor3DMeshFile()
-{
-#ifndef __STANDALONE__
-   DialogBoxParam(m_vpinball->theInstance, MAKEINTRESOURCE(IDD_MESH_IMPORT_DIALOG), m_vpinball->GetHwnd(), ObjImportProc, (size_t)this);
-#endif
-#if 1
-   return false;
-#else
-   char szFileName[MAXSTRING];
-   szFileName[0] = '\0';
-   string szInitialDir;
-
-   OPENFILENAME ofn = {};
-   ofn.lStructSize = sizeof(OPENFILENAME);
-   ofn.hInstance = m_vpinball->theInstance;
-   ofn.hwndOwner = m_vpinball->m_hwnd;
-   // TEXT
-   ofn.lpstrFilter = "Wavefront obj file (*.obj)\0*.obj\0";
-   ofn.lpstrFile = szFileName;
-   ofn.nMaxFile = sizeof(szFileName);
-   ofn.lpstrDefExt = "obj";
-   ofn.Flags = OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY;
-
-   szInitialDir = g_pvp->m_settings.GetRecentDir_ImportDir();
-
-   ofn.lpstrInitialDir = szInitialDir.c_str();
-
-   const int ret = GetOpenFileName(&ofn);
-   if (ret == 0)
-      return false;
-
-   string filename(ofn.lpstrFile);
-   size_t index = filename.find_last_of(PATH_SEPARATOR_CHAR);
-   if (index != string::npos)
-   {
-      const string newInitDir(szFilename.substr(0, index));
-      g_pvp->m_settings.SetRecentDir_ImportDir(newInitDir, false);
-      index++;
-      m_d.m_meshFileName = filename.substr(index, filename.length() - index);
-   }
-
    m_mesh.Clear();
    m_d.m_use3DMesh = false;
-   SAFE_BUFFER_RELEASE(vertexBuffer);
+   m_meshBuffer = nullptr;
+   m_vertexBufferRegenerate = true;
 
-   bool flipTV = false;
-   bool convertToLeftHanded = false;
-   int ans = m_vpinball->MessageBox("Do you want to mirror the object?", "Convert coordinate system?", MB_YESNO | MB_DEFBUTTON2);
-   if (ans == IDYES)
+   if (importMaterial)
    {
-      convertToLeftHanded = true;
-   }
-   else
-   {
-      ans = m_vpinball->MessageBox("Do you want to convert texture coordinates?", "Confirm", MB_YESNO | MB_DEFBUTTON2);
-      if (ans == IDYES)
+      std::filesystem::path szMatName = std::filesystem::path(filename).replace_extension(".mtl");
+      Material *const mat = new Material();
+      if (ObjLoader::LoadMaterial(szMatName.string(), mat))
       {
-         flipTV = true;
+         GetPTable()->AddMaterial(mat);
+         m_d.m_szMaterial = mat->m_name;
       }
    }
-   if (m_mesh.LoadWavefrontObj(ofn.lpstrFile, flipTV, convertToLeftHanded))
+   if (!m_mesh.LoadWavefrontObj(filename, units))
+      return false;
+
+   // Meshes imported in meters are converted to VP units, so the primitive scale is reset to 1
+   if (units == MeshUnits::Meters)
    {
-      m_d.m_vPosition.x = m_mesh.middlePoint.x;
-      m_d.m_vPosition.y = m_mesh.middlePoint.y;
-      m_d.m_vPosition.z = m_mesh.middlePoint.z;
       m_d.m_vSize.x = 1.0f;
       m_d.m_vSize.y = 1.0f;
       m_d.m_vSize.z = 1.0f;
-      m_d.m_use3DMesh = true;
-      UpdateStatusBarInfo();
-      return true;
    }
-   return false;
-#endif
+
+   if (importAbsolutePosition || centerMesh)
+   {
+      for (size_t i = 0; i < m_mesh.m_vertices.size(); i++)
+      {
+         m_mesh.m_vertices[i].x -= m_mesh.middlePoint.x;
+         m_mesh.m_vertices[i].y -= m_mesh.middlePoint.y;
+         m_mesh.m_vertices[i].z -= m_mesh.middlePoint.z;
+      }
+      if (importAbsolutePosition)
+      {
+         m_d.m_vPosition.x = m_mesh.middlePoint.x;
+         m_d.m_vPosition.y = m_mesh.middlePoint.y;
+         m_d.m_vPosition.z = m_mesh.middlePoint.z;
+         m_d.m_vSize.x = 1.0f;
+         m_d.m_vSize.y = 1.0f;
+         m_d.m_vSize.z = 1.0f;
+      }
+   }
+   if (importAnimation)
+   {
+      if (m_mesh.LoadAnimation(filename.c_str(), units))
+      {
+         if (centerMesh)
+         {
+            for (size_t t = 0; t < m_mesh.m_animationFrames.size(); t++)
+            {
+               for (size_t i = 0; i < m_mesh.m_vertices.size(); i++)
+               {
+                  m_mesh.m_animationFrames[t].m_frameVerts[i].x -= m_mesh.middlePoint.x;
+                  m_mesh.m_animationFrames[t].m_frameVerts[i].y -= m_mesh.middlePoint.y;
+                  m_mesh.m_animationFrames[t].m_frameVerts[i].z -= m_mesh.middlePoint.z;
+               }
+            }
+         }
+      }
+   }
+   m_d.m_use3DMesh = true;
+   if (doForsyth)
+   {
+      unsigned int *const tmp = reorderForsyth(m_mesh.m_indices, (int)m_mesh.NumVertices());
+      if (tmp != nullptr)
+      {
+         memcpy(m_mesh.m_indices.data(), tmp, m_mesh.NumIndices() * sizeof(unsigned int));
+         delete[] tmp;
+      }
+   }
+   if (auto renderer = m_renderer)
+   {
+      RenderRelease();
+      RenderSetup(renderer);
+   }
+   if (g_pplayer && g_pplayer->m_physics)
+   {
+      m_physicMatrix.Scale(0.f, 0.f, 0.f); // Invalidate to force update
+      g_pplayer->m_physics->Update(this);
+   }
+   return true;
 }
 
 //////////////////////////////
@@ -2188,48 +1647,6 @@ STDMETHODIMP Primitive::put_NormalMap(BSTR newVal)
    m_d.m_szNormalMap = szImage;
 
    return S_OK;
-}
-
-STDMETHODIMP Primitive::get_MeshFileName(BSTR *pVal)
-{
-   *pVal = MakeWideBSTR(m_d.m_meshFileName);
-   return S_OK;
-}
-
-STDMETHODIMP Primitive::put_MeshFileName(BSTR newVal)
-{
-   m_d.m_meshFileName = MakeString(newVal);
-   return S_OK;
-}
-
-bool Primitive::LoadMeshDialog()
-{
-   STARTUNDO
-   const bool result = BrowseFor3DMeshFile();
-   m_vertexBufferRegenerate = true;
-   STOPUNDO
-
-   return result;
-}
-
-void Primitive::ExportMeshDialog()
-{
-#ifndef __STANDALONE__
-   const string& szInitialDir = g_pvp->m_settings.GetRecentDir_ImportDir();
-
-   vector<string> szFileName;
-   if (m_vpinball->SaveFileDialog(szInitialDir, szFileName, "Wavefront obj file (*.obj)\0*.obj\0", "obj", OFN_OVERWRITEPROMPT | OFN_HIDEREADONLY))
-   {
-      const size_t index = szFileName[0].find_last_of(PATH_SEPARATOR_CHAR);
-      if (index != string::npos)
-      {
-         const string newInitDir(szFileName[0].substr(0, index));
-         g_pvp->m_settings.SetRecentDir_ImportDir(newInitDir, false);
-      }
-
-      m_mesh.SaveWavefrontObj(szFileName[0], m_d.m_use3DMesh ? MakeString(m_wzName) : "Primitive"s);
-   }
-#endif
 }
 
 float Primitive::GetDepth(const Vertex3Ds& viewDir) const
@@ -2722,7 +2139,7 @@ STDMETHODIMP Primitive::get_Friction(float *pVal)
 
 STDMETHODIMP Primitive::put_Friction(float newVal)
 {
-   m_d.m_friction = clamp(newVal, 0.f, 1.f);
+   m_d.m_friction = saturate(newVal);
    return S_OK;
 }
 

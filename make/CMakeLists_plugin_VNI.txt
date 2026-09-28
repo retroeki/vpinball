@@ -1,10 +1,12 @@
 # plugin CMake file to be included in main project CMakelists
 
-# --- VNI (unencrypted PIN2DMD .pal/.vni) colorization plugin ---
-# Cloned from CMakeLists_plugin_Serum.txt; sources/links swapped to libvni.
+# --- VNI colorization plugin ---
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 99)
+
+set(BUILD_LIBS_DIR "${CMAKE_SOURCE_DIR}/third-party/build-libs/${PLATFORM}-${ARCH}")
+set(RUNTIME_LIBS_DIR "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PLATFORM}-${ARCH}")
 
 set(VNI_PLUGIN_SOURCES
    plugins/vni/common.cpp
@@ -20,50 +22,94 @@ if(BUILD_SHARED)
       plugins/vni
    )
 
-   if(PluginPlatform STREQUAL "windows")
-      set_target_properties(VNIPlugin PROPERTIES
-         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:DEBUG>:Debug>"
-      )
-      if (PluginArch STREQUAL "x64")
+   if(PLATFORM STREQUAL "windows" OR PLATFORM STREQUAL "windows-mingw")
+      if(MSVC)
          set_target_properties(VNIPlugin PROPERTIES
-            OUTPUT_NAME "plugin-vni64"
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
          )
-         target_link_directories(VNIPlugin PUBLIC ${CMAKE_SOURCE_DIR}/third-party/build-libs/windows-x64)
-         target_link_libraries(VNIPlugin vni64.lib)
-      else()
-         set_target_properties(VNIPlugin PROPERTIES
-            OUTPUT_NAME "plugin-vni"
+         set(OPT_COMMON
+            /Ob2
+            /O2
+            /Oi
+            /fp:fast
+            /fp:except-
+            /Ot
+            /GF
+            /GS-
+            /Gy
+            /GR
+            /Oy
+            /GT
+            /GL
+            /w44005
+            /Zc:__cplusplus
+            /std:c++20
+            $<$<NOT:$<STREQUAL:${ARCH},x64>>:/arch:SSE2>
          )
-         target_link_directories(VNIPlugin PUBLIC ${CMAKE_SOURCE_DIR}/third-party/build-libs/windows-x86)
-         target_link_libraries(VNIPlugin vni.lib)
+         target_compile_options(VNIPlugin PUBLIC
+            $<$<CONFIG:Release>:$<$<COMPILE_LANGUAGE:CXX>:${OPT_COMMON}>>
+            $<$<CONFIG:Release>:$<$<COMPILE_LANGUAGE:C>:${OPT_COMMON}>>
+         )
+         target_link_options(VNIPlugin PUBLIC
+            $<$<CONFIG:Release>:/INCREMENTAL:NO>
+            $<$<CONFIG:Release>:/OPT:REF>
+            $<$<CONFIG:Release>:/OPT:ICF>
+            $<$<CONFIG:Release>:/LTCG>
+         )
       endif()
+      target_link_directories(VNIPlugin PUBLIC ${BUILD_LIBS_DIR} ${RUNTIME_LIBS_DIR})
+      set_target_properties(VNIPlugin PROPERTIES
+         PREFIX ""
+         OUTPUT_NAME "$<IF:$<STREQUAL:${ARCH},x64>,plugin-vni64,plugin-vni>"
+      )
+      target_link_libraries(VNIPlugin $<IF:$<STREQUAL:${ARCH},x64>,vni64,vni>)
    else()
       set_target_properties(VNIPlugin PROPERTIES
          PREFIX ""
          OUTPUT_NAME "plugin-vni"
       )
-      if(PluginPlatform STREQUAL "macos")
+      if(PLATFORM STREQUAL "macos")
          set_target_properties(VNIPlugin PROPERTIES
             SUFFIX ".dylib"
          )
       endif()
       target_link_directories(VNIPlugin PUBLIC
-         ${CMAKE_SOURCE_DIR}/third-party/runtime-libs/${PluginPlatform}-${PluginArch}
+         ${RUNTIME_LIBS_DIR}
       )
       target_link_libraries(VNIPlugin PUBLIC vni)
    endif()
 
-   add_custom_command(TARGET VNIPlugin POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/plugins/vni/plugin.cfg" "${PLUGINS_DIR}/vni/plugin.cfg"
-      COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:VNIPlugin>" "${PLUGINS_DIR}/vni"
-      COMMAND "${CMAKE_COMMAND}" -E rm "$<TARGET_FILE:VNIPlugin>"
+   set_target_properties(VNIPlugin PROPERTIES
+      LIBRARY_OUTPUT_DIRECTORY "${PLUGINS_DIR}/vni"
    )
 
-   if(PluginPlatform STREQUAL "linux")
-      add_custom_command(TARGET VNIPlugin POST_BUILD
-         COMMAND cp -a "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/linux-${PluginArch}/libvni.so" "${PLUGINS_DIR}/vni/"
-         COMMAND cp -a "${CMAKE_SOURCE_DIR}/third-party/runtime-libs/linux-${PluginArch}/libvni.so.*" "${PLUGINS_DIR}/vni/"
-      )
+   add_custom_command(TARGET VNIPlugin POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/plugins/vni/plugin.cfg" "${PLUGINS_DIR}/vni/plugin.cfg"
+   )
+
+   if(POST_BUILD_COPY_EXT_LIBS)
+      if(PLATFORM STREQUAL "windows")
+         if (ARCH STREQUAL "x64")
+            add_custom_command(TARGET VNIPlugin POST_BUILD
+               COMMAND "${CMAKE_COMMAND}" -E copy "${RUNTIME_LIBS_DIR}/vni64.dll" "${PLUGINS_DIR}/vni/vni64.dll"
+            )
+         elseif (ARCH STREQUAL "x86")
+            add_custom_command(TARGET VNIPlugin POST_BUILD
+               COMMAND "${CMAKE_COMMAND}" -E copy "${RUNTIME_LIBS_DIR}/vni.dll" "${PLUGINS_DIR}/vni/vni.dll"
+            )
+         endif()
+      elseif(PLATFORM STREQUAL "windows-mingw")
+         add_custom_command(TARGET VNIPlugin POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy "${RUNTIME_LIBS_DIR}/vni64.dll" "${PLUGINS_DIR}/vni/vni64.dll"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${RUNTIME_LIBS_DIR}/libgcc_s_seh-1.dll" "${PLUGINS_DIR}/vni/libgcc_s_seh-1.dll"
+            COMMAND "${CMAKE_COMMAND}" -E copy "${RUNTIME_LIBS_DIR}/libstdc++-6.dll" "${PLUGINS_DIR}/vni/libstdc++-6.dll"
+         )
+      elseif(PLATFORM STREQUAL "linux")
+         add_custom_command(TARGET VNIPlugin POST_BUILD
+            COMMAND cp -a "${RUNTIME_LIBS_DIR}/libvni.so" "${PLUGINS_DIR}/vni/"
+            COMMAND cp -a "${RUNTIME_LIBS_DIR}/libvni.so.*" "${PLUGINS_DIR}/vni/"
+         )
+      endif()
    endif()
 endif()
 

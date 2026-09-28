@@ -4,56 +4,56 @@
 
 #include "PinTableMDI.h"
 
+#include "ui/win/WinEditor.h"
 
-PinTableMDI::PinTableMDI(VPinball *vpinball)
+#include "core/VPApp.h"
+#include "ui/win/dialogs/Win32ProgressBar.h"
+
+static CComObject<PinTable>* CreatePinTable()
 {
-    CComObject<PinTable>::CreateInstance(&m_table);
-    m_vpinball = vpinball;
+   CComObject<PinTable>* table;
+   CComObject<PinTable>::CreateInstance(&table);
+   return table; // Note that the ref count is zero so far
+}
 
-    m_table->AddRef();
-
-    m_table->SetMDITable(this);
-#ifndef __STANDALONE__
-    SetView(*m_table);
-
-    //m_menu.LoadMenu(IDR_APPMENU);
-    SetHandles(m_vpinball->GetMenu(), nullptr);
-#endif
+PinTableMDI::PinTableMDI(WinEditor* vpinball)
+   : m_tableWnd(std::make_unique<PinTableWnd>(vpinball, CreatePinTable()))
+   , m_vpxEditor(vpinball)
+{
+   m_tableWnd->SetMDITable(this);
+   SetView(*m_tableWnd);
+   //m_menu.LoadMenu(IDR_APPMENU);
+   SetHandles(m_vpxEditor->GetMenu(), nullptr);
 }
 
 PinTableMDI::~PinTableMDI()
 {
-    m_vpinball->CloseAllDialogs();
-
-    if (m_table != nullptr)
-    {
-#ifndef __STANDALONE__
-        if (m_table->m_searchSelectDlg.IsWindow())
-           m_table->m_searchSelectDlg.Destroy();
-#endif
-
-        m_table->FVerifySaveToClose();
-
-        RemoveFromVectorSingle(m_vpinball->m_vtable, (CComObject<PinTable>*)m_table);
-
-        m_table->Release();
-    }
+   m_vpxEditor->CloseAllDialogs();
+   m_tableWnd->FVerifySaveToClose();
+   RemoveFromVectorSingle(m_vpxEditor->m_vtable, m_tableWnd.get());
 }
 
 bool PinTableMDI::CanClose() const
 {
-    if (m_table != nullptr && m_table->FDirty() && !g_pvp->m_povEdit)
+    if (m_tableWnd->m_table != nullptr && m_tableWnd->m_table->FDirty())
     {
-        const string szText = LocalString(IDS_SAVE_CHANGES1).m_szbuffer /*"Do you want to save the changes you made to '"*/ + m_table->m_title + LocalString(IDS_SAVE_CHANGES2).m_szbuffer;
-#ifndef __STANDALONE__
+        const string szText = LocalString(IDS_SAVE_CHANGES1).m_szbuffer /*"Do you want to save the changes you made to '"*/ + m_tableWnd->m_table->m_title + LocalString(IDS_SAVE_CHANGES2).m_szbuffer;
         const int result = MessageBox(szText.c_str(), "Visual Pinball", MB_YESNOCANCEL | MB_DEFBUTTON3 | MB_ICONWARNING);
 
         if (result == IDCANCEL)
             return false;
 
-        if ((result == IDYES) && (m_table->TableSave() != S_OK))
-            MessageBox(LocalString(IDS_SAVEERROR).m_szbuffer, "Visual Pinball", MB_ICONERROR);
-#endif
+        Win32ProgressBar feedback(g_app->GetInstanceHandle(), m_vpxEditor->m_hwndStatusBar);
+        if (result == IDYES)
+        {
+           m_vpxEditor->SetActionCur(LocalString(IDS_SAVING).m_szbuffer);
+           m_vpxEditor->SetCursorCur(IDC_WAIT);
+           const bool failed = m_tableWnd->m_table->Save(feedback) != S_OK;
+           m_vpxEditor->SetActionCur(string());
+           m_vpxEditor->SetCursorCur(IDC_ARROW);
+           if (failed)
+              MessageBox(LocalString(IDS_SAVEERROR).m_szbuffer, "Visual Pinball", MB_ICONERROR);
+        }
     }
     return true;
 }
@@ -65,68 +65,52 @@ void PinTableMDI::PreCreate(CREATESTRUCT &cs)
     cs.cx = 400;
     cs.cy = 400;
     cs.style = WS_MAXIMIZE;
-    cs.hwndParent = m_vpinball->GetHwnd();
+    cs.hwndParent = m_vpxEditor->GetHwnd();
     cs.lpszClass = _T("PinTable");
-    cs.lpszName = _T(m_table->m_filename.c_str());
+    cs.lpszName = _T("");
 }
 
 int PinTableMDI::OnCreate(CREATESTRUCT &cs)
 {
-#ifndef __STANDALONE__
-    SetWindowText(m_table->m_title.c_str());
+    SetWindowText(m_tableWnd->m_table->m_title.c_str());
     SetIconLarge(IDI_TABLE);
     SetIconSmall(IDI_TABLE);
     return CMDIChild::OnCreate(cs);
-#else
-    return 0;
-#endif
 }
 
 void PinTableMDI::OnClose()
 {
-#ifndef __STANDALONE__
-   if (m_vpinball->IsClosing() || CanClose())
+   if (m_vpxEditor->IsClosing() || m_vpxEditor->IsUnloadingTable() || CanClose())
    {
-      if(g_pvp->GetNotesDocker() != nullptr)
+      if(m_vpxEditor->GetNotesDocker() != nullptr)
       {
-         g_pvp->GetNotesDocker()->UpdateText();
-         g_pvp->GetNotesDocker()->CleanText();
+         m_vpxEditor->GetNotesDocker()->UpdateText();
+         m_vpxEditor->GetNotesDocker()->CleanText();
       }
-      m_table->KillTimer(VPinball::TIMER_ID_AUTOSAVE);
+      m_tableWnd->KillTimer(WinEditor::TIMER_ID_AUTOSAVE);
       CMDIChild::OnClose();
    }
-#endif
 }
 
 LRESULT PinTableMDI::OnMDIActivate(UINT msg, WPARAM wparam, LPARAM lparam)
 {
-#ifndef __STANDALONE__
    //wparam holds HWND of the MDI frame that is about to be deactivated
    //lparam holds HWND of the MDI frame that is about to be activated
    if (GetHwnd() == (HWND)wparam)
    {
-      if (!m_table->m_filename.empty())
-      {
-         m_table->m_settings.SetIniPath(m_table->GetSettingsFileName());
-         m_table->m_settings.Save();
-      }
-      if (g_pvp->m_ptableActive == m_table)
-         g_pvp->m_ptableActive = nullptr;
+      if (m_vpxEditor->m_ptableActive == m_tableWnd->m_table)
+         m_vpxEditor->m_ptableActive = nullptr;
    }
-   if(GetHwnd()==(HWND)lparam)
+   if(GetHwnd() == (HWND)lparam)
    {
-      g_pvp->m_ptableActive = m_table;
-      if (g_pvp->GetLayersDocker() != nullptr)
+      m_vpxEditor->m_ptableActive = m_tableWnd->m_table;
+      if (m_vpxEditor->GetLayersDocker() != nullptr)
       {
-         g_pvp->GetLayersListDialog()->SetActiveTable(m_table);
-         g_pvp->SetPropSel(m_table->m_vmultisel);
+         m_vpxEditor->GetLayersListDialog()->SetActiveTable(m_tableWnd->m_table);
+         m_tableWnd->RefreshProperties();
       }
-      m_vpinball->m_currentTablePath = PathFromFilename(m_table->m_filename);
    }
    return CMDIChild::OnMDIActivate(msg, wparam, lparam);
-#else 
-   return 0L;
-#endif
 }
 
 BOOL PinTableMDI::OnEraseBkgnd(CDC& dc)

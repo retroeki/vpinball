@@ -134,7 +134,7 @@ typedef [uuid(C8D1C791-3B7E-49F7-8F9B-D3BF4ECFB975)]
                 Fast_NFAA = 4,
                 Standard_DLAA = 5,
                 Quality_SMAA = 6,
-                Standard_FAAA = 7,
+                Quality_FAAA = 7,
                 }
                 FXAASettings;
 
@@ -819,6 +819,7 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
                 [id(DISPID_GameEvents_Init)]  void Init();
                 [id(DISPID_GameEvents_KeyDown)]  void KeyDown( [in] long keycode);
                 [id(DISPID_GameEvents_KeyUp)]  void KeyUp( [in] long keycode);
+                [id(DISPID_GameEvents_SoundDone)]  void SoundDone( [in] BSTR sound);
                 [id(DISPID_GameEvents_MusicDone)]  void MusicDone();
                 [id(DISPID_GameEvents_Exit)]  void Exit();
                 [id(DISPID_GameEvents_Paused)]  void Paused();
@@ -940,31 +941,6 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
                 [id(DISPID_SurfaceEvents_Slingshot)]  void Slingshot();
                 [id(DISPID_TimerEvents_Timer)]  void Timer();
         }
-
-        [
-                object,
-                uuid(353B4F85-BABC-4FEB-B664-91CE3DB3C0FA),
-                dual,
-                helpstring("IControlPoint Interface"),
-                pointer_default(unique)
-        ]
-        interface IControlPoint : IDispatch
-        {
-                [propget, id(1), helpstring("property X")] HRESULT X([out, retval] float *pVal);
-                [propput, id(1), helpstring("property X")] HRESULT X([in] float newVal);
-                [propget, id(2), helpstring("property Y")] HRESULT Y([out, retval] float *pVal);
-                [propput, id(2), helpstring("property Y")] HRESULT Y([in] float newVal);
-                [propget, id(6), helpstring("property Z")] HRESULT Z([out, retval] float *pVal);
-                [propput, id(6), helpstring("property Z")] HRESULT Z([in] float newVal);
-                [propget, id(377), helpstring("property calcHeight")] HRESULT CalcHeight([out, retval] float *pVal);
-                [propget, id(3), helpstring("property Smooth")] HRESULT Smooth([out, retval] VARIANT_BOOL *pVal);
-                [propput, id(3), helpstring("property Smooth")] HRESULT Smooth([in] VARIANT_BOOL newVal);
-                [propget, id(4), helpstring("property IsAutoTextureCoordinate")] HRESULT IsAutoTextureCoordinate([out, retval] VARIANT_BOOL *pVal);
-                [propput, id(4), helpstring("property IsAutoTextureCoordinate")] HRESULT IsAutoTextureCoordinate([in] VARIANT_BOOL newVal);
-                [propget, id(5), helpstring("property TextureCoordinateU")] HRESULT TextureCoordinateU([out, retval] float *pVal);
-                [propput, id(5), helpstring("property TextureCoordinateU")] HRESULT TextureCoordinateU([in] float newVal);
-        };
-
 
         //////////////////////////////
         ////// Flipper
@@ -1636,6 +1612,15 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
                 [propput, id(DISPID_Surface), helpstring("property Surface")] HRESULT Surface([in] BSTR newVal);
         };
 
+        [
+        uuid(349B04C7-BF64-48D2-9EE8-177793E801CD),
+        ]
+        dispinterface IDecalEvents
+        {
+        properties:
+        methods:
+        }
+
         //////////////////////////////
         ////// Primitive
         ///////////////////////////////
@@ -2210,6 +2195,9 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
                 [propput, id(458), helpstring("property Visible")] HRESULT Visible([in] VARIANT_BOOL newVal);
                 [propget, id(556), helpstring("property AddBlend")] HRESULT AddBlend([out, retval] VARIANT_BOOL *pVal);
                 [propput, id(556), helpstring("property AddBlend")] HRESULT AddBlend([in] VARIANT_BOOL newVal);
+                // Superset of AddBlend (kept for backward compatibility): 0 = off, 1 = additive, 2 = additive; but absorbing the background instead of amplifying it
+                [propget, id(2148), helpstring("property AddBlendMode")] HRESULT AddBlendMode([out, retval] int *pVal);
+                [propput, id(2148), helpstring("property AddBlendMode")] HRESULT AddBlendMode([in] int newVal);
 
                 [propget, id(557), helpstring("property DMD")] HRESULT DMD([out, retval] VARIANT_BOOL *pVal);
                 [propput, id(557), helpstring("property DMD")] HRESULT DMD([in] VARIANT_BOOL newVal);
@@ -2595,15 +2583,6 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
         };
 
         [
-                uuid(83296774-CAA2-4A0D-B330-98DA6495DFE0),
-                helpstring("DragPoint Class")
-        ]
-        coclass DragPoint
-        {
-                [default] interface IControlPoint;
-        };
-
-        [
                 uuid(68AB2BBC-8209-40F3-B6F4-54F8ADAA0DC7),
                 helpstring("Flipper Class")
         ]
@@ -2651,6 +2630,16 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
         {
                 [default] interface IBumper;
                 [default, source]  dispinterface IBumperEvents;
+        };
+
+        [
+                uuid(9CEFB29F-BDA8-4DBC-BFA2-F8703CF4A18A),
+                helpstring("Decal Class")
+        ]
+        coclass Decal
+        {
+                [default] interface IDecal;
+                [default, source]  dispinterface IDecalEvents;
         };
 
         [
@@ -2792,6 +2781,7 @@ typedef [uuid(D09B9F0E-C1AE-40dd-84D6-B1F74053AA8E)]
                 [default] interface IPrimitive;
                 [default, source]  dispinterface IPrimitiveEvents;
         };
+		
         [
                 uuid(7770B875-0F54-4187-81E3-389742D97BAF),
                 helpstring("HitTarget Class")

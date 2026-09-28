@@ -1,11 +1,12 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "PluginSettingsPage.h"
 
-#include "plugins/MsgPluginManager.h"
+#include "core/player.h"
 #include "core/VPXPluginAPIImpl.h"
+#include "plugins/MsgPluginManager.h"
+#include "ui/live/LiveUI.h"
 
 using namespace MsgPI;
 
@@ -17,11 +18,9 @@ PluginHomePage::PluginHomePage()
 {
 }
 
-void PluginHomePage::Open(bool isBackwardAnimation)
+void PluginHomePage::BuildPage()
 {
-   InGameUIPage::Open(isBackwardAnimation);
-   ClearItems();
-   const MsgPluginManager& manager = MsgPluginManager::GetInstance();
+   const MsgPluginManager& manager = m_player->m_pluginManager;
    for (const auto& plugin : manager.GetPlugins())
    {
       const string& id = plugin->m_id;
@@ -34,63 +33,62 @@ void PluginHomePage::Open(bool isBackwardAnimation)
 
 
 PluginSettingsPage::PluginSettingsPage(const string& pluginId)
-   : InGameUIPage(MsgPluginManager::GetInstance().GetPlugin(pluginId)->m_name,
-        MsgPluginManager::GetInstance().GetPlugin(pluginId)->m_description + "\nBy " + MsgPluginManager::GetInstance().GetPlugin(pluginId)->m_author + "\nVersion "
-           + MsgPluginManager::GetInstance().GetPlugin(pluginId)->m_version,
+   : InGameUIPage(g_pplayer->m_pluginManager.GetPlugin(pluginId)->m_name,
+        std::format("{}\nBy {}\nVersion {}", g_pplayer->m_pluginManager.GetPlugin(pluginId)->m_description, g_pplayer->m_pluginManager.GetPlugin(pluginId)->m_author,
+           g_pplayer->m_pluginManager.GetPlugin(pluginId)->m_version),
         SaveMode::Both)
    , m_pluginId(pluginId)
 {
 }
 
-void PluginSettingsPage::Open(bool isBackwardAnimation)
-{
-   InGameUIPage::Open(isBackwardAnimation);
-   BuildPage();
-}
-
 void PluginSettingsPage::BuildPage()
 {
-   ClearItems();
-
    #ifdef _WIN32
    AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Warning: Plugins are a beta experimental feature, not yet considered stable"s));
    #endif
 
    const auto enablePropId = Settings::GetRegistry().GetPropertyId("Plugin." + m_pluginId, "Enable"s).value();
-   const MsgPluginManager& manager = MsgPluginManager::GetInstance();
-   auto plugin = manager.GetPlugin(m_pluginId); 
+   const MsgPluginManager& manager = m_player->m_pluginManager;
+   auto plugin = manager.GetPlugin(m_pluginId);
    if (plugin == nullptr)
    {
       AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Info, "Internal error..."s));
       return;
    }
 
-   // Consider the current state of the plugin as the default to avoid always returning to off state
-   const bool isEnabled = plugin->IsLoaded();
-   Settings::GetRegistry().Register(Settings::GetRegistry().GetBoolProperty(enablePropId)->WithDefault(isEnabled));
    AddItem(std::make_unique<InGameUIItem>( //
       enablePropId, //
       [this]()
       {
-         const MsgPluginManager& manager = MsgPluginManager::GetInstance();
+         const MsgPluginManager& manager = m_player->m_pluginManager;
          auto plugin = manager.GetPlugin(m_pluginId);
          return plugin ? plugin->IsLoaded() : false;
-      }, //
+      }, // Live
       [this](bool v)
       {
-         MsgPluginManager& manager = MsgPluginManager::GetInstance();
+         MsgPluginManager& manager = m_player->m_pluginManager;
          auto& plugin = *manager.GetPlugin(m_pluginId);
          if (v && !plugin.IsLoaded())
             manager.LoadPlugin(plugin);
          else if (!v && plugin.IsLoaded())
+         {
+            if (m_player->m_scriptInterpreter && m_player->m_pluginAPI.IsScriptContributor(plugin.m_endpointId))
+            {
+               m_player->m_scriptInterpreter->Stop(m_player->m_ptable);
+               ULONG refCount = m_player->m_scriptInterpreter->Release();
+               m_player->m_scriptInterpreter = nullptr;
+               assert(refCount == 0);
+               m_player->m_liveUI->PushNotification("The plugin you have disabled contributed to the script engine.\nTherefore, the script was stopped to prevent issues.", 5000);
+            }
             manager.UnloadPlugin(plugin);
-         BuildPage();
-      }));
+         }
+         RequestRebuild();
+      })).m_excludeFromDefault = true;
 
-   if (!isEnabled)
+   if (!plugin->IsLoaded())
       return;
 
-   for (const auto& option : VPXPluginAPIImpl::GetInstance().GetPluginSettings())
+   for (const auto& option : g_pplayer->m_pluginAPI.GetPluginSettings())
    {
       if (option.pluginId != m_pluginId)
          continue;
@@ -123,10 +121,10 @@ void PluginSettingsPage::BuildPage()
             [option](int, int v) { option.setting->intDef.Set(v); }));
          break;
       case VPX::Properties::PropertyDef::Type::String:
-      {
-         string path = option.setting->stringDef.Get();
-         AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Info, option.setting->name + ": "s + option.setting->stringDef.Get()));
-      }
+         AddItem(std::make_unique<InGameUIItem>(
+            option.propId, //
+            [option]() { return option.setting->stringDef.Get(); }, //
+            [option](const string&, const string& v) { option.setting->stringDef.Set(v.c_str()); }));
          break;
       default: assert(false); break;
       }

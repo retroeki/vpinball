@@ -3,15 +3,17 @@
 #pragma once
 
 #include "gpuprofiler.h"
+#include "math/matrix.h"
 #include "math/ModelViewProj.h"
+#include "renderer/Renderable.h"
 #include "renderer/RenderDevice.h"
 #include "renderer/Texture.h"
-#include "Backglass.h"
 #include "plugins/ControllerPlugin.h"
 #include "parts/PartGroup.h"
+#include "renderer/RenderProbe.h"
 
 class Renderable;
-
+class PinTable;
 class Renderer final
 {
 public:
@@ -23,11 +25,18 @@ public:
    bool IsStereo() const { return m_pOffscreenBackBufferTexture1->m_type == SurfaceType::RT_STEREO; }
    colorFormat GetRenderFormat() const { return m_pOffscreenBackBufferTexture1->GetColorFormat(); }
 
-   void InitLayout(const float xpixoff = 0.f, const float ypixoff = 0.f);
-   ModelViewProj& GetMVP() { return *m_mvp; }
-   const ModelViewProj& GetMVP() const { return *m_mvp; }
+   int GetDisplayWidth() const; // Playfield display width, taking in consideration stretching applied by some stereo modes
+   int GetDisplayHeight() const; // Playfield display width, taking in consideration stretching applied by some stereo modes
+   float GetDisplayAspectRatio() const;
+   void InitLayout(const float xpixoff = 0.f, const float ypixoff = 0.f); // Reset both the base and the current MVP to the default view setup, with an optional pixel offset for AA
+   void SetFlip(ModelViewProj::FlipMode flipMode); // Flip the rendered image horizontally and/or vertically (e.g. for rear projection setups), applied to base MVP
+   void SetViewProj(const Matrix3D& view, const Matrix3D& proj); // Override the MVP, applied to the base MVP
+   void SetReflection(const Matrix3D& reflectionMatrix); // Set a reflection matrix to be applied to the view matrix, used for mirror reflections, applied to current MVP, NOT the base MVP
+   void ApplyViewJitter(const float xpixoff, const float ypixoff); // Apply a sub pixel offset to the projection of the current MVP (same offset as InitLayout but without resetting view and base MVP, allowing to jitter a reflected MVP)
+   const ModelViewProj& GetMVP() const { return m_mvp; }
    Vertex3Ds Unproject(const int width, const int height, const Vertex3Ds& point) const;
    Vertex3Ds Get3DPointFrom2D(const int width, const int height, const Vertex2D& p, float z);
+   Vertex2D BackdropToClip(const Vertex2D& pos) const; // Maps a point in desktop backdrop coordinates (0..EDITOR_BG_WIDTH, 0..EDITOR_BG_HEIGHT) to clip space, going through the editor's orthographic camera when editing the backdrop in the live editor, or to the full render target otherwise
 
    void MarkShaderDirty() { m_shaderDirty = true; }
    void UpdateBasicShaderMatrix(const Matrix3D& objectTrafo = Matrix3D::MatrixIdentity());
@@ -35,8 +44,9 @@ public:
    void UpdateDesktopBackdropShaderMatrix(bool basic, bool light, bool flasherDMD);
    void UpdateStereoShaderState();
 
-   void DisableStaticPrePass(const bool disable) { bool wasUsingStaticPrepass = IsUsingStaticPrepass(); m_disableStaticPrepass += disable ? 1 : -1; m_isStaticPrepassDirty |= wasUsingStaticPrepass != IsUsingStaticPrepass(); }
-   bool IsUsingStaticPrepass() const { return (m_disableStaticPrepass <= 0) && (m_stereo3D != STEREO_VR); }
+   void DisableStaticPrePass(const bool disable);
+   bool IsUsingStaticPrepass() const;
+   bool IsTemporalAccumulationInProgress() const; // True while the static parts prerender is still accumulating samples (main renderer or any render probe)
    unsigned int GetNPrerenderTris() const { return m_statsDrawnStaticTriangles; }
 
    enum class ShadeMode
@@ -66,29 +76,39 @@ public:
    };
 
 private:
-   void SetupDisplayRenderer(const bool isBackdrop, Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex,
-      const vec4& glassArea, const vec3& glassAmbient);
+   void SetupDisplayRenderer(const bool isBackdrop, const Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness,
+      ITexManCacheable* const glassTex, const vec4& glassArea, const vec3& glassAmbient);
 
    ShadeMode m_shadeMode = ShadeMode::Default;
 
 public:
-   void SetupSegmentRenderer(int profile, const bool isBackdrop, const vec3& color, const float brightness, const SegmentFamily family, const SegElementType type, const float* segs, const ColorSpace colorSpace, Vertex3D_NoTex2* vertices,
-      const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex, const vec4& glassArea, const vec3& glassAmbient);
-   void SetupDMDRender(int profile, const bool isBackdrop, const vec3& color, const float brightness, const std::shared_ptr<BaseTexture>& dmd, const float alpha, const ColorSpace colorSpace, Vertex3D_NoTex2 *vertices,
-      const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex, const vec4& glassArea, const vec3& glassAmbient);
-   void SetupCRTRender(int profile, const bool isBackdrop, const vec3& color, const float brightness, const std::shared_ptr<BaseTexture>& crt, const float alpha, const ColorSpace colorSpace,
-      Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex, const vec4& glassArea, const vec3& glassAmbient);
+   // Rotation of an ancillary window content, in clockwise degrees (0, 90, 180 or 270). The playfield rotates through its view setup instead, so this is only defined for the backglass / scoreview / topper windows
+   int GetAncillaryWindowRotation(VPXWindowId window) const;
+   void SetAncillaryWindowRotation(VPXWindowId window, int clockwiseDegrees);
+
+   void SetupSegmentRenderer(int profile, const bool isBackdrop, const vec3& color, const float brightness, const SegmentFamily family, const SegElementType type, const float* segs,
+      const ColorSpace colorSpace, const Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex,
+      const vec4& glassArea, const vec3& glassAmbient);
+   // 'alpha' is plain opacity, only applied by the legacy DMD renderer. 'addBlendModulate' is the signed 'modulate vs
+   // add' factor the other ones have to encode their output with, 0 asking for a plain opaque one instead, and the
+   // sign selecting whether the background is amplified or absorbed (see fs_display.sc). The caller is the one setting
+   // up the blend state matching it, see Flasher::Render
+   void SetupDMDRender(int profile, const bool isBackdrop, const vec3& color, const float brightness, const std::shared_ptr<BaseTexture>& dmd, const float alpha, const float addBlendModulate,
+      const ColorSpace colorSpace, const Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex,
+      const vec4& glassArea, const vec3& glassAmbient);
+   void SetupCRTRender(int profile, const bool isBackdrop, const vec3& color, const float brightness, const std::shared_ptr<BaseTexture>& crt, const float alpha, const float addBlendModulate,
+      const ColorSpace colorSpace, const Vertex3D_NoTex2* vertices, const vec4& emitterPad, const vec3& glassTint, const float glassRougness, ITexManCacheable* const glassTex,
+      const vec4& glassArea, const vec3& glassAmbient);
    void DrawStatics();
    void DrawDynamics(bool onlyBalls);
    void DrawSprite(const float posx, const float posy, const float width, const float height, const COLORREF color, const std::shared_ptr<const Sampler>& tex, const float intensity, const bool backdrop = false);
-   void DrawWireframe(IEditable* renderable, const vec4& fillColor, const vec4& edgeColor, bool withDepthMask);
+   void DrawWireframe(IEditable* const renderable, const vec4& fillColor, const vec4& edgeColor, bool withDepthMask);
 
-   void ReinitRenderable(Renderable* part) { m_renderableToInit.push_back(part); }
+   void ReinitRenderable(IRenderable* part) { if (part) m_renderableToInit.push_back(part); }
 
-   RenderProbe::ReflectionMode GetMaxReflectionMode() const {
-      // For dynamic mode, static reflections are not available so adapt the mode
-      return !IsUsingStaticPrepass() && m_maxReflectionMode >= RenderProbe::REFL_STATIC ? RenderProbe::REFL_DYNAMIC : m_maxReflectionMode;
-   }
+   void SetTable(PinTable* table); // Rebind to a new table (currently limited to base table / live copy swaps)
+
+   RenderProbe::ReflectionMode GetMaxReflectionMode() const;
    // User-selected cap, without the dynamic-prepass adaptation applied by GetMaxReflectionMode
    RenderProbe::ReflectionMode GetUserReflectionMode() const { return m_maxReflectionMode; }
    void SetMaxReflectionMode(RenderProbe::ReflectionMode mode)
@@ -105,25 +125,12 @@ public:
    // frame cost at most a single re-bake.
    void InvalidateStaticPrepass() { m_isStaticPrepassDirty = true; }
    bool m_frameStaticPrepassRebuilt = false; // diagnostic: did the static prepass actually re-render all static parts this frame
-   int GetAOMode() const // 0=Off, 1=Static, 2=Dynamic
-   {
-      // We must evaluate this dynamically since AO scale and enabled/disable can be changed from script
-      if (m_disableAO || !m_table->m_enableAO || !m_renderDevice->DepthBufferReadBackAvailable() || m_table->m_AOScale == 0.f)
-         return 0;
-      // The existing implementation suffers from high temporal artefacts that make it unsuitable for dynamic camera situations
-      if (m_stereo3D == STEREO_VR)
-         return 0;
-      if (m_dynamicAO)
-         return 2;
-      return IsUsingStaticPrepass() ? 1 : 0; // If AO is static prepass only, and we are running without it, disable AO
-   }
+   int GetAOMode() const; // 0=Off, 1=Static, 2=Dynamic
 
    bool UseAnisoFiltering() const;
    void SetAnisoFiltering(bool enable);
 
    std::shared_ptr<Sampler> GetBallEnvironment() const { return m_ballEnvSampler; }
-
-   BackGlass* m_backGlass = nullptr;
 
    class SceneLighting
    {
@@ -140,15 +147,17 @@ public:
       void SetLatitude(float latitude) { if (m_latitude == latitude) return; m_latitude = latitude; if (m_mode == Mode::DayNight) Update(); };
       float GetLongitude() const { return m_longitude; }
       void SetLongitude(float longitude) { if (m_longitude == longitude) return; m_longitude = longitude; if (m_mode == Mode::DayNight) Update(); };
-      
+
       float GetGlobalEmissionScale() const { return m_emissionScale; }
-      
+
+      void SetTable(PinTable* table) { m_table = table; Update(); } // Rebind to another table of the same base/live copy pair
+
    private:
       void Update();
-      
+
       float m_emissionScale = 0.f;
 
-      PinTable* const m_table;
+      PinTable* m_table;
       Mode m_mode = Mode::Table;
       float m_userLightLevel = 1.f;
       float m_latitude = 0.f;
@@ -186,8 +195,8 @@ public:
    enum RenderMask : unsigned int
    {
       DEFAULT = 0,                // No flag, just render everything
-      STATIC_ONLY = 1 << 0,       // Disable non static part rendering (for static prerendering)
-      DYNAMIC_ONLY = 1 << 1,      // Disable static part rendering
+      STATIC_ONLY = 1 << 0,       // Static part prerendering
+      DYNAMIC_ONLY = 1 << 1,      // Dynamic part rendering (after a static part prerendering)
       LIGHT_BUFFER = 1 << 2,      // Transmitted light rendering
       REFLECTION_PASS = 1 << 3,   // Reflection pass, only render reflected elements
       DISABLE_LIGHTMAPS = 1 << 4, // Disable lightmaps, useful for reflection probe parallel to lightmap ot avoid doubling them
@@ -231,10 +240,14 @@ public:
 
    unsigned int GetPlayerModeVisibilityMask() const { return m_visibilityMask; }
 
+   VPXRenderContext2D& GetAncillaryRenderContext(
+      VPXWindowId window, float width, float height, bool is2D, bool isOutputLinear, float depthbias, const Matrix3D& displayTransform = Matrix3D::MatrixIdentity());
+
 private:
-   void RenderItem(IEditable* renderable, bool isNoBackdrop);
-   void RenderStaticPrepass();
-   void RenderDynamics();
+   void SetSpaceReference(PartGroupData::SpaceReference spaceReference, bool force);
+   void RenderItem(IEditable* const renderable, bool isNoBackdrop);
+   void RenderStatics(); // Render background, then static parts if IsUsingStaticPrepass
+   void RenderDynamics(); // Render static parts if not IsUsingStaticPrepass, then render dynamic parts
    void DrawBackground();
    void DrawBulbLightBuffer();
    bool IsBloomEnabled() const;
@@ -248,17 +261,22 @@ private:
    std::shared_ptr<BaseTexture> EnvmapPrecalc(const std::shared_ptr<const BaseTexture>& envTex, const unsigned int rad_env_xres, const unsigned int rad_env_yres);
 
    // Postprocess passes
-   void UpdateAmbientOcclusion(RenderTarget* renderedRT);
+   void UpdateAmbientOcclusion(RenderTarget* renderedRT, unsigned int jitterIndex);
    void UpdateBloom(RenderTarget* renderedRT);
+   void SetupTonemapping(RenderTarget* renderedRT, RenderTarget* tonemapRT, bool isFullTonemap);
+   RenderTarget* ApplyTonemapping(RenderTarget* renderedRT, RenderTarget* tonemapRT);
    RenderTarget* ApplyAdditiveScreenSpaceReflection(RenderTarget* renderedRT);
-   ShaderTechniques ApplyTonemapping(RenderTarget* renderedRT, RenderTarget* tonemapRT);
-   RenderTarget* ApplyBallMotionBlur(RenderTarget* beforeTonemapRT, RenderTarget* afterTonemapRT, ShaderTechniques tonemapTechnique);
+   RenderTarget* ApplyBallMotionBlur(RenderTarget* beforeTonemapRT, RenderTarget* afterTonemapRT);
    RenderTarget* ApplyPostProcessedAntialiasing(RenderTarget* renderedRT, RenderTarget* outputBackBuffer);
    RenderTarget* ApplySharpening(RenderTarget* renderedRT, RenderTarget* outputBackBuffer);
    RenderTarget* ApplyUpscaling(RenderTarget* renderedRT, RenderTarget* outputBackBuffer);
    RenderTarget* ApplyStereo(RenderTarget* renderedRT, RenderTarget* outputBackBuffer);
 
    // Ancillary window rendering
+
+   // Normalized [x1,y1,x2,y2] of each embedded ancillary window composited into the linear render
+   // buffer this frame, which ApplyTonemapping regrades without the table's color grade
+   vector<vec4> m_embeddedRegions;
    static void DrawImage(VPXRenderContext2D* ctx, VPXTexture texture, const float tintR, const float tintG, const float tintB, const float alpha, const float texX, const float texY,
       const float texW, const float texH, const float pivotX, const float pivotY, const float rotation, const float srcX, const float srcY, const float srcW, const float srcH);
    static void DrawMatrixDisplay(VPXRenderContext2D* ctx, VPXDisplayRenderStyle style, VPXTexture glassTex, const float glassTintR, const float glassTintG, const float glassTintB,
@@ -270,11 +288,20 @@ private:
       const float glassAmbientG, const float glassAmbientB, SegElementType type, const float* state, const float dispTintR, const float dispTintG, const float dispTintB,
       const float brightness, const float alpha, const float dispPadL, const float dispPadT, const float dispPadR, const float dispPadB, const float srcX, const float srcY, const float srcW,
       const float srcH);
-   RenderTarget* SetupAncillaryRenderTarget(VPXWindowId window, VPX::RenderOutput& output, RenderTarget* embedRT, int& outputX, int& outputY, int& outputW, int& outputH, bool& isOutputLinear);
-   void ClearEmbeddedAncillaryWindow(VPXWindowId window, VPX::RenderOutput& output, RenderTarget* embedRT);
-   void RenderAncillaryWindow(VPXWindowId window, VPX::RenderOutput& output, RenderTarget* embedRT, const vector<AncillaryRendererDef>& ancillaryWndRenderers);
+   RenderTarget* SetupAncillaryRenderTarget(VPXWindowId window, const VPX::RenderOutput& output, RenderTarget* embedRT, int& outputX, int& outputY, int& outputW, int& outputH, bool& isOutputLinear);
+   void ClearEmbeddedAncillaryWindow(VPXWindowId window, const VPX::RenderOutput& output, RenderTarget* embedRT);
+   void DrawEmbeddedQuad(RenderTarget* outputRT, int x, int y, int w, int h, float r, float g, float b);
+   void RenderAncillaryWindow(VPXWindowId window, const VPX::RenderOutput& output, RenderTarget* embedRT, const vector<AncillaryRendererDef>& ancillaryWndRenderers);
    std::unique_ptr<RenderTarget> m_ancillaryWndHdrRT[VPXWindowId::VPXWINDOW_Topper + 1];
-
+   bool m_ancillaryWndRendered[VPXWindowId::VPXWINDOW_Topper + 1] = {}; // Whether a renderer claimed the window on the last frame
+   int m_ancillaryWndRotation[VPXWindowId::VPXWINDOW_Topper + 1] = {}; // Live rotation of the window content, in clockwise degrees
+   struct AncillaryRenderSetup
+   {
+      bool isOutputLinear;
+      float depthbias;
+      Matrix3D displayTransform;
+   } m_ancillaryRenderSetup;
+   VPXRenderContext2D m_ancillaryRenderContext;
 
    bool m_shaderDirty = true;
    void SetupShaders();
@@ -315,22 +342,24 @@ private:
    RenderTarget* m_pOffscreenVRLeft = nullptr;
    RenderTarget* m_pOffscreenVRRight = nullptr;
 
-   PinTable* const m_table;
+   PinTable* m_table;
 
-   ModelViewProj* m_mvp = nullptr; // Store the active Model / View / Projection
-   Matrix3D m_playfieldView; // Store the base playfield view matrix computed at beginning of frame render
+   ModelViewProj m_mvp; // Active Model / View / Projection (includes visual nudge)
    PartGroupData::SpaceReference m_mvpSpaceReference = PartGroupData::SpaceReference::SR_PLAYFIELD;
+   ModelViewProj m_initialMVP; // Base playfield MVP in desktop mode (unused in VR)
+   Matrix3D m_playfieldView[2]; // Base playfield view matrices of m_initialMVP from which all views are derived in desktop mode (unused in VR)
 
    bool m_isStaticPrepassDirty = true;
    int m_disableStaticPrepass = 0;
    RenderTarget* m_staticPrepassRT = nullptr;
+   int m_staticPrepassAccumCount = 0; // Number of samples accumulated so far by the temporal static prerendering
    unsigned int m_statsDrawnStaticTriangles = 0;
    RenderProbe::ReflectionMode m_maxReflectionMode;
    
    bool m_noBackdrop = false;
    unsigned int m_visibilityMask = 0xFFFF;
 
-   vector<Renderable*> m_renderableToInit;
+   vector<IRenderable*> m_renderableToInit;
 
    bool m_dynamicAO;
    bool m_disableAO;
@@ -344,27 +373,38 @@ private:
 public:
    bool m_vrApplyColorKey = false;
    bool m_vrPreviewShrink = false;
-   vec4 m_vrColorKey = vec4(0.f, 0.f, 0.f, 0.f);
 
 private:
-   Vertex2D m_ScreenOffset = Vertex2D(0.f, 0.f); // for screen shake effect during nudge
+   void ApplyTableSettings(); // (Re)load the cached table settings (called from ctor and SetTable)
+
+   float m_visualNudgeStrength; // whether to shake the table/screen during nudges and how much
+   Vertex2D m_screenOffset = Vertex2D(0.f, 0.f); // for screen shake effect during nudge
 
    Texture* m_tonemapLUT = nullptr;
 
-   #if defined(ENABLE_DX9) || defined(__OPENGLES__) || defined(__APPLE__)
+   #if defined(ENABLE_DX9) || defined(__OPENGLES__) || defined(__APPLE__) || (defined(__ANDROID__) && defined(ENABLE_XR))
    std::shared_ptr<BaseTexture> m_envRadianceTexture = nullptr;
    #else
    RenderTarget* m_envRadianceTexture = nullptr;
    #endif
 
    // Segment display rendering
-   std::unique_ptr<Texture> m_segDisplaySDF[4][9];
+   std::unique_ptr<Texture> m_segDisplaySDF[5][9]; // One per SegmentFamily and segment layout
 public:
    vec4 m_segColor[8]; // Base seg color and brightness
    vec4 m_segUnlitColor[8]; // unlit color and back glow
 
    // DMD rendering
    bool m_dmdUseLegacyRenderer[7];
+   // The legacy DMD renderer is the only one available outside of BGFX, whatever the profile setting says
+   bool IsLegacyDMDRenderer(const int profile) const
+   {
+      #if defined(ENABLE_BGFX)
+         return m_dmdUseLegacyRenderer[profile];
+      #else
+         return true;
+      #endif
+   }
    vec4 m_dmdDotColor[7]; // Base dot color and brightness
    vec4 m_dmdDotProperties[7]; // size, sharpness, rounding, back glow
    vec4 m_dmdUnlitDotColor[7]; // unlit color

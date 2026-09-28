@@ -4,6 +4,8 @@
 
 #include "unordered_dense.h"
 
+#include "parts/pinbinary.h"
+
 #define MIN_TEXTURE_SIZE 8u
 
 class ITexManCacheable
@@ -42,7 +44,10 @@ public:
    ~BaseTexture() override;
 
    static std::shared_ptr<BaseTexture> Create(const unsigned int w, const unsigned int h, const Format format) noexcept;
-   static std::shared_ptr<BaseTexture> CreateFromFile(const string &filename, unsigned int maxTexDimension = 0, bool resizeOnLowMem = false) noexcept;
+#if defined(ENABLE_BGFX)
+   static std::shared_ptr<BaseTexture> CreateCompressedOnly(std::shared_ptr<const struct CompressedTexture> compressed, const Format format, const bool isOpaque) noexcept;
+#endif
+   static std::shared_ptr<BaseTexture> CreateFromFile(const std::filesystem::path &filename, unsigned int maxTexDimension = 0, bool resizeOnLowMem = false) noexcept;
    static std::shared_ptr<BaseTexture> CreateFromData(const void *data, const size_t size, const bool isImageData = true, unsigned int maxTexDimension = 0, bool resizeOnLowMem = false) noexcept;
    static std::shared_ptr<BaseTexture> CreateFromHBitmap(const HBITMAP hbm, unsigned int maxTexDimension, bool with_alpha = true) noexcept;
    static void Update(std::shared_ptr<BaseTexture>& texture, const unsigned int w, const unsigned int h, const Format format, const void *image); // Update eventually recreating the texture
@@ -66,22 +71,16 @@ public:
          default:        assert(false); return format;
       }
    }
-   static string GetFormatString(const Format format)
+   static const string& GetFormatString(const Format format)
    {
-      switch (format)
+      static const std::array<string, 11> FormatNames{ "BW"s, "BW FP32"s, "RGB"s, "RGBA"s, "sRGB"s, "sRGBA"s, "sRGB 565"s, "RGB FP16"s, "RGBA FP16"s, "RGB FP32"s, "RGBA FP32"s };
+      if (format >= BW && format <= RGBA_FP32)
+         return FormatNames[format];
+      else
       {
-      case BW: return "BW"s;
-      case BW_FP32: return "BW FP32"s;
-      case RGB: return "RGB"s;
-      case RGBA: return "RGBA"s;
-      case SRGB: return "sRGB"s;
-      case SRGBA: return "sRGBA"s;
-      case SRGB565: return "sRGB 565"s;
-      case RGB_FP16: return "RGB FP16"s;
-      case RGBA_FP16: return "RGBA FP16"s;
-      case RGB_FP32: return "RGB FP32"s;
-      case RGBA_FP32: return "RGBA FP32"s;
-      default: assert(false); return "Invalid"s;
+         assert(false);
+         static const string invalid = "Invalid"s;
+         return invalid;
       }
    }
 
@@ -91,11 +90,11 @@ public:
    const string& GetName() const override { return m_name; }
 
    void FlipY();
-   bool Save(const string& filepath) const;
+   bool Save(const std::filesystem::path& filepath) const;
 
    unsigned int width() const  { return m_width; }
    unsigned int height() const { return m_height; }
-   unsigned int pitch() const; // pitch in bytes
+   unsigned int pitch() const; // pitch in bytes = m_width * bytes_per_pixel, no padding/alignment
    void* data()                { return m_data; }
    const void* datac() const   { return m_data; }
    bool HasAlpha() const       { return m_format == RGBA || m_format == SRGBA || m_format == RGBA_FP16 || m_format == RGBA_FP32; }
@@ -103,12 +102,17 @@ public:
    std::shared_ptr<BaseTexture> GetAlias(Format format) const; // Get an alias of this texture in a different format. Alias share the texture life and update cycle
 
    std::shared_ptr<BaseTexture> Convert(Format format) const; // Always create a new instance, even if target format is source format are matching
-   std::shared_ptr<BaseTexture> ToBGRA() const; // swap R and B channels, also tonemaps floating point buffers during conversion and adds an opaque alpha channel (if format with missing alpha)
+   std::shared_ptr<BaseTexture> ToBGRA() const; // swap R and B channels, also tonemaps floating point buffers during conversion and adds an opaque alpha channel (if format with missing alpha), solely triggered by windows UI
    std::shared_ptr<BaseTexture> NewWithAlpha() const { return Convert(GetFormatWithAlpha(m_format)); }
    struct SDL_Surface* ToSDLSurface() const; // Create a new SDL_Surface initialized with this texture content
 
+   bool m_resizedOnLowMem = false;
    unsigned int m_realWidth, m_realHeight;
    const Format m_format;
+
+#if defined(ENABLE_BGFX)
+   mutable std::shared_ptr<const struct CompressedTexture> m_compressed;
+#endif
 
    bool IsMD5HashComputed() const { return !m_isMD5Dirty; }
    uint8_t* GetMD5Hash() const { UpdateMD5(); return m_md5Hash; }
@@ -119,7 +123,7 @@ public:
    void SetIsOpaque(const bool v) const { m_isOpaque = v; m_isOpaqueDirty = false; }
 
 private:
-   BaseTexture(const unsigned int w, const unsigned int h, const Format format);
+   BaseTexture(const unsigned int w, const unsigned int h, const Format format, const bool allocate = true);
    static std::shared_ptr<BaseTexture> CreateFromFreeImage(struct FIBITMAP *dib, const bool isImageData, unsigned int maxTexDimension, bool resizeOnLowMem) noexcept; // also free's/delete's the dib inside!
 
    void UpdateMD5() const;
@@ -139,6 +143,7 @@ private:
    mutable uint8_t m_md5Hash[16] = {};
    mutable bool m_isOpaqueDirty = true;
    mutable bool m_isOpaque = true;
+   mutable std::mutex m_aliasMutex;
    mutable ankerl::unordered_dense::map<Format, std::shared_ptr<BaseTexture>> m_aliases;
 };
 
@@ -150,14 +155,15 @@ private:
 class Texture final : public ITexManCacheable
 {
 public:
-   static Texture *CreateFromFile(const string &filename, const bool isImageData = true);
-   static Texture *CreateFromStream(IStream * const pstream, int version, PinTable * const pt);
+   static Texture *CreateFromFile(const std::filesystem::path& filename, const bool isImageData = true);
+   static Texture *CreateFromObjectReader(IObjectReader& reader, PinTable * const pt);
    ~Texture() override;
 
-   HRESULT SaveToStream(IStream *pstream, const PinTable *pt) const;
+   void Save(IObjectWriter &writer, class PinTable *pt) const;
 
    uint64_t GetLiveHash() const override { return m_liveHash; }
    const string& GetName() const override { return m_name; }
+   void SetIsOpaque(const bool v) const;
 
    HBITMAP GetGDIBitmap() const; // Lazily created view of the image, suitable for GDI rendering
    std::shared_ptr<const BaseTexture> GetRawBitmap(bool resizeOnLowMem, unsigned int maxTexDimension) const override; // Lazily created view of the image, suitable for GPU sampling
@@ -166,7 +172,7 @@ public:
 
    size_t GetFileSize() const { return m_ppb->m_buffer.size(); }
    const uint8_t *GetFileRaw() const { return m_ppb->m_buffer.data(); }
-   const string& GetFilePath() const { return m_ppb->m_path; }
+   const std::filesystem::path& GetFilePath() const { return m_ppb->m_path; }
    bool SaveFile(const string &filename) const { return m_ppb->WriteToFile(filename); }
 
 #if defined(__ANDROID__)
@@ -187,8 +193,8 @@ public:
 public:
    string m_name; // Image name (used as a unique identifier)
    float m_alphaTestValue = static_cast<float>(-1.0 / 255.0); // Alpha test value (defaults to negative, that is to say disabled)
-   const unsigned int m_width = 0;
-   const unsigned int m_height = 0;
+   unsigned int m_width = 0; // FIME this should be const, but some files have invalid size data and we fix them when decoding the image datablock
+   unsigned int m_height = 0; // FIME this should be const, but some files have invalid size data and we fix them when decoding the image datablock
 
 private:
    Texture(string name, PinBinary* ppb, unsigned int width, unsigned int height); // Private to forbid uninitialized objects
@@ -197,7 +203,6 @@ private:
    void SetMD5Hash(uint8_t *md5) const;
 
    void UpdateOpaque() const;
-   void SetIsOpaque(const bool v) const;
 
    PinBinary *const m_ppb; // Original data blob of the image, always defined
    const uint64_t m_liveHash;
@@ -216,6 +221,9 @@ private:
 //
 // Helper functions
 //
+
+// Copy and convert from BGRA to RGBA (=swap R and B channels), optionally overwriting alpha (forced to 0xFF if opaque=true).
+// Source and destination buffers must be 4 bytes per pixel
 template<bool opaque>
 inline void copy_bgra_rgba(unsigned int* const __restrict dst, const unsigned int* const __restrict src, const size_t size)
 {
@@ -260,6 +268,140 @@ inline void copy_bgra_rgba(unsigned int* const __restrict dst, const unsigned in
     }
 }
 
+// Copy and convert from RGBA to RGB, optionally swapping R and B channels (bgr=true).
+// Source must be 4, and destination buffer 3 bytes per pixel
+template<bool bgr>
+inline void copy_rgba_rgb(unsigned char* const __restrict dst, const unsigned int* const __restrict src, const size_t size)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+#if !(defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(_MSC_VER)
+    static int ssse3_supported = -1;
+    if (ssse3_supported == -1)
+    {
+       int cpuInfo[4];
+       __cpuid(cpuInfo, 1);
+       ssse3_supported = (cpuInfo[2] & (1 << 9));
+    }
+#else
+    constexpr bool ssse3_supported = true;
+#endif
+#endif
+
+    size_t o = 0;
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+    if (ssse3_supported)
+    {
+       // align output writes
+       if (!bgr)
+       {
+          for (; ((reinterpret_cast<size_t>(dst + o*3) & 15) != 0) && o < size; ++o)
+          {
+             const unsigned int rgba = src[o];
+             dst[o*3    ] = rgba & 0xFF;
+             dst[o*3 + 1] = (rgba >> 8) & 0xFF;
+             dst[o*3 + 2] = (rgba >> 16) & 0xFF;
+          }
+       }
+       else
+          for (; ((reinterpret_cast<size_t>(dst + o*3) & 15) != 0) && o < size; ++o)
+          {
+             const unsigned int rgba = src[o];
+             dst[o*3    ] = (rgba >> 16) & 0xFF;
+             dst[o*3 + 1] = (rgba >> 8) & 0xFF;
+             dst[o*3 + 2] = rgba & 0xFF;
+          }
+
+       // Shuffle masks to extract RGB from RGBA (discard alpha channel)
+       const __m128i mask0a = bgr ? _mm_setr_epi8(2, 1, 0, 6, 5, 4, 10, 9, 8, 14, 13, 12, -1, -1, -1, -1) : _mm_setr_epi8(0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1);
+       const __m128i mask0b = bgr ? _mm_setr_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 2, 1, 0, 6) : _mm_setr_epi8(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 4);
+       const __m128i mask1a = bgr ? _mm_setr_epi8(5, 4, 10, 9, 8, 14, 13, 12, -1, -1, -1, -1, -1, -1, -1, -1) : _mm_setr_epi8(5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1, -1, -1, -1, -1);
+       const __m128i mask1b = bgr ? _mm_setr_epi8(-1, -1, -1, -1, -1, -1, -1, -1, 2, 1, 0, 6, 5, 4, 10, 9) : _mm_setr_epi8(-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 4, 5, 6, 8, 9);
+       const __m128i mask2  = bgr ? _mm_setr_epi8(8, 14, 13, 12, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1) : _mm_setr_epi8(10, 12, 13, 14, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+       const __m128i mask2b = bgr ? _mm_setr_epi8(-1, -1, -1, -1, 2, 1, 0, 6, 5, 4, 10, 9, 8, 14, 13, 12) : _mm_setr_epi8(-1, -1, -1, -1, 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14);
+
+       for (; o+15 < size; o+=16)
+       {
+          const __m128i c[4] = { 
+             _mm_loadu_si128((__m128i *)(src + o)), 
+             _mm_loadu_si128((__m128i *)(src + o + 4)), 
+             _mm_loadu_si128((__m128i *)(src + o + 8)), 
+             _mm_loadu_si128((__m128i *)(src + o + 12)) 
+          };
+          
+          _mm_store_si128((__m128i *)(dst + o*3     ), _mm_or_si128(_mm_shuffle_epi8(c[0], mask0a), _mm_shuffle_epi8(c[1], mask0b)));
+          _mm_store_si128((__m128i *)(dst + o*3 + 16), _mm_or_si128(_mm_shuffle_epi8(c[1], mask1a), _mm_shuffle_epi8(c[2], mask1b)));
+          _mm_store_si128((__m128i *)(dst + o*3 + 32), _mm_or_si128(_mm_shuffle_epi8(c[2], mask2),  _mm_shuffle_epi8(c[3], mask2b)));
+       }
+    }
+    else
+#endif
+    {
+       for (; o+3 < size; o+=4)
+       {
+          if (!bgr)
+          {
+             const unsigned int rgba0 = src[o];
+             dst[o*3     ] = rgba0 & 0xFF;
+             dst[o*3 +  1] = (rgba0 >> 8) & 0xFF;
+             dst[o*3 +  2] = (rgba0 >> 16) & 0xFF;
+             const unsigned int rgba1 = src[o + 1];
+             dst[o*3 +  3] = rgba1 & 0xFF;
+             dst[o*3 +  4] = (rgba1 >> 8) & 0xFF;
+             dst[o*3 +  5] = (rgba1 >> 16) & 0xFF;
+             const unsigned int rgba2 = src[o + 2];
+             dst[o*3 +  6] = rgba2 & 0xFF;
+             dst[o*3 +  7] = (rgba2 >> 8) & 0xFF;
+             dst[o*3 +  8] = (rgba2 >> 16) & 0xFF;
+             const unsigned int rgba3 = src[o + 3];
+             dst[o*3 +  9] = rgba3 & 0xFF;
+             dst[o*3 + 10] = (rgba3 >> 8) & 0xFF;
+             dst[o*3 + 11] = (rgba3 >> 16) & 0xFF;
+          }
+          else
+          {
+             const unsigned int rgba0 = src[o];
+             dst[o*3     ] = (rgba0 >> 16) & 0xFF;
+             dst[o*3 +  1] = (rgba0 >> 8) & 0xFF;
+             dst[o*3 +  2] = rgba0 & 0xFF;
+             const unsigned int rgba1 = src[o + 1];
+             dst[o*3 +  3] = (rgba1 >> 16) & 0xFF;
+             dst[o*3 +  4] = (rgba1 >> 8) & 0xFF;
+             dst[o*3 +  5] = rgba1 & 0xFF;
+             const unsigned int rgba2 = src[o + 2];
+             dst[o*3 +  6] = (rgba2 >> 16) & 0xFF;
+             dst[o*3 +  7] = (rgba2 >> 8) & 0xFF;
+             dst[o*3 +  8] = rgba2 & 0xFF;
+             const unsigned int rgba3 = src[o + 3];
+             dst[o*3 +  9] = (rgba3 >> 16) & 0xFF;
+             dst[o*3 + 10] = (rgba3 >> 8) & 0xFF;
+             dst[o*3 + 11] = rgba3 & 0xFF;
+          }
+       }
+    }
+
+    if (!bgr)
+    {
+       for (; o < size; ++o)
+       {
+          const unsigned int rgba = src[o];
+          dst[o*3    ] = rgba & 0xFF;
+          dst[o*3 + 1] = (rgba >> 8) & 0xFF;
+          dst[o*3 + 2] = (rgba >> 16) & 0xFF;
+       }
+    }
+    else
+       for (; o < size; ++o)
+       {
+          const unsigned int rgba = src[o];
+          dst[o*3    ] = (rgba >> 16) & 0xFF;
+          dst[o*3 + 1] = (rgba >> 8) & 0xFF;
+          dst[o*3 + 2] = rgba & 0xFF;
+       }
+}
+
+// Copy and convert from RGB to RGBA, optionally swapping R and B channels (bgr=true).
+// Source must be 3, and destination buffer 4 bytes per pixel
 template<bool bgr>
 inline void copy_rgb_rgba(unsigned int* const __restrict dst, const unsigned char* const __restrict src, const size_t size)
 {
@@ -344,7 +486,164 @@ inline void copy_rgb_rgba(unsigned int* const __restrict dst, const unsigned cha
           dst[o] = (unsigned int)src[o*3 + 2] | ((unsigned int)src[o*3 + 1] << 8) | ((unsigned int)src[o*3] << 16) | (255u << 24);
 }
 
-inline void copy_bgr_rgb(unsigned char* const __restrict dst, const unsigned char* const __restrict src, const size_t size)
+// Copy and convert from RGB565 (16bpp) to RGBA (32bpp), expanding the 5/6/5-bit channels to 8 bits.
+// Magic-constant algos (x*527+23)>>6 and (x*259+33)>>6 for proper mapping white to white, black to black, and inbetween
+inline void copy_rgb565_rgba(unsigned int* const __restrict dst, const uint16_t* const __restrict src, const size_t size)
+{
+   static constexpr uint8_t lum32[] = { 0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173, 181, 189, 197, 206, 214, 222, 230, 239, 247, 255 };
+   static constexpr uint8_t lum64[] = { 0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 45, 49, 53, 57, 61, 65, 69, 73, 77, 81, 85, 89, 93, 97, 101, 105, 109, 113, 117, 121, 125, 130, 134, 138,
+                                        142, 146, 150, 154, 158, 162, 166, 170, 174, 178, 182, 186, 190, 194, 198, 202, 206, 210, 215, 219, 223, 227, 231, 235, 239, 243, 247, 251, 255 };
+
+   size_t o = 0;
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+   // align output writes
+   for (; ((reinterpret_cast<size_t>(dst + o) & 15) != 0) && o < size; ++o)
+   {
+      const uint16_t rgb565 = src[o];
+      dst[o] = 0xFF000000u | (lum32[rgb565 & 0x1F] << 16) | (lum64[(rgb565 >> 5) & 0x3F] << 8) | lum32[(rgb565 >> 11) & 0x1F];
+   }
+
+   const __m128i mask5   = _mm_set1_epi16(0x1F);
+   const __m128i mask6   = _mm_set1_epi16(0x3F);
+   const __m128i c527    = _mm_set1_epi16(527);
+   const __m128i c23     = _mm_set1_epi16(23);
+   const __m128i c259    = _mm_set1_epi16(259);
+   const __m128i c33     = _mm_set1_epi16(33);
+   const __m128i alphaHi = _mm_set1_epi16(static_cast<short>(0xFF00u));
+   for (; o + 8 <= size; o += 8)
+   {
+      const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src + o)); // 8x rgb565
+
+      const __m128i hi5 = _mm_srli_epi16(v, 11);                      // bits 11..15 (0..31) -> byte0
+      const __m128i g6  = _mm_and_si128(_mm_srli_epi16(v, 5), mask6); // bits  5..10 (0..63) -> byte1
+      const __m128i lo5 = _mm_and_si128(v, mask5);                    // bits  0.. 4 (0..31) -> byte2
+
+      // exact expansion, bit-identical to lum32/lum64; max product 31*527+23=16360 fits in unsigned 16-bit, result is in the low byte
+      const __m128i e_hi = _mm_srli_epi16(_mm_add_epi16(_mm_mullo_epi16(hi5, c527), c23), 6);
+      const __m128i e_g  = _mm_srli_epi16(_mm_add_epi16(_mm_mullo_epi16(g6,  c259), c33), 6);
+      const __m128i e_lo = _mm_srli_epi16(_mm_add_epi16(_mm_mullo_epi16(lo5, c527), c23), 6);
+
+      // pack two bytes into each 16-bit lane, then interleave the two halves into AoS RGBA
+      const __m128i rg = _mm_or_si128(e_hi, _mm_slli_epi16(e_g, 8)); // lane = [byte0, byte1]
+      const __m128i ba = _mm_or_si128(e_lo, alphaHi);                // lane = [byte2, 0xFF]
+
+      _mm_store_si128(reinterpret_cast<__m128i*>(dst + o    ), _mm_unpacklo_epi16(rg, ba));
+      _mm_store_si128(reinterpret_cast<__m128i*>(dst + o + 4), _mm_unpackhi_epi16(rg, ba));
+   }
+#else
+#pragma message ("Warning: No SSE RGB565 texture conversion")
+#endif
+   for (; o < size; ++o)
+   {
+      const uint16_t rgb565 = src[o];
+      dst[o] = 0xFF000000u | (lum32[rgb565 & 0x1F] << 16) | (lum64[(rgb565 >> 5) & 0x3F] << 8) | lum32[(rgb565 >> 11) & 0x1F];
+   }
+}
+
+// Copy and convert from fp16 RGB to RGBA.
+// Source must be 3, and destination buffer 4 uint16s per pixel
+inline void copy_rgb_rgba(uint16_t *const __restrict dst, const uint16_t *const __restrict src, const size_t size)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+#if !(defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(_MSC_VER)
+    static int ssse3_supported = -1;
+    if (ssse3_supported == -1)
+    {
+       int cpuInfo[4];
+       __cpuid(cpuInfo, 1);
+       ssse3_supported = (cpuInfo[2] & (1 << 9));
+    }
+#else
+    constexpr bool ssse3_supported = true;
+#endif
+#endif
+
+    size_t o = 0;
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+    if (ssse3_supported)
+    {
+       // process 8 pixels per iteration (3 loads of 128bits RGB -> 4 stores of 128bits RGBA)
+       const __m128i shuf  = _mm_setr_epi8(0, 1, 2, 3, 4, 5, -1, -1, 6, 7, 8, 9, 10, 11, -1, -1);
+       const __m128i shuf2 = _mm_setr_epi8(4, 5, 6, 7, 8, 9, -1, -1, 10, 11, 12, 13, 14, 15, -1, -1);
+       const __m128i alpha = _mm_setr_epi16(0, 0, 0, 0x3C00, 0, 0, 0, 0x3C00); // 0x3C00 = 1.f in fp16
+       const size_t simd_end = size & ~(size_t)7;
+       for (; o < simd_end; o += 8)
+       {
+          const __m128i s0 = _mm_loadu_si128((const __m128i*)(src + o*3));      // R0 G0 B0 R1 G1 B1 R2 G2
+          const __m128i s1 = _mm_loadu_si128((const __m128i*)(src + o*3 + 8));  // B2 R3 G3 B3 R4 G4 B4 R5
+          const __m128i s2 = _mm_loadu_si128((const __m128i*)(src + o*3 + 16)); // G5 B5 R6 G6 B6 R7 G7 B7
+
+          _mm_storeu_si128((__m128i*)(dst + o*4),      _mm_or_si128(_mm_shuffle_epi8(s0, shuf), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 8),  _mm_or_si128(_mm_shuffle_epi8(_mm_alignr_epi8(s1, s0, 12), shuf), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 16), _mm_or_si128(_mm_shuffle_epi8(_mm_alignr_epi8(s2, s1, 8), shuf), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 24), _mm_or_si128(_mm_shuffle_epi8(s2, shuf2), alpha));
+       }
+    }
+#endif
+    for (; o < size; ++o)
+    {
+       dst[o*4 + 0] = src[o*3 + 0];
+       dst[o*4 + 1] = src[o*3 + 1];
+       dst[o*4 + 2] = src[o*3 + 2];
+       dst[o*4 + 3] = 0x3C00; // = 1.f in fp16
+    }
+}
+
+// Copy and convert from fp32 RGB to RGBA.
+// Source must be 3, and destination buffer 4 floats per pixel
+inline void copy_rgb_rgba(float* const __restrict dst, const float* const __restrict src, const size_t size)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+#if !(defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(_MSC_VER)
+    static int ssse3_supported = -1;
+    if (ssse3_supported == -1)
+    {
+       int cpuInfo[4];
+       __cpuid(cpuInfo, 1);
+       ssse3_supported = (cpuInfo[2] & (1 << 9));
+    }
+#else
+    constexpr bool ssse3_supported = true;
+#endif
+#endif
+
+    size_t o = 0;
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
+    if (ssse3_supported)
+    {
+       // process 4 pixels per iteration (3 loads of 128bits RGB -> 4 stores of 128bits RGBA)
+       const __m128i mask  = _mm_setr_epi32(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0);
+       const __m128i alpha = _mm_setr_epi32(0, 0, 0, 0x3F800000); // = 1.f in fp32
+       const size_t simd_end = size & ~(size_t)3;
+       for (; o < simd_end; o += 4)
+       {
+          const __m128i s0 = _mm_loadu_si128((const __m128i*)(src + o*3));     // R0 G0 B0 R1
+          const __m128i s1 = _mm_loadu_si128((const __m128i*)(src + o*3 + 4)); // G1 B1 R2 G2
+          const __m128i s2 = _mm_loadu_si128((const __m128i*)(src + o*3 + 8)); // B2 R3 G3 B3
+
+          _mm_storeu_si128((__m128i*)(dst + o*4),      _mm_or_si128(_mm_and_si128(s0, mask), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 4),  _mm_or_si128(_mm_and_si128(_mm_alignr_epi8(s1, s0, 12), mask), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 8),  _mm_or_si128(_mm_and_si128(_mm_alignr_epi8(s2, s1,  8), mask), alpha));
+          _mm_storeu_si128((__m128i*)(dst + o*4 + 12), _mm_or_si128(_mm_srli_si128(s2, 4), alpha));
+       }
+    }
+#endif
+    for (; o < size; ++o)
+    {
+       dst[o*4 + 0] = src[o*3 + 0];
+       dst[o*4 + 1] = src[o*3 + 1];
+       dst[o*4 + 2] = src[o*3 + 2];
+       dst[o*4 + 3] = 1.f;
+    }
+}
+
+
+// Copy and convert from BGR to RGB (=swap R and B channels).
+// Source and destination buffers must be 3 bytes per pixel
+inline void copy_bgr_rgb(unsigned char *const __restrict dst, const unsigned char *const __restrict src, const size_t size)
 {
 #ifdef ENABLE_SSE_OPTIMIZATIONS // actually uses SSSE3
 #if !(defined(_M_ARM) || defined(_M_ARM64) || defined(__arm__) || defined(__arm64__) || defined(__aarch64__)) && defined(_MSC_VER)
@@ -398,6 +697,7 @@ inline void copy_bgr_rgb(unsigned char* const __restrict dst, const unsigned cha
     }
 }
 
+// Convert fp32 (4 bytes) to fp16 (2 bytes)
 inline void float2half(uint16_t* const __restrict dst, const float* const __restrict src, const size_t size)
 {
     size_t o = 0;
@@ -451,7 +751,8 @@ inline void float2half(uint16_t* const __restrict dst, const float* const __rest
        dst[o] = float2half_noLUT(src[o]);
 }
 
-inline void float2half_noF16MaxInfNaN(uint16_t* const __restrict dst, const float* const __restrict src, const size_t size)
+// Convert fp32 (4 bytes) to fp16 (2 bytes), with removed f16max/inf/nan handling (i.e. if this is sure to be NOT there in the input data)
+inline void float2half_noF16MaxInfNaN(uint16_t *const __restrict dst, const float *const __restrict src, const size_t size)
 {
     size_t o = 0;
 
@@ -491,7 +792,8 @@ inline void float2half_noF16MaxInfNaN(uint16_t* const __restrict dst, const floa
        dst[o] = float2half_noLUT(src[o]);
 }
 
-inline void float2half_pos_noF16MaxInfNaN(uint16_t* const __restrict dst, const float* const __restrict src, const size_t size)
+// Convert fp32 (4 bytes) to fp16 (2 bytes), with removed signed/f16max/inf/nan handling (i.e. if this is sure to be NOT there in the input data)
+inline void float2half_pos_noF16MaxInfNaN(uint16_t *const __restrict dst, const float *const __restrict src, const size_t size)
 {
     size_t o = 0;
 
@@ -528,6 +830,7 @@ inline void float2half_pos_noF16MaxInfNaN(uint16_t* const __restrict dst, const 
        dst[o] = float2half_noLUT(src[o]);
 }
 
+// Find minimum and maximum in the fp32 input
 inline Vertex2D min_max(const float* const __restrict src, const size_t size)
 {
     Vertex2D minmax(FLT_MAX,-FLT_MAX);

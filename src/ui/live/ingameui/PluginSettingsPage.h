@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "InGameUIPage.h"
+
 namespace VPX::InGameUI
 {
 
@@ -9,16 +11,17 @@ class PluginHomePage final : public InGameUIPage
 {
 public:
    PluginHomePage();
-   void Open(bool isBackwardAnimation) override;
+
+private:
+   void BuildPage() override;
 };
 
 class PluginSettingsPage final : public InGameUIPage
 {
 public:
    PluginSettingsPage(const string& pluginId);
-   void Open(bool isBackwardAnimation) override;
 
-   void BuildPage();
+   void BuildPage() override;
 
 private:
    const string m_pluginId;

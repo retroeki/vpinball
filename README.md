@@ -62,3 +62,7 @@ Documentation is currently sparse. Check the [docs](docs) directory for various 
 ### How to build
 
 Build instructions are available in the [make directory README](make/README.md).
+
+## Participate
+
+Read through our [contribution](CONTRIBUTING.md) rules carefully before opening PRs, please.

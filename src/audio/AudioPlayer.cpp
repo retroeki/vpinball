@@ -4,6 +4,7 @@
 #include "AudioPlayer.h"
 #include "AudioStreamPlayer.h"
 #include "SoundPlayer.h"
+#include "utils/denormals.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_audio.h>
 #ifdef __ANDROID__
@@ -24,8 +25,8 @@
 #define MA_ENABLE_AAUDIO
 #endif
 #include "miniaudio/extras/stb_vorbis.c"
+#define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio/miniaudio.h"
-#include "miniaudio/miniaudio.c"
 
 // Simple SDL3 backend for miniaudio, derived from miniaudio's backend example
 
@@ -84,12 +85,12 @@ static ma_result ma_context_get_device_info__sdl(ma_context* pContext, ma_device
    if (pDeviceID == nullptr)
    {
       pDeviceInfo->id.custom.i = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
-      ma_strncpy_s(pDeviceInfo->name, sizeof(pDeviceInfo->name), MA_DEFAULT_PLAYBACK_DEVICE_NAME, (size_t)-1);
+      ma_strncpy_s(pDeviceInfo->name, std::size(pDeviceInfo->name), MA_DEFAULT_PLAYBACK_DEVICE_NAME, (size_t)-1);
    }
    else
    {
       pDeviceInfo->id.custom.i = pDeviceID->custom.i;
-      ma_strncpy_s(pDeviceInfo->name, sizeof(pDeviceInfo->name), SDL_GetAudioDeviceName(pDeviceID->custom.i), (size_t)-1);
+      ma_strncpy_s(pDeviceInfo->name, std::size(pDeviceInfo->name), SDL_GetAudioDeviceName(pDeviceID->custom.i), (size_t)-1);
    }
    if (pDeviceInfo->id.custom.i == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
       pDeviceInfo->isDefault = MA_TRUE;
@@ -225,6 +226,8 @@ static void TryPromoteAudioThread(const char* label)
 
 void ma_audio_callback_playback__sdl(void* pUserData, SDL_AudioStream* stream, int additional_amount, const int total_amount)
 {
+   set_denormals_flush_to_zero_once(); // all of miniaudio's mixing happens below, on a thread created by SDL
+
    auto pDevice = static_cast<ma_device_ex*>(pUserData);
 
 #ifdef __ANDROID__
@@ -564,11 +567,11 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
       SDL_free(pAudioList);
       if (m_playfieldAudioDevice == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
       {
-         PLOGD << "Table sound device was not found (" << playfieldDevice << "), using default: " << GetPlayfieldDeviceName().c_str();
+         PLOGD << "Table sound device was not found (" << playfieldDevice << "), using default: " << GetPlayfieldDeviceName();
       }
       if (m_backglassAudioDevice == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK)
       {
-         PLOGD << "Backglass sound device was not found (" << backglassDevice << "), using default: " << GetBackglassDeviceName().c_str();
+         PLOGD << "Backglass sound device was not found (" << backglassDevice << "), using default: " << GetBackglassDeviceName();
       }
    }
 
@@ -638,17 +641,26 @@ AudioPlayer::AudioPlayer(const string& backglassDevice, const string& playfieldD
          engineConfig.pDevice = &outDevice->device;
          engineConfig.noAutoStart = MA_TRUE;
          outEngine = std::make_unique<ma_engine>();
-         ma_engine_init(&engineConfig, outEngine.get());
+         if (ma_engine_init(&engineConfig, outEngine.get()) == MA_SUCCESS)
+         {
 #if defined(__ANDROID__) && VPX_AUDIO_RT_DIAG
-         // Diagnostic wrapper: verify SCHED_FIFO inheritance and measure mixing time on
-         // AAudio's RT callback thread. Compiled out unless VPX_AUDIO_RT_DIAG; otherwise
-         // we use the stock miniaudio callback (priority comes from LOW_LATENCY perfMode).
-         outDevice->device.onData = ma_data_callback_aaudio_diag;
+            // Diagnostic wrapper: verify SCHED_FIFO inheritance and measure mixing time on
+            // AAudio's RT callback thread. Compiled out unless VPX_AUDIO_RT_DIAG; otherwise
+            // we use the stock miniaudio callback (priority comes from LOW_LATENCY perfMode).
+            outDevice->device.onData = ma_data_callback_aaudio_diag;
 #else
-         outDevice->device.onData = ma_engine_data_callback_internal;
+            outDevice->device.onData = ma_engine_data_callback_internal;
 #endif
-         outDevice->device.pUserData = outEngine.get();
-         ma_engine_start(outEngine.get());
+            outDevice->device.pUserData = outEngine.get();
+            ma_engine_start(outEngine.get());
+         }
+         else
+         {
+            PLOGE << "Failed to initialize miniaudio engine for " << label << " sounds";
+            outEngine = nullptr;
+            ma_device_uninit(&outDevice->device);
+            outDevice = nullptr;
+         }
       }
       else
       {
@@ -841,14 +853,22 @@ void AudioPlayer::PlaySound(Sound* sound, float volumeOffset, const float random
    SoundPlayer* player = nullptr;
    vector<std::unique_ptr<SoundPlayer>>& players = m_soundPlayers[sound];
 
+   std::erase_if(players, [sound](const auto& soundPlayer) { return soundPlayer->GetOutputTarget() != sound->GetOutputTarget(); });
+
    // Until 10.8, implementation would:
    // - for some reason, 'usesame' would only be processed for wav file:
    //   - if 'usesame' is true, search for the first player for the given sound and reuse it if any (even is it is playing), create a new one otherwise
    //   - if 'usesame' is false, always create a new player for the given sound
    // - if restart is false and selected sound player was already playing, settings would be applied without restarting the sound
+   // - if restart is true, all playing sounds would be stopped and a new one would be started
+   
+   if (restart)
+      for (const auto& soundPlayer : players)
+         soundPlayer->Stop();
+   
    for (const auto& soundPlayer : players)
    {
-      if (useSame || !soundPlayer->IsPlaying())
+      if (useSame || restart || !soundPlayer->IsPlaying())
       {
          player = soundPlayer.get();
          break;
@@ -866,8 +886,6 @@ void AudioPlayer::PlaySound(Sound* sound, float volumeOffset, const float random
 
    float pan = dequantizeSignedPercent(sound->GetPan()) + panOffset;
 
-   if (restart)
-      player->Stop();
    player->Play(
       dequantizeSignedPercent(sound->GetVolume()) + volumeOffset,
       randomPitch,
@@ -884,6 +902,12 @@ void AudioPlayer::StopSound(Sound* sound)
       player->Stop();
 }
 
+bool AudioPlayer::IsSoundPlaying(const Sound* sound) const
+{
+   const auto it = m_soundPlayers.find(const_cast<Sound*>(sound));
+   return it != m_soundPlayers.end() && std::ranges::any_of(it->second, [](const auto& player) { return player->IsPlaying(); });
+}
+
 SoundSpec AudioPlayer::GetSoundInformations(const Sound* const sound) const
 {
    SoundSpec specs {};
@@ -893,6 +917,12 @@ SoundSpec AudioPlayer::GetSoundInformations(const Sound* const sound) const
       return specs;
    specs.nChannels = decoder.outputChannels;
    specs.sampleFrequency = decoder.outputSampleRate;
+
+   if (m_backglassEngine == nullptr)
+   {
+      ma_decoder_uninit(&decoder);
+      return specs;
+   }
 
    ma_sound maSound;
    ma_sound_config config = ma_sound_config_init_2(m_backglassEngine.get());

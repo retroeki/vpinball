@@ -6,27 +6,19 @@
 #include "utils/vector.h"
 #include "utils/vectorsort.h"
 
-#ifndef __STANDALONE__
 #include <commdlg.h>
 #include "dialogs/ScriptErrorDialog.h"
 #include "scintilla.h"
-#endif
-
-#ifndef OVERRIDE
-#ifndef __STANDALONE__
-   #define OVERRIDE override
-#else
-   #define OVERRIDE
-#endif
-#endif
 
 #define MAX_FIND_LENGTH 81 // from MS docs: The buffer should be at least 80 characters long (for find/replace)
 
-class CodeViewer : public CWnd
+class PinTableWnd;
+
+class CodeViewer final : public CWnd
 {
 public:
-   CodeViewer(PinTable *table);
-   ~CodeViewer() OVERRIDE;
+   explicit CodeViewer(PinTableWnd *tableEditor);
+   ~CodeViewer() override;
 
    void SetVisible(const bool visible);
 
@@ -50,7 +42,6 @@ public:
    void ShowFindReplaceDialog();
    void Find();
    void Replace();
-   void SaveToStream(IStream *pistream, HCRYPTHASH const hcrypthash);
    void SetCaption(const string& szCaption);
 
    bool ShowTooltipOrGoToDefinition(const SCNotification *pSCN, const bool tooltip);
@@ -67,17 +58,15 @@ public:
 
    void UpdateScinFromPrefs();
 
-#ifndef __STANDALONE__
    void MarginClick(const Sci_Position position, const int modifiers);
-#endif
 
    void AddToDebugOutput(const string& szText);
 
-   BOOL PreTranslateMessage(MSG& msg) OVERRIDE;
+   BOOL PreTranslateMessage(MSG& msg) override;
 
    void SetScript(const string& script);
 
-   PinTable *m_table;
+   PinTableWnd *const m_tableEditor;
 
    class CodeViewDispatch final
    {
@@ -115,9 +104,7 @@ public:
    int m_dwellDisplayTime;
 
    fi_vector<UserData> m_pageConstructsDict;
-#ifndef __STANDALONE__
    Sci_TextRange m_wordUnderCaret;
-#endif
 
    HWND m_hwndMain = nullptr;
    HWND m_hwndScintilla = nullptr;
@@ -139,14 +126,17 @@ protected:
 
 private:
    CodeViewer* GetCodeViewerPtr();
+   // The main editor window hosting the table this code viewer belongs to, null while it is being torn down
+   class WinEditor *GetVpxEditor() const;
    BOOL ParseClickEvents(const int id, const SCNotification *pSCN);
    BOOL ParseSelChangeEvent(const int id, const SCNotification *pSCN);
 
-   string ParseDelimtByColon(string &wholeline);
+   string ParseDelimtByColon(const string &wholeline, size_t &pos);
    void ParseFindConstruct(size_t &Pos, const string &UCLine, WordType &Type, int &ConstructSize);
    bool ParseStructureName(fi_vector<UserData> &ListIn, const UserData &ud, const string &UCline, const string &line, const int Lineno);
 
    size_t SureFind(const string &LineIn, const string &ToFind);
+   size_t SureFindNoCase(const string &LineIn, const string &ToFind); // 'ToFind' has to be lowercase
    void RemoveByVal(string &line); 
    void RemoveNonVBSChars(string &line);
    string ExtractWordOperand(const string &line, const size_t StartPos) const;
@@ -160,13 +150,17 @@ private:
 
    void GetMembers(const fi_vector<UserData> &ListIn, const string &StrIn);
 
+   //Assumes case insensitive sorted list
+   //Returns index or insertion point (-1 == error)
+   size_t FindOrInsertUD(fi_vector<UserData> &ListIn, const UserData &udIn);
+
    void InitPreferences();
 
-   string GetParamsFromEvent(const UINT iEvent);
+   string GetParamsFromEvent(const UINT iEvent) const;
 
    /**
     * Resizes the Scintilla widget (the text editor) and the last error widget (if it's visible)
-    * 
+    *
     * This is called when the window is resized (when we get a WM_SIZE message)
     * or when the last error widget is toggled (since that appears below the text editor)
     */
@@ -183,9 +177,7 @@ private:
 
    string m_validChars;
 
-#ifndef __STANDALONE__
    CFindReplaceDialog m_findReplace;
-#endif
 
    // CodeViewer Preferences
    CVPreference *prefDefault = nullptr;

@@ -22,21 +22,22 @@
 #if defined(ENABLE_BGFX)
 #include <thread>
 #include <mutex>
+#include <semaphore>
 #include <atomic>
 #include <condition_variable>
-#include "bx/semaphore.h"
 #endif
 
 #if defined(ENABLE_OPENGL) && !defined(__STANDALONE__)
 #include <d3d11.h> // Used to get a VSync source if DWM is not available
+#include "DXGIRegistry.h"
 #endif
 
 #if defined(ENABLE_DX9)
-#define CHECKNVAPI(s) { NvAPI_Status hr = (s); if (hr != NVAPI_OK) { NvAPI_ShortString ss; NvAPI_GetErrorMessage(hr,ss); g_pvp->MessageBox(ss, "NVAPI", MB_OK | MB_ICONEXCLAMATION); } }
+#define CHECKNVAPI(s) { NvAPI_Status hr = (s); if (hr != NVAPI_OK) { NvAPI_ShortString ss; NvAPI_GetErrorMessage(hr,ss); ShowError(ss); } }
 #endif
 
 void ReportFatalError(const HRESULT hr, const char *file, const int line);
-void ReportError(const char *errorText, const HRESULT hr, const char *file, const int line);
+void ReportError(const string& errorText, const HRESULT hr, const char *file, const int line);
 
 #if defined(ENABLE_BGFX)
 #define CHECKD3D(s) { s; } 
@@ -70,7 +71,7 @@ public:
 class RenderDevice final
 {
 public:
-   RenderDevice(VPX::Window* const wnd, const bool isVR, const int nEyes, const bool useNvidiaApi, const bool compressTextures, int nMSAASamples, VideoSyncMode& syncMode);
+   RenderDevice(VPX::Window* const wnd, const bool isStereo, const bool isAnaglyph, const bool isVR, const bool useNvidiaApi, const bool compressTextures, int nMSAASamples, VideoSyncMode& syncMode);
    ~RenderDevice();
 
    void AddWindow(VPX::Window* wnd);
@@ -85,6 +86,8 @@ public:
          LINELIST,
          LINESTRIP
       };
+
+      static std::vector<std::string> GetSelectableBackendNames();
 
    #elif defined(ENABLE_OPENGL)
       enum PrimitiveTypes
@@ -120,7 +123,6 @@ public:
                          const int x1 = -1, const int y1 = -1, const int w1 = -1, const int h1 = -1,
                          const int x2 = -1, const int y2 = -1, const int w2 = -1, const int h2 = -1,
                          const int srcLayer = -1, const int dstLayer = -1);
-   void SubmitVR(RenderTarget* source);
    void DrawMesh(Shader* shader, const bool isTranparentPass, const Vertex3Ds& center, const float depthBias, std::shared_ptr<MeshBuffer> mb, const PrimitiveTypes type, const uint32_t startIndex, const uint32_t indexCount);
    void DrawTexturedQuad(Shader* shader, const Vertex3D_TexelOnly* vertices, const bool isTransparent = false, const float depth = 0.f);
    void DrawTexturedQuad(Shader* shader, const Vertex3D_NoTex2* vertices, const bool isTransparent = false, const float depth = 0.f);
@@ -140,7 +142,7 @@ public:
    void SetRenderState(const RenderState::RenderStates p1, const RenderState::RenderStateValue p2);
    void SetRenderStateDepthBias(float bias);
    void CopyRenderStates(const bool copyTo, RenderState& state);
-   void CopyRenderStates(const bool copyTo, RenderDeviceState& state);
+   void CopyRenderAndShaderStates(const bool copyTo, RenderDeviceState& state);
    void EnableAlphaBlend(const bool additiveBlending, const bool set_dest_blend = true, const bool set_blend_op = true);
 
    ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -148,7 +150,9 @@ public:
 
    void Flip();
    void WaitForVSync(const bool asynchronous);
-   float GetPredictedDisplayDelayInS() const;
+   float GetVisualLatency() const; // Average delay between when the frame is prepared and when it will be viewed by the player (including TV/display/headset latency)
+   float GetPredictedDisplayDelay() const; // Delay between now (when called) and when the frame will be viewed by the player (including TV/display/headset latency)
+   unsigned int GetTargetFrameLength() const; // Target frame length in microseconds
 
    RenderTarget* GetOutputBackBuffer() const { return m_outputWnd[0]->GetBackBuffer(); } // The screen render target (the only one which is not stereo when doing stereo rendering)
 
@@ -156,13 +160,16 @@ public:
    bool SupportLayeredRendering() const
    {
       #if defined(ENABLE_BGFX)
-      return bgfx::getCaps()->supported & (BGFX_CAPS_INSTANCING | BGFX_CAPS_TEXTURE_2D_ARRAY | BGFX_CAPS_VIEWPORT_LAYER_ARRAY);
+      constexpr uint64_t caps = BGFX_CAPS_VIEWPORT_LAYER_ARRAY;
+      return (bgfx::getCaps()->supported & caps) == caps;
       #elif defined(ENABLE_OPENGL)
       return true;
       #elif defined(ENABLE_DX9)
       return false;
       #endif
    }
+
+   std::shared_ptr<MeshBuffer> GetQuadMeshBuffer() const { return m_quadMeshBuffer; }
 
    void SetClipPlane(const vec4& plane);
 
@@ -172,7 +179,14 @@ public:
 
    void UploadTexture(ITexManCacheable* texture, const bool linearRGB);
    void SetSamplerState(int unit, SamplerFilter filter, SamplerAddressMode clamp_u, SamplerAddressMode clamp_v);
+
+   // Default texture (1x1 Black)
    std::shared_ptr<Sampler> m_nullTexture = nullptr;
+
+   // Stand-in for a texture that could not be created (failed decode, unsupported file, out of memory), so that callers never need to pass a null on (8x8 magenta checker)
+   std::shared_ptr<BaseTexture> m_fallbackTexture = nullptr;
+   std::shared_ptr<const BaseTexture> OrFallback(std::shared_ptr<const BaseTexture> tex) const { return tex ? std::move(tex) : m_fallbackTexture; }
+
    TextureManager m_texMan;
    const bool m_compressTextures;
 
@@ -189,7 +203,7 @@ public:
    vector<std::shared_ptr<SharedIndexBuffer>> m_pendingSharedIndexBuffers;
    vector<std::shared_ptr<SharedVertexBuffer>> m_pendingSharedVertexBuffers;
 
-   bool m_framePending = false;
+   std::atomic<bool> m_framePending = false;
 
    const int m_nEyes;
    Shader* m_uiShader = nullptr;
@@ -233,12 +247,15 @@ public:
    // Swap chain always has at least one output window (OpenGL & DX9 only supports one, DX10+/Metal/Vulkan support multiple)
    vector<VPX::Window*> m_outputWnd;
 
-   void CaptureScreenshot(const string& filename, std::function<void(bool)> callback);
+   void CaptureScreenshot(const vector<VPX::Window*>& wnd, const vector<std::filesystem::path>& filename, const std::function<void(bool)>& callback, int frameDelay = 3);
 
-   int GetVisualLatencyCorrection() const { return m_visualLatencyCorrection; }
-   void SetVisualLatencyCorrection(int latencyMs) { m_visualLatencyCorrection = latencyMs; }
+   string m_GPU_name;
+   string m_driver_name;
+
+   bool m_noMovingBalls = false;
 
 private:
+   const bool m_isAnaglyph;
    const bool m_isVR;
 
    bool m_useLowPrecision = false; // OpenGL ES use low precision float and needs some clamping to avoid artifacts, but the clamping causes artefacts if applied with VR scene scaling on other backends.
@@ -260,46 +277,45 @@ private:
    std::shared_ptr<Sampler> m_SMAAsearchTexture = nullptr;
    std::shared_ptr<Sampler> m_SMAAareaTexture = nullptr;
 
-   int m_visualLatencyCorrection = -1;
-
+   std::mutex m_screenshotMutex; // Guards the screenshot state below, shared between the logic thread (CaptureScreenshot) and the render thread (request loop & BGFX screenShot callback)
    int m_screenshotFrameDelay = 0;
-   string m_screenshotFilename;
+   bool m_screenshotSuccess = true;
+   vector<VPX::Window*> m_screenshotWindow;
+   vector<std::filesystem::path> m_screenshotFilename;
    std::function<void(bool)> m_screenshotCallback = [](bool) { };
+   #if defined(ENABLE_BGFX)
+   void OnScreenshotCaptured(const char* filePath, uint32_t width, uint32_t height, uint32_t pitch, bgfx::TextureFormat::Enum format, const void* data, uint32_t size, bool yflip);
+   #if defined(ENABLE_XR)
+   void RequestVRScreenshot(RenderTarget* vrRenderTarget, const std::filesystem::path& filename);
+   void ProcessVRScreenshot();
+   bgfx::TextureHandle m_vrScreenshotTex = BGFX_INVALID_HANDLE;
+   vector<uint8_t> m_vrScreenshotData;
+   uint32_t m_vrScreenshotReadyFrame = 0;
+   uint16_t m_vrScreenshotWidth = 0;
+   uint16_t m_vrScreenshotHeight = 0;
+   std::filesystem::path m_vrScreenshotFilename;
+   #endif
+   #endif
+
+   uint64_t m_presentTimestampReference = 0;
 
 #if defined(ENABLE_BGFX)
 public:
+   void NextView();
+   void ResetActiveView();
+
    bgfx::ProgramHandle m_program = BGFX_INVALID_HANDLE; // Bound program for next draw submission
-   void NextView()
-   {
-      if (m_activeViewId == bgfx::getCaps()->limits.maxViews - 1)
-      {
-         PLOGE << "Frame submitted and flipped since BGFX view limit was reached. [BGFX was compiled with a maximum of " << bgfx::getCaps()->limits.maxViews << " views]";
-         SubmitRenderFrame();
-         SubmitAndFlipFrame();
-      }
-      m_activeViewId++;
-      bgfx::resetView(m_activeViewId);
-      bgfx::setViewMode(m_activeViewId, bgfx::ViewMode::Sequential);
-      bgfx::setViewClear(m_activeViewId, BGFX_CLEAR_NONE);
-      bgfx::touch(m_activeViewId);
-   }
-   void ResetActiveView()
-   {
-      RenderTarget::OnFrameFlushed();
-      m_activeViewId = 1; // view 0 & 1 are reserved for mipmap generation (so 1 is before the first available for rendering)
-   }
-   void SubmitAndFlipFrame()
-   {
-      ResetActiveView();
-      bgfx::frame(); // BGFX always flips backbuffer when its render queue is submitted
-   }
    bgfx::VertexLayout* m_pVertexTexelDeclaration = nullptr;
    bgfx::VertexLayout* m_pVertexNormalTexelDeclaration = nullptr;
-   int m_activeViewId = 0;
-   uint64_t m_bgfxState = 0L;
+   bgfx::ViewId m_activeViewId = 0;
+   uint16_t m_activeViewClearFlags = BGFX_CLEAR_NONE; // Accumulated clear flags of the active view (BGFX applies a single clear per view, using the last defined state)
+   uint32_t m_activeViewClearColor = 0;
+   uint64_t m_bgfxState = 0;
 
-   bool m_frameNoSync = false; // Flag set when the next frame should be submitted without VBlank sync disabled
-   bx::Semaphore m_frameReadySem; // Semaphore to signal when a frame is ready to be submitted
+   bool m_frameNoPresent = false; // Flag set when the next frame should be submitted without VBlank sync disabled
+   std::binary_semaphore m_rendererInitialized { 0 }; // Semaphore to signal when the renderer is initialized
+   std::binary_semaphore m_renderThreadStopped { 0 }; // Semaphore signaled by the render thread when it has left its render loop, so the destructor can free render resources without racing in-flight rendering
+   std::binary_semaphore m_frameReadySem { 0 }; // Semaphore to signal when a frame is ready to be submitted
    std::mutex m_frameMutex; // Mutex to lock acces to retained render frame between logic thread and render thread
 
    // Android Surface lifecycle safety (Family A SIGSEGV fix): the render thread runs bgfx::frame()/
@@ -315,15 +331,35 @@ public:
    void ParkRenderThread();
    void UnparkRenderThread();
 
-   ShaderState& GetUniformState() { return *m_uniformState; }
+   bgfx::ProgramHandle m_srgbMipmapProgram = BGFX_INVALID_HANDLE;
 
-   std::vector<bgfx::ProgramHandle> m_mipmapPrograms;
+   uint64_t m_lastGPUFrameLength = 0;
+
+#if BX_PLATFORM_WINDOWS
+   void OnInputSampled();
+   struct PresentMonProvider* m_presentMonProvider = nullptr;
+#endif
 
 private:
-   bool m_renderDeviceAlive;
+   void SubmitAndFlipFrame(bool present);
+   bgfx::TextureFormat::Enum SelectBackBufferFormat(const VPX::Window* wnd, bgfx::TextureFormat::Enum defaultFormat, bool isWCG) const;
+   static colorFormat BGFXtoVPXTextureFormat(bgfx::TextureFormat::Enum format);
+   static void RenderThread(RenderDevice* rd, bgfx::Init init);
+   void BGFXDesktopRenderLoop(const bgfx::Init& init);
+#ifdef ENABLE_XR
+   void BGFXOpenXRRenderLoop(const bgfx::Init& init);
+#endif
+
+   uint32_t m_frameIndex = 0;
+
+   uint32_t m_lastPresentFrameIdx = 0;
+   float m_renderLatency = 0.f;
+
+   std::atomic<bool> m_renderDeviceAlive;
    std::thread m_renderThread;
-   static void RenderThread(RenderDevice* rd, const bgfx::Init& init);
+   // Pending uploads are written by the logic thread (e.g. during table load) and consumed by the render thread
    vector<std::shared_ptr<Sampler>> m_pendingTextureUploads;
+   std::mutex m_pendingTextureUploadsMutex;
    std::unique_ptr<ShaderState> m_uniformState = nullptr;
 
    class tBGFXCallback : public bgfx::CallbackI
@@ -339,7 +375,7 @@ private:
       uint32_t cacheReadSize(uint64_t /*_id*/) override { return 0; }
       bool cacheRead(uint64_t /*_id*/, void* /*_data*/, uint32_t /*_size*/) override { return false; }
       void cacheWrite(uint64_t /*_id*/, const void* /*_data*/, uint32_t /*_size*/) override { }
-      void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t _size, bool _yflip) override;
+      void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override;
       void captureBegin(uint32_t /*_width*/, uint32_t /*_height*/, uint32_t /*_pitch*/, bgfx::TextureFormat::Enum /*_format*/, bool /*_yflip*/) override { }
       void captureEnd() override { }
       void captureFrame(const void* /*_data*/, uint32_t /*_size*/) override { }
@@ -364,10 +400,13 @@ public:
 private:
    GLfloat m_maxaniso;
    int m_GLversion;
-   static GLuint m_samplerStateCache[3 * 3 * 5];
+   static GLuint m_samplerStateCache[3 * 3 * 6];
 
    void CaptureGLScreenshot();
 
+   #if !defined(__STANDALONE__)
+   DXGIRegistry m_DXGIRegistry;
+   #endif
 #elif defined(ENABLE_DX9)
 public:
    IDirect3DDevice9* GetCoreDevice() const { return m_pD3DDevice; }

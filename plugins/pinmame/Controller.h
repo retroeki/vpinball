@@ -5,14 +5,20 @@
 #include "common.h"
 #include "plugins/ControllerPlugin.h"
 
+#include <unordered_map>
+#include <thread>
+
+
 namespace PinMAME {
 
 class Game;
+class GameSettings;
+class Settings;
 
 class Controller final
 {
 public:
-   Controller(const MsgPluginAPI* api, unsigned int endpointId, PinmameConfig& config);
+   Controller(const MsgPluginAPI* api, unsigned int endpointId, const PinmameConfig& config, const std::filesystem::path& memmapPath);
    ~Controller();
 
    PSC_IMPLEMENT_REFCOUNT()
@@ -20,33 +26,27 @@ public:
    void SetOnDestroyHandler(void (*handler)(Controller*)) { m_onDestroyHandler = handler; }
    void SetOnGameStartHandler(void (*handler)(Controller*)) { m_onGameStartHandler = handler; }
    void SetOnGameEndHandler(void (*handler)(Controller*)) { m_onGameEndHandler = handler; }
+   bool GetIsPlugin() const { return true; }
 
    string GetVersion() const;
 
    // TODO may also be accessed as a collection object
    Game* GetGames(const string& name) const;
 
+   Settings* GetSettings();
+
    string GetGameName() const { return m_szGameName; }
    void SetGameName(const string& name);
-   string GetROMName() const { if (m_pPinmameGame) return m_pPinmameGame->name; else return string(); }
+   string GetROMName() const { return m_szRomName; }
 
    string GetSplashInfoLine() const { return m_splashInfoLine; }
    void SetSplashInfoLine(const string& text) { m_splashInfoLine = text; }
 
-   bool GetHandleKeyboard() const { return PinmameGetHandleKeyboard(); }
-   void SetHandleKeyboard(const bool handle) {PinmameSetHandleKeyboard(handle); }
-
-   bool GetHandleMechanics() const { return PinmameGetHandleMechanics(); }
-   void SetHandleMechanics(const bool handle) { PinmameSetHandleMechanics(handle); }
+   int GetHandleMechanics() const { return PinmameGetHandleMechanics(); }
+   void SetHandleMechanics(const int handle) { PinmameSetHandleMechanics(handle); } // -1 will reset, 0/1 will disable/enable
 
    bool GetHidden() const { return m_hidden; }
    void SetHidden(const bool hidden) { m_hidden = hidden; }
-
-   int GetModOutputType(int output, int no) const { return output != static_cast<PINMAME_MOD_OUTPUT_TYPE>(PINMAME_MOD_OUTPUT_TYPE_SOLENOID) ? 0 : PinmameGetModOutputType(output, no); }
-   void SetModOutputType(int output, int no, int newVal) { if (output == static_cast<PINMAME_MOD_OUTPUT_TYPE>(PINMAME_MOD_OUTPUT_TYPE_SOLENOID)) PinmameSetModOutputType(output, no, static_cast<PINMAME_MOD_OUTPUT_TYPE>(newVal)); }
-
-   long GetSolMask(int nLow) const { return PinmameGetSolenoidMask(nLow); }
-   void SetSolMask(int nLow, long newVal) { if ((0 <= nLow && nLow <= 2) || (1000 <= nLow && nLow < 2999)) PinmameSetSolenoidMask(nLow, newVal); }
 
    void Run(long hParentWnd = 0L, int nMinVersion = 100);
    bool GetRunning() const { return PinmameIsRunning(); }
@@ -55,19 +55,27 @@ public:
    void SetTimeFence(double fenceIns) { PinmameSetTimeFence(fenceIns); }
    void Stop();
 
-   // Emulated machine state access
-   int GetGetMech(int mechNo) const { return PinmameGetMech(mechNo); }
-   void SetMech(int mechNo, int newVal);
-   bool GetSwitch(int nSwitchNo) const { return PinmameGetSwitch(nSwitchNo); }
-   void SetSwitch(int nSwitchNo, bool state) { PinmameSetSwitch(nSwitchNo, state ? 1 : 0); }
-   int GetDip(int nNo) const { return PinmameGetDIP(nNo); }
-   void SetDip(int nNo, int state) { PinmameSetDIP(nNo, state); }
-   bool GetSolenoid(int nSolenoid) const { return PinmameGetSolenoid(nSolenoid); }
-   bool GetLamp(int nLamp) const { return PinmameGetLamp(nLamp); }
+   std::vector<uint8_t> GetNVRAM() const;
+   const vector<PinmameNVRAMState>& GetChangedNVRAM();
+   const vector<PinmameSoundCommand>& GetNewSoundCommands();
+
+   // Inputs
+   bool GetSwitch(int nSwitchNo) const;
+   void SetSwitch(int nSwitchNo, bool state);
+   int GetDip(int nDipBank) const;
+   void SetDip(int nDipBank, int byteState);
+
+   // Devices
+   long GetSolMask(int nLow) const;
+   void SetSolMask(int nLow, long newVal); // Define device emulation mode, or mask applied to GetChangedSolenoids
+   int GetModOutputType(int output, int no) const; // FIXME deprecate in PinMAME/VPinMAME/LibPinMAME, this is wrong (it was added to wait while defining them inside PinMAME)
+   void SetModOutputType(int output, int no, int newVal); // FIXME deprecate in PinMAME/VPinMAME/LibPinMAME, this is wrong (it was added to wait while defining them inside PinMAME)
+   bool GetSolenoid(int nSolenoid) const;
+   bool GetLamp(int nLamp) const;
    // LampCallback is a deprecated VPinMAME accessor that some tables
    // (e.g. Who Dunnit (Bally 2021)) use as a synonym for Lamp(n). On real
    // VPinMAME the two return the same value; passthrough.
-   bool GetLampCallback(int n) const { return PinmameGetLamp(n); }
+   bool GetLampCallback(int n) const { return GetLamp(n); }
    // B2S Server passthrough shortcuts. On Windows VPinMAME the Controller
    // forwards these to the registered B2S Server so the backglass display
    // updates. Android has no backglass, so no-op stubs let the script run
@@ -76,28 +84,32 @@ public:
    // Resume Next, so unbinding them killed the table at table_init.
    void B2SSetScore(int /*score_id*/, int /*value*/) const {}
    void B2SSetData(int /*data_id*/, int /*value*/) const {}
-   int GetGIString(int nString) const { return PinmameGetGI(nString); }
-   std::vector<uint8_t> GetNVRAM() const;
+   int GetGIString(int nString) const;
+   int GetGetMech(int mechNo) const { return PinmameGetMech(mechNo); }
+   void SetMech(int mechNo, int newVal);
+   const vector<PinmameLampState>& GetChangedLamps() const;
+   const vector<PinmameGIState>& GetChangedGIStrings() const;
+   const vector<PinmameSolenoidState>& GetChangedSolenoids() const;
+
+   // Segment displays
+   const vector<PinmameLEDState>& GetChangedLEDs(int nHigh, int nLow, int nnHigh = 0, int nnLow = 0);
+
+   // DMD displays
    int GetRawDmdWidth();
    int GetRawDmdHeight();
    std::vector<uint8_t> GetRawDmdPixels();
    std::vector<uint32_t> GetRawDmdColoredPixels();
-   const vector<PinmameNVRAMState>& GetChangedNVRAM();
-   const vector<PinmameSoundCommand>& GetNewSoundCommands();
-   const vector<PinmameLampState>& GetChangedLamps();
-   const vector<PinmameLEDState>& GetChangedLEDs(int nHigh, int nLow, int nnHigh = 0, int nnLow = 0);
-   const vector<PinmameGIState>& GetChangedGIStrings();
-   const vector<PinmameSolenoidState>& GetChangedSolenoids();
+   bool GetShowPinDMD() const { LOGW("ShowPinDMD is deprecated"s); return false; } // Deprecated as this must not be part of the table script but of the global setup
+   void SetShowPinDMD(bool v) const { LOGW("ShowPinDMD is deprecated"s); } // Deprecated as this must not be part of the table script but of the global setup
+   bool GetShowWinDMD() const { LOGW("ShowWinDMD is deprecated"s); return false; } // Deprecated (could be implemented as exposing or not the DMD, but there is no good use case for this)
+   void SetShowWinDMD(bool v) const { LOGW("ShowWinDMD is deprecated"s); } // Deprecated (could be implemented as exposing or not the DMD, but there is no good use case for this)
 
-   // TODO should we bridge this ? but to what as External dmddevice.dll is handled through the plugin bus ?
-   bool GetShowPinDMD() const { LOGE("ShowPinDMD is not implemented"); return false; }
-   void SetShowPinDMD(bool v) const { LOGE("ShowPinDMD is not implemented"); }
+   // Note: we force input handling to be always disabled as it would lead to setup problems and conflicts.
+   // All interactions must be performed through the script or plugin API
+   bool GetHandleKeyboard() const { LOGW("GetHandleKeyboard is deprecated"s); return false; }
+   void SetHandleKeyboard(const bool handle) { LOGW("SetHandleKeyboard is deprecated"s); }
 
-   // TODO should we bridge this ? but to what as Windows DMD is handled through the plugin bus ?
-   bool GetShowWinDMD() const { LOGE("ShowWinDMD is not implemented"); return false; }
-   void SetShowWinDMD(bool v) const { LOGE("ShowWinDMD is not implemented"); }
-
-   // All these properties/methods are part of the VPinMame IDL but doesn't seem to be used anywhere (or are deprecated)
+   // All these properties/methods are part of the VPinMAME IDL but doesn't seem to be used anywhere (or are deprecated)
    //STDMETHOD(get_DmdWidth)(/*[out, retval]*/ int *pVal);
    //STDMETHOD(get_DmdHeight)(/*[out, retval]*/ int *pVal);
    //STDMETHOD(get_DmdPixel)(/*[in]*/ int x, /*[in]*/ int y, /*[out, retval]*/ int *pVal);
@@ -107,8 +119,6 @@ public:
    //STDMETHOD(get_GIStrings)(/*[out, retval]*/ VARIANT *pVal);
    //STDMETHOD(get_Solenoids)(/*[out, retval]*/ VARIANT *pVal);
    //STDMETHOD(get_ChangedGIStrings)(/*[out, retval]*/ VARIANT *pVal);
-   //STDMETHOD(get_HandleMechanics)(/*[out, retval]*/ int *pVal);
-   //STDMETHOD(put_HandleMechanics)(/*[in]*/ int newVal);
    //STDMETHOD(get_Machines)(/*[in]*/ BSTR sMachine, /*[out, retval]*/ VARIANT *pVal);
    //STDMETHOD(get_Switches)(/*[out, retval]*/ VARIANT *pVal);
    //STDMETHOD(put_Switches)(/*[out, retval]*/ VARIANT newVal);
@@ -133,25 +143,25 @@ public:
    //STDMETHOD(get_AudioDeviceModule)(/*[in]*/ int num, /*[out, retval]*/ BSTR *pVal);
    //STDMETHOD(get_CurrentAudioDevice)(/*[out, retval]*/ int *pVal);
    //STDMETHOD(put_CurrentAudioDevice)(/*[in]*/ int num);
-   bool GetLockDisplay() const { LOGE("LockDisplay is deprecated"); return false; }
-   void SetLockDisplay(bool v) const { LOGE("LockDisplay is deprecated"); }
-   bool GetDoubleSize() const { LOGE("DoubleSize is deprecated"); return false; }
-   void SetDoubleSize(bool v) const { LOGE("DoubleSize is deprecated"); }
-   bool GetShowFrame() const { LOGE("ShowFrame is deprecated"); return false; }
-   void SetShowFrame(bool v) const { LOGE("ShowFrame is deprecated"); }
-   bool GetShowDMDOnly() const { LOGE("ShowDMDOnly is deprecated"); return false; }
-   void SetShowDMDOnly(bool v) const { LOGE("ShowDMDOnly is deprecated"); }
-   bool GetShowTitle() const { LOGE("ShowTitle is deprecated"); return false; }
-   void SetShowTitle(bool v) const { LOGE("ShowTitle is deprecated"); }
-   int GetFastFrames() const { LOGE("FastFrames is deprecated"); return 0; }
-   void SetFastFrames(int v) const { LOGE("FastFrames is deprecated"); }
-   bool GetIgnoreRomCrc() const { LOGE("IgnoreRomCrc is deprecated"); return false; }
-   void SetIgnoreRomCrc(bool v) const { LOGE("IgnoreRomCrc is deprecated"); }
-   bool GetCabinetMode() const { LOGE("CabinetMode is deprecated"); return false; }
-   void SetCabinetMode(bool v) const { LOGE("CabinetMode is deprecated"); }
-   int GetSoundMode() const { LOGE("SoundMode is deprecated"); return 0; }
-   void SetSoundMode(int v) const { LOGE("SoundMode is deprecated"); }
-   void ShowOptsDialog(long hParentWnd = 0L) const { LOGE("ShowOptsDialog is deprecated"); }
+   bool GetLockDisplay() const { LOGW("LockDisplay is deprecated"s); return false; }
+   void SetLockDisplay(bool v) const { LOGW("LockDisplay is deprecated"s); }
+   bool GetDoubleSize() const { LOGW("DoubleSize is deprecated"s); return false; }
+   void SetDoubleSize(bool v) const { LOGW("DoubleSize is deprecated"s); }
+   bool GetShowFrame() const { LOGW("ShowFrame is deprecated"s); return false; }
+   void SetShowFrame(bool v) const { LOGW("ShowFrame is deprecated"s); }
+   bool GetShowDMDOnly() const { LOGW("ShowDMDOnly is deprecated"s); return false; }
+   void SetShowDMDOnly(bool v) const { LOGW("ShowDMDOnly is deprecated"s); }
+   bool GetShowTitle() const { LOGW("ShowTitle is deprecated"s); return false; }
+   void SetShowTitle(bool v) const { LOGW("ShowTitle is deprecated"s); }
+   int GetFastFrames() const { LOGW("FastFrames is deprecated"s); return 0; }
+   void SetFastFrames(int v) const { LOGW("FastFrames is deprecated"s); }
+   bool GetIgnoreRomCrc() const { LOGW("IgnoreRomCrc is deprecated"s); return false; }
+   void SetIgnoreRomCrc(bool v) const { LOGW("IgnoreRomCrc is deprecated"s); }
+   bool GetCabinetMode() const { LOGW("CabinetMode is deprecated"s); return false; }
+   void SetCabinetMode(bool v) const { LOGW("CabinetMode is deprecated"s); }
+   int GetSoundMode() const { LOGW("SoundMode is deprecated"s); return 0; }
+   void SetSoundMode(int v) const { LOGW("SoundMode is deprecated"s); }
+   void ShowOptsDialog(long hParentWnd = 0L) const { LOGW("ShowOptsDialog is deprecated"s); }
    //STDMETHOD(ShowPathesDialog)(/*[in,defaultvalue(0)]*/ LONG_PTR hParentWnd);
    //STDMETHOD(SetDisplayPosition)(/*[in]*/ int x, /*[in]*/ int y, /*[in]*/ LONG_PTR hParentWindow);
    //STDMETHOD(CheckROMS)(/*[in,defaultvalue(0)]*/ int nShowOptions, /*[in,defaultvalue(0)]*/ LONG_PTR hParentWnd, /*[out, retval]*/ VARIANT_BOOL *pVal);
@@ -160,34 +170,69 @@ public:
 
    const string& GetVpmPath() const { return m_vpmPath; }
 
-   void SetCheat(int cheat) { m_cheat = cheat; }
+   void SetCheat(bool cheat) { m_cheat = cheat; }
 
 private:
    string m_vpmPath;
-   string m_szGameName;
-   PinmameGame* m_pPinmameGame = nullptr;
+   std::filesystem::path m_memmapPath;
+   string m_szGameName; // Requested game name (may be an alias registered through alias.txt)
+   string m_szRomName; // Resolved driver name
+   mutable std::unordered_map<string, GameSettings*> m_gameSettings; // shared per game so settings survive repeated Games(name) accesses
+   Settings* m_settings = nullptr;
+   PinmameConfig m_pinmameConfig;
    PinmameMechConfig* m_pPinmameMechConfig = nullptr;
-   vector<PinmameLampState> m_lampStates;
    vector<PinmameLEDState> m_ledStates;
    vector<PinmameNVRAMState> m_nvramStates;
    vector<PinmameSoundCommand> m_soundCommands;
-   vector<PinmameGIState> m_giStates;
-   vector<PinmameSolenoidState> m_solenoidStates;
    string m_splashInfoLine; // Info line shown during startup
-   bool m_hidden = true; // Show/Hide PinMame window
+   bool m_hidden = true; // Show/Hide PinMAME window
 
    const MsgPluginAPI* const m_msgApi;
    const unsigned int m_endpointId;
+
+   enum DeviceMode
+   {
+      DM_BINARY,
+      DM_MODSOL,
+      DM_PHYSOUT
+   };
+   uint64_t m_solMask = 0xFFFFFFFFFFFFFFFFULL; // Mask applied to (and only to) GetChangedSolenoids
+   DeviceMode m_deviceMode = DM_BINARY;
+
+   mutable PinballPlugin::Controller::CtrlItemConsumer<StateSrcId> m_stateSources;
+   void OnStateSrcChanged(const std::vector<StateSrcId>& states);
+   StateSrcId m_switches { };
+   vector<bool> m_switchStates;
+   vector<unsigned int> m_switchMap;
+   StateSrcId m_dipSwitches { };
+   vector<bool> m_dipSwitchStates;
+   vector<unsigned int> m_dipSwitchMap;
+   StateSrcId m_solenoids { };
+   vector<unsigned int> m_solenoidMap;
+   mutable vector<uint8_t> m_prevSolenoidStates;
+   mutable vector<PinmameSolenoidState> m_changedSolenoids;
+   StateSrcId m_gis { };
+   vector<unsigned int> m_giMap;
+   mutable vector<uint8_t> m_prevGIStates;
+   mutable vector<PinmameGIState> m_changedGIs;
+   StateSrcId m_lamps { };
+   vector<unsigned int> m_lampMap;
+   mutable vector<uint8_t> m_prevLampStates;
+   mutable vector<PinmameLampState> m_changedLamps;
+
    unsigned int m_getDmdSrcMsgId, m_onDmdChangedMsgId;
-   DisplaySrcId m_defaultDmd {};
-   void UpdateDmdSrc();
+   bool m_dmdUpdatePending = true;
+   DisplaySrcId m_defaultDmd { };
    static void OnDmdSrcChanged(const unsigned int msgId, void* userData, void* msgData);
+   void UpdateDmdSrc();
 
    void (*m_onDestroyHandler)(Controller*) = nullptr;
    void (*m_onGameStartHandler)(Controller*) = nullptr;
    void (*m_onGameEndHandler)(Controller*) = nullptr;
 
-   int m_cheat = 0;
+   bool m_cheat = false;
+
+   const std::thread::id m_threadLock;
 };
 
 }

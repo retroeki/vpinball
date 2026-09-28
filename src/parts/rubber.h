@@ -1,16 +1,23 @@
 // license:GPLv3+
 
-// Definition of the Rubber class
-
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "math/MeshUtils.h"
+#include "math/dragpoint.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
 #include "unordered_dense.h"
+
+
+class MeshBuffer;
 
 class RubberData final : public BaseProperty
 {
 public:
-   TimerDataRoot m_tdr;
    float m_height;
    float m_hitHeight;
    int m_thickness;
@@ -30,22 +37,28 @@ class Rubber :
    public EventProxy<Rubber, &DIID_IRubberEvents>,
    public IConnectionPointContainerImpl<Rubber>,
    public IProvideClassInfo2Impl<&CLSID_Rubber, &DIID_IRubberEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
-   public IHaveDragPoints,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Rubber();
+   Rubber()
+      : m_curve(this, 2)
+   {
+      m_d.m_collidable = true;
+      m_d.m_visible = true;
+      m_timerEnabled = false;
+      m_timerInterval = 0;
+   }
    virtual ~Rubber();
 
    BEGIN_COM_MAP(Rubber)
@@ -62,46 +75,36 @@ public:
       CONNECTION_POINT_ENTRY(DIID_IRubberEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Rubber, eItemRubber, RUBBER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Rubber, eItemRubber, RUBBER)
 
-      //DECLARE_NOT_AGGREGATABLE(Rubber)
-      // Remove the comment from the line above if you don't want your object to
-      // support aggregation.
+   //DECLARE_NOT_AGGREGATABLE(Rubber)
+   // Remove the comment from the line above if you don't want your object to
+   // support aggregation.
 
-      DECLARE_REGISTRY_RESOURCEID(IDR_RUBBER)
+   DECLARE_REGISTRY_RESOURCEID(IDR_RUBBER)
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   void RenderBlueprint(Sur *psur, const bool solid) final;
-
    void ClearForOverwrite() final;
-
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
-
-   void DoCommand(int icmd, int x, int y) final;
-
-   int GetMinimumPoints() const final { return 2; }
 
    void FlipY(const Vertex2D& pvCenter) final;
    void FlipX(const Vertex2D& pvCenter) final;
    void Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter) final;
    void Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter) final;
-   void Translate(const Vertex2D &pvOffset) final;
-   void AddPoint(int x, int y, const bool smooth) final;
+   void Translate(const Vertex2D &offset) final;
+   Vertex2D GetCenter() const final { return m_curve.GetCenter(); }
 
-   Vertex2D GetCenter() const final { return GetPointCenter(); }
-   void PutCenter(const Vertex2D& pv) final { PutPointCenter(pv); }
+   bool IsShownInEditor() const final { return m_d.m_showInEditor; }
 
    void GetBoundingVertices(vector<Vertex3Ds> &bounds, vector<Vertex3Ds> *const legacy_bounds) final;
 
    float GetDepth(const Vertex3Ds& viewDir) const final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemRubber; }
    void SetDefaultPhysics(const bool fromMouseClick) final;
    void ExportMesh(ObjLoader& loader) final;
 
    void WriteRegDefaults() final;
-   void UpdateStatusBarInfo() final;
+
+   void AddPoint(const Vertex2D &v, const bool smooth);
 
 #if 0
    float GetSurfaceHeight(float x, float y) const final;
@@ -109,13 +112,22 @@ public:
 
    RubberData m_d;
 
+   // The rubber outline curve (drag points defining the rubber band shape)
+   DragPointCurve m_curve;
+
+   // Fills 'outline' with the closed 2D outline of the rubber for editor display, and optionally
+   // 'crossFlags' with one flag per curve vertex marking the ones located at a control point.
+   void GetEditorOutline(vector<Vertex2D> &outline, vector<bool> *crossFlags, const float accuracy) const;
+
+   // Fills 'edges' with pairs of 2D vertices forming the wireframe of the generated mesh for editor display.
+   // This actually regenerate the mesh
+   void GetEditorWireframe(vector<Vertex2D> &edges);
+
 private:
    void AddHitEdge(class PhysicsEngine *physics, ankerl::unordered_dense::set<std::pair<unsigned, unsigned>> &addedEdges, const unsigned i, const unsigned j, const bool isUI);
    void SetupHitObject(class PhysicsEngine *physics, HitObject *obj, const bool isUI);
 
-   PinTable *m_ptable;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_meshBuffer;
    std::shared_ptr<MeshBuffer> m_meshEdgeBuffer;
    bool m_dynamicVertexBufferRegenerate;
@@ -133,15 +145,12 @@ private:
 
    Vertex3Ds m_middlePoint;
 
-   PropertyPane *m_propVisual;
-
    void GetCentralCurve(vector<RenderVertex> &vv, const float _accuracy = -1.f) const;
 
    Vertex2D *GetSplineVertex(int &pcvertex, bool ** const ppfCross, Vertex2D ** const pMiddlePoints, const float _accuracy = -1.f) const;
 
    void UpdateRubber(const bool updateVB, const float height);
    void GenerateMesh(const int _accuracy = -1, const bool createHitShape = false);
-   void DrawRubberMesh(Sur * const psur);
 
    // IRubber
 public:

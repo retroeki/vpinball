@@ -3,7 +3,6 @@
 #pragma once
 
 #include <SDL3/SDL_audio.h>
-#include "plugins/MsgPluginManager.h"
 
 // Forward-declare miniaudio types for the Android streaming path. They're
 // opaque pointers in the header; the full headers are included in the .cpp.

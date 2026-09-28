@@ -15,11 +15,12 @@ namespace PinMAME {
 class Game final
 {
 public:
-   Game(Controller* pController, const PinmameGame& pinmameGame)
+   Game(Controller* pController, const PinmameGame& pinmameGame, GameSettings* pSettings)
       : m_pController(pController)
-      , m_settings(new GameSettings())
+      , m_settings(pSettings)
    {
       m_pController->AddRef();
+      m_settings->AddRef();
       memcpy(&m_pinmameGame, &pinmameGame, sizeof(PinmameGame));
    }
    ~Game()
@@ -39,7 +40,7 @@ public:
    bool GetIsSupported() const { return true; /* Not yet implemented */ }
    Roms *GetRoms() const { return nullptr; /* Not yet implemented */ }
    GameSettings* GetSettings() { m_settings->AddRef(); return m_settings; }
-   int ShowInfoDlg(int nShowOptions, void *hParentWnd) const { return 0; /* Not yet implemented */ }
+   int ShowInfoDlg(int nShowOptions, void* hParentWnd) const { LOGE("Game.ShowInfoDlg is not implemented."); return 0; }
 
 private:
    PinmameGame m_pinmameGame;

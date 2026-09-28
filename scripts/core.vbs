@@ -88,10 +88,15 @@ Private Const conFlipRetSpeed	 = 0.137 ' Flipper return speed
 Function CheckScript(file) 'Checks Tables and Scripts directories for specified vbs file, and if it exists, will load it.
 	CheckScript = False
 	On Error Resume Next
-	Dim TablesDirectory:TablesDirectory = Left(UserDirectory,InStrRev(UserDirectory,"\",InStrRev(UserDirectory,"\")-1))&"tables\"
-	Dim ScriptsDirectory:ScriptsDirectory = Left(UserDirectory,InStrRev(UserDirectory,"\",InStrRev(UserDirectory,"\")-1))&"scripts\"
 	Dim check:Set check = CreateObject("Scripting.FileSystemObject")
-	If check.FileExists(tablesdirectory & file) Or check.FileExists(scriptsdirectory & file) Or check.FileExists(file) Then CheckScript = True
+	If check.FileExists(file) Then ' file is directly specified with path
+		CheckScript = True
+	ElseIf check.FileExists(ScriptsDirectory & file) Then ' file is in main application Scripts directory (core scripts)
+		CheckScript = True
+	Else
+		Dim TablesDirectory:TablesDirectory = Left(ActiveTable.FileName,InStrRev(ActiveTable.FileName,"\",InStrRev(ActiveTable.FileName,"\")-1))
+		If check.FileExists(TablesDirectory & file) Then CheckScript = True ' file is in current table directory
+	End If
 	On Error Goto 0
 End Function
 
@@ -196,12 +201,19 @@ Class cvpmTimer
 	End Sub
 
 	Sub EnableUpdate(aClass, aFast, aEnabled)
-		On Error Resume Next
 		If aFast Then
-			If aEnabled Then mFastUpdates.Add aClass, 0 : Else mFastUpdates.Remove aClass
-			mFastTimer.TimerEnabled = mFastUpdates.Count > 0
+			If aEnabled Then
+				mFastUpdates.Add aClass, 0
+			ElseIf mFastUpdates.Exists(aClass) Then
+				mFastUpdates.Remove aClass
+			End If
+			If IsObject(mFastTimer) Then mFastTimer.TimerEnabled = mFastUpdates.Count > 0
 		Else
-			If aEnabled Then mSlowUpdates.Add aClass, 0 : Else mSlowUpdates.Remove aClass
+			If aEnabled Then
+				mSlowUpdates.Add aClass, 0
+			ElseIf mSlowUpdates.Exists(aClass) Then
+				mSlowUpdates.Remove aClass
+			End If
 		End If
 	End Sub
 
@@ -2376,6 +2388,19 @@ Sub vpmDoLampUpdate(aNo, aEnabled)
 End Sub
 
 Dim LastPinMameVisualSync : LastPinMameVisualSync = 0
+
+' True for controllers returning a frame that actually holds pixels. IsEmpty alone is not enough
+Private Function vpmHasDmdFrame(aPixels)
+	vpmHasDmdFrame = False
+	If IsEmpty(aPixels) Then Exit Function
+	If Not IsArray(aPixels) Then Exit Function
+	Dim ub : ub = -1
+	On Error Resume Next
+		ub = UBound(aPixels) ' Raises on arrays that never were dimensioned, hence guarded read
+	On Error Goto 0
+	vpmHasDmdFrame = (ub >= 0)
+End Function
+
 Sub PinMAMETimer_Timer
 	Dim ChgLamp,ChgSol,ChgGI,ChgLed, ii, tmp, idx
 	Dim DMDp
@@ -2405,14 +2430,14 @@ Sub PinMAMETimer_Timer
 			If Not IsPluginPinMAME Then
 				If UseDMD Then
 					DMDp = Controller.RawDmdPixels
-					If Not IsEmpty(DMDp) Then
+					If vpmHasDmdFrame(DMDp) Then
 						DMDWidth = Controller.RawDmdWidth
 						DMDHeight = Controller.RawDmdHeight
 						DMDPixels = DMDp
 					End If
 				ElseIf UseColoredDMD Then
 					DMDp = Controller.RawDmdColoredPixels
-					If Not IsEmpty(DMDp) Then
+					If vpmHasDmdFrame(DMDp) Then
 						DMDWidth = Controller.RawDmdWidth
 						DMDHeight = Controller.RawDmdHeight
 						DMDColoredPixels = DMDp
@@ -2866,6 +2891,13 @@ End Function
 
 Private vpmSystemHelp
 Private Sub vpmShowHelp
+	' With the PinMAME plugin most listed keys do not apply (the VPM dialogs are gone and
+	' action mapped keys cannot be resolved to a key name); the in-game UI shows the
+	' actual key bindings instead. On standalone there also is no message box to show.
+	If IsPluginPinMAME Then
+		MsgBox "The key help is not available with the PinMAME plugin, the in-game UI shows the actual key bindings"
+		Exit Sub
+	End If
 	Dim szKeyMsg
 	szKeyMsg = "The following keys are defined: "				   & vbNewLine &_
 			   "(American keyboard layout)"						   & vbNewLine &_
@@ -2914,8 +2946,9 @@ End Sub
 
 'added thanks to Koadic
 Sub NVOffset(version) ' version 2 for dB2S compatibility
-	if PlatformOS <> "windows" then
-		MsgBox "NVOffset is not supported on standalone versions of Visual Pinball. Similar functionality can be achieved by putting the rom in pinmame/roms next to the table file."
+	' Relies on the classic VPinMAME registry configuration and nvram folder
+	If IsPluginPinMAME Then
+		MsgBox "NVOffset is not supported with the PinMAME plugin. Similar functionality can be achieved by putting the rom in pinmame/roms next to the table file."
 		Exit Sub
 	End If
 	Dim check,nvcheck,v,vv,nvpath,rom
@@ -2950,10 +2983,6 @@ End Sub
 Sub VPMVol
 	' PinMAME plugin streams its sound through VPX, using VPX mixing and therefore volume settings
 	if IsPluginPinMAME Then Exit Sub
-	if PlatformOS <> "windows" then
-		MsgBox "VPinMAME Volume adjustment is not supported on standalone versions of Visual Pinball."
-		Exit Sub
-	End If
 	Dim VolPM,VolPMNew
 	VolPM = Controller.Games(controller.GameName).Settings.Value("volume")
 	VolPMNew = InputBox ("Enter desired VPinMAME Volume Level (-32 to 0)","VPinMAME Volume",VolPM)

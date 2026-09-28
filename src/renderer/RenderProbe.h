@@ -2,8 +2,15 @@
 
 #pragma once
 
+#include "utils/fileio.h"
+
+class RenderTarget;
+class RenderPass;
+class RenderDevice;
+class RenderDeviceState;
+
 // A render probe is a render of the scene to an offscreen render target which is later used for shading scene parts, for example for reflections
-class RenderProbe final : ILoadable
+class RenderProbe final
 {
 public:
    enum ProbeType
@@ -15,7 +22,7 @@ public:
    enum ReflectionMode
    {
       REFL_NONE, // No reflections
-      REFL_BALLS, // Only balls reflections
+      REFL_BALLS, // Only ball reflections
       REFL_STATIC, // Only static (prerendered) reflections
       REFL_STATIC_N_BALLS, // Static reflections and balls, without depth sync (static or dynamic reflection may be rendered while they should be occluded)
       REFL_STATIC_N_DYNAMIC, // Static and dynamic reflections, without depth sync (static or dynamic reflection may be rendered while they should be occluded)
@@ -47,16 +54,15 @@ public:
    void ApplyAreaOfInterest(RenderPass* pass = nullptr);
 
    // Load/Save
-   int GetSaveSize() const;
-   HRESULT SaveData(IStream* pstm, HCRYPTHASH hcrypthash, const bool saveForUndo);
-   HRESULT LoadData(IStream* pstm, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey);
-   bool LoadToken(const int id, BiffReader* const pbr) override;
+   void Save(IObjectWriter& writer, bool saveForUndo);
+   void Load(IObjectReader& reader);
 
    // Rendering
    void RenderSetup(class Renderer* renderer);
    void MarkDirty(); // Mark this probe as dirty, should be called when starting a new frame
    bool IsRendering() const { return m_rendering; }
-   void PreRenderStatic(); // Allows to precompute static parts
+   bool IsStaticAccumulationPending() const; // True while this probe still has samples to accumulate for its static parts prerender
+   void MarkDirtyStatics(); // Mark the prerendered static parts as dirty, they are lazily accumulated again over the next frames
    RenderTarget* Render(const unsigned int renderMask); // Lazily update render probe and returns it
    void RenderRelease();
 
@@ -68,9 +74,7 @@ private:
 
    void RenderScreenSpaceTransparency();
 
-   void PreRenderStaticReflectionProbe();
-   void RenderReflectionProbe(const unsigned int renderMask);
-   void DoRenderReflectionProbe(const bool render_static, const bool render_balls, const bool render_dynamic);
+   RenderTarget* RenderReflectionProbe(const unsigned int renderMask);
 
    // Base properties
    ProbeType m_type = PLANE_REFLECTION;
@@ -85,13 +89,15 @@ private:
 
    // Properties used for rendering (not saved)
    Renderer* m_renderer = nullptr;
-   RenderDevice* m_rd = nullptr;
    RenderDeviceState* m_rdState = nullptr;
    bool m_dirty = true;
+   bool m_isSplitRendering = false;
    bool m_rendering = false;
    RenderTarget* m_blurRT = nullptr;
-   RenderTarget* m_prerenderRT = nullptr;
+   RenderTarget* GetRenderTarget(bool isStaticRT);
    RenderTarget* m_dynamicRT = nullptr;
+   RenderTarget* m_prerenderRT = nullptr; // Prerendered static parts, accumulated over successive frames
+   int m_staticAccumCount = 0; // Number of samples accumulated so far in the static parts prerender
    RenderPass* m_finalPass = nullptr; // Pass after roughness has been applied
    RenderPass* m_copyPass = nullptr; // Pass that performs the screen space copy
 };

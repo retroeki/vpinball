@@ -5,6 +5,7 @@
 #ifdef __STANDALONE__
 #include <climits>
 #endif
+#include <atomic>
 #include <thread>
 #include <iomanip>
 
@@ -56,19 +57,20 @@ public:
    {
       // Sections of a frame. Sum of the following sections should give the same as PROFILE_FRAME
       // Logic thread
-      PROFILE_MISC,          // Everything not covered below
-      PROFILE_SCRIPT,        // Time spent in script (all events)
-      PROFILE_PHYSICS,       // Time spent in the physics simulation
-      PROFILE_SLEEP,         // Time spent sleeping per frame
-      PROFILE_PREPARE_FRAME, // Time spent to build the render frame
-      PROFILE_CUSTOM1,       // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
-      PROFILE_CUSTOM2,       // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
-      PROFILE_CUSTOM3,       // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
+      PROFILE_MISC,              // Everything not covered below
+      PROFILE_SCRIPT,            // Time spent in script (all events)
+      PROFILE_PHYSICS,           // Time spent in the physics simulation
+      PROFILE_SLEEP,             // Time spent sleeping per frame
+      PROFILE_PREPARE_FRAME,     // Time spent to build the render frame
+      PROFILE_CUSTOM1,           // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
+      PROFILE_CUSTOM2,           // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
+      PROFILE_CUSTOM3,           // Use in conjunction with PROFILE_FUNCTION to perform custom profiling of sub sections of frames
       // Render thread
-      PROFILE_RENDER_WAIT,   // Time spent waiting for a frame to be ready to be submitted (when CPU bounded)
-      PROFILE_RENDER_SUBMIT, // Time spent to submit the render frame to the GPU
-      PROFILE_RENDER_FLIP,   // Time spent flipping the swap chain (flush the GPU render queue)
-      PROFILE_RENDER_SLEEP,  // Time spent sleeping per frame (for user setting FPS synchronization)
+      PROFILE_RENDER_WAIT,       // Time spent waiting for a frame to be prepared by the logic thread (only for BGFX backend)
+      PROFILE_RENDER_WAIT_SC,    // Time spent waiting for a swapchain slot (when GPU bounded, only for BGFX backend)
+      PROFILE_RENDER_SUBMIT,     // Time spent to submit to submit the frame to the GPU (DX9/OpenGL) or to BGFX (when using BGFX backend)
+      PROFILE_RENDER_FLIP,       // Time spent flipping the swap chain (flush the GPU render queue)
+      PROFILE_RENDER_SLEEP,      // Time spent sleeping per frame (for software FPS synchronization)
       // Dedicated counters
       PROFILE_FRAME,             // Overall frame length
       PROFILE_INPUT_POLL_PERIOD, // Time spent between 2 input processings (not tied to frame timings)
@@ -122,18 +124,20 @@ public:
          "Custom 2:      "s,
          "Custom 3:      "s,
          // Render thread
-         "Render Wait:   "s, 
+         "Render Wait:   "s,
+         "Render WaitSC: "s,
          "Render Submit: "s,
          "Render Flip:   "s,
          "Render Sleep:  "s,
       };
+      static_assert(sizeof(labels) / sizeof(labels[0]) == PROFILE_RENDER_SLEEP + 1, "labels[] is out of sync with the ProfileSection enum");
       for (unsigned int i = 0; i < N_WORST; i++)
       {
          if (m_profileWorstData[i][PROFILE_FRAME] == 0)
             break;
          PLOGI << "Long Frame of " << std::setw(5) << std::fixed << std::setprecision(1) << (m_profileWorstData[i][PROFILE_FRAME] * 1e-3) << "ms happened after " 
                << std::setw(5) << std::fixed << (m_profileWorstGameTime[i] * 1e-3) << "s:";
-         for (int j = PROFILE_MISC; j <= PROFILE_CUSTOM3; j++)
+         for (int j = PROFILE_MISC; j <= PROFILE_RENDER_SLEEP; j++)
             if (m_profileWorstData[i][j] > 100) // only log impacting timings (above 0.1 ms)
             {
                PLOGI << "  . " << labels[j] << std::setw(6) << std::fixed << std::setprecision(1) << (m_profileWorstData[i][j] * 1e-3) << "ms";
@@ -155,11 +159,21 @@ public:
    {
       // assert(m_threadLock == std::this_thread::get_id()); // Not asserted as NewFrame happens in a critical section (guarded by frameMutex)
       assert(m_profileSectionStackPos == 0);
+      m_profileTimeStamp = usec();
       m_frameIndex++;
-      if ((m_processInputTimeStampOnPrepare != 0) && (m_lastPresentedTimeStamp > m_processInputTimeStampOnPrepare))
+
+      if (m_frameIndex > 0)
       {
-         // Processed asynchronously here since input events are from game logic thread while present events are from rendering thread
-         unsigned int elapsed = (unsigned int) (m_lastPresentedTimeStamp - m_processInputTimeStampOnPrepare);
+         m_profileData[m_profileIndex][PROFILE_FRAME] = static_cast<unsigned int>(m_profileTimeStamp - m_frameTimeStamp);
+      }
+
+      // Processed asynchronously here since input events are from game logic thread while present events are from rendering thread
+      // Loaded once: OnPresented may store between the two uses, and a larger second read would
+      // make the subtraction below underflow.
+      const uint64_t lastPresented = m_lastPresentedTimeStamp.load(std::memory_order_relaxed);
+      if ((m_processInputTimeStampOnPrepare != 0) && (lastPresented > m_processInputTimeStampOnPrepare))
+      {
+         unsigned int elapsed = static_cast<unsigned int>(lastPresented - m_processInputTimeStampOnPrepare);
          m_profileData[m_presentedIndex][PROFILE_INPUT_TO_PRESENT] = elapsed;
          m_profileMinData[PROFILE_INPUT_TO_PRESENT] = min(m_profileMinData[PROFILE_INPUT_TO_PRESENT], elapsed);
          m_profileMaxData[PROFILE_INPUT_TO_PRESENT] = max(m_profileMaxData[PROFILE_INPUT_TO_PRESENT], elapsed);
@@ -168,42 +182,39 @@ public:
          m_presentedCount++;
       }
       m_processInputTimeStampOnPrepare = m_processInputTimeStamp;
-      m_profileTimeStamp = usec();
-      if (m_frameIndex > 0)
+
+      // Keep worst frames for easier inspection of stutter causes
+      if ((m_frameIndex > 100) && (m_profileData[m_profileIndex][PROFILE_FRAME] >= m_leastWorstFrameLength))
       {
-         unsigned int frameLength = (unsigned int)(m_profileTimeStamp - m_frameTimeStamp);
-         m_profileData[m_profileIndex][PROFILE_FRAME] = frameLength;
-         // Keep worst frames for easier inspection of stutter causes
-         if ((m_frameIndex > 100) && (frameLength >= m_leastWorstFrameLength))
+         unsigned int least_worst = INT_MAX;
+         for (unsigned int i = 0; i < N_WORST; i++)
          {
-            unsigned int least_worst = INT_MAX;
-            for (unsigned int i = 0; i < N_WORST; i++)
+            if (m_profileWorstData[i][PROFILE_FRAME] < least_worst)
             {
-               if (m_profileWorstData[i][PROFILE_FRAME] < least_worst)
+               least_worst = m_profileWorstData[i][PROFILE_FRAME];
+               if (least_worst <= m_leastWorstFrameLength)
                {
-                  least_worst = m_profileWorstData[i][PROFILE_FRAME];
-                  if (least_worst <= m_leastWorstFrameLength)
-                  {
-                     m_leastWorstFrameLength = 0;
-                     m_profileWorstGameTime[i] = gametime;
-                     memcpy(m_profileWorstData[i], m_profileData[m_profileIndex], sizeof(m_profileWorstData[0]));
-                     m_worstScriptEventData[i].clear();
-                     m_worstScriptEventData[i] = m_scriptEventData;
-                     memcpy(m_profileWorstProfileTimers[i], m_profileTimers, m_profileTimersPos);
-                     m_profileWorstProfileTimersLen[i] = m_profileTimersPos;
-                  }
+                  m_leastWorstFrameLength = 0;
+                  m_profileWorstGameTime[i] = gametime;
+                  memcpy(m_profileWorstData[i], m_profileData[m_profileIndex], sizeof(m_profileWorstData[0]));
+                  m_worstScriptEventData[i].clear();
+                  m_worstScriptEventData[i] = m_scriptEventData;
+                  memcpy(m_profileWorstProfileTimers[i], m_profileTimers, m_profileTimersPos);
+                  m_profileWorstProfileTimersLen[i] = m_profileTimersPos;
                }
             }
-            m_leastWorstFrameLength = least_worst;
          }
-         for (int i = 0; i < PROFILE_COUNT; i++)
-         {
-            const unsigned int data = m_profileData[m_profileIndex][i];
-            m_profileMinData[i] = min(m_profileMinData[i], data);
-            m_profileMaxData[i] = max(m_profileMaxData[i], data);
-            m_profileTotalData[i] += data;
-         }
+         m_leastWorstFrameLength = least_worst;
       }
+
+      for (int i = 0; i < PROFILE_COUNT; i++)
+      {
+         const unsigned int data = m_profileData[m_profileIndex][i];
+         m_profileMinData[i] = min(m_profileMinData[i], data);
+         m_profileMaxData[i] = max(m_profileMaxData[i], data);
+         m_profileTotalData[i] += data;
+      }
+
       m_profileIndex = (m_profileIndex + 1) % N_SAMPLES;
       memset(m_profileData[m_profileIndex], 0, sizeof(m_profileData[0]));
       memset(m_profileDataStart[m_profileIndex], 0, sizeof(m_profileDataStart[0]));
@@ -232,11 +243,6 @@ public:
       assert(m_threadLock == std::this_thread::get_id());
       //m_profileDataEnd[m_profileIndex][PROFILE_RENDER_SUBMIT] += us;
       m_profileData[m_profileIndex][PROFILE_RENDER_SUBMIT] += us;
-      /* if (m_profileDataStart[m_profileIndex][PROFILE_RENDER_SLEEP] != 0)
-      {
-         m_profileDataStart[m_profileIndex][PROFILE_RENDER_SLEEP] += us;
-         m_profileDataEnd[m_profileIndex][PROFILE_RENDER_SLEEP] += us;
-      }*/
       //m_profileDataStart[m_profileIndex][PROFILE_RENDER_FLIP] += us;
       m_profileData[m_profileIndex][PROFILE_RENDER_FLIP] -= us;
    }
@@ -264,20 +270,23 @@ public:
       assert(m_threadLock == std::this_thread::get_id());
       EnterProfileSection(PROFILE_SCRIPT);
       m_scriptEventDispID = id;
+      m_timerNameWritten = false;
       // For the time being, just store a list of the timer called during the script profile section
       if (!timer_name.empty())
       {
          m_profileTimerTimeStamp = m_profileTimeStamp;
          const size_t len = timer_name.length() + 1;
-         if (m_profileTimersPos + len < MAX_TIMER_LOG - 8)
+         if (m_profileTimersPos + len + 4 <= MAX_TIMER_LOG)
          {
-            strncpy_s(&m_profileTimers[m_profileTimersPos], len, timer_name.c_str());
+            memcpy(&m_profileTimers[m_profileTimersPos], timer_name.c_str(), len);
             m_profileTimersPos += len;
+            m_timerNameWritten = true;
          }
-         else if (m_profileTimersPos < MAX_TIMER_LOG - 8)
+         else if (m_profileTimersPos + 8 <= MAX_TIMER_LOG)
          {
-            strncpy_s(&m_profileTimers[m_profileTimersPos], 4, "...");
+            memcpy(&m_profileTimers[m_profileTimersPos], "...", 4);
             m_profileTimersPos += 4;
+            m_timerNameWritten = true;
          }
       }
    }
@@ -291,7 +300,7 @@ public:
       et.totalLength += (unsigned int)(m_profileTimeStamp - profileTimeStamp);
       if (m_profileSection != PROFILE_SCRIPT)
          et.callCount++;
-      if (!timer_name.empty() && (m_profileTimersPos + 4 < MAX_TIMER_LOG))
+      if (m_timerNameWritten && (m_profileTimersPos + 4 <= MAX_TIMER_LOG))
       {
          *((uint32_t*)(&m_profileTimers[m_profileTimersPos])) = (uint32_t)(m_profileTimeStamp - m_profileTimerTimeStamp);
          m_profileTimersPos += 4;
@@ -337,13 +346,14 @@ public:
    double GetRatio(ProfileSection section) const
    {
       assert(0 <= section && section <= PROFILE_FRAME); // Unimplemented and not meaningful for other sections 
-      return m_profileTotalData[ProfileSection::PROFILE_FRAME] == 0 ? 0. : (static_cast<double>(m_profileTotalData[section]) / static_cast<double>(m_profileTotalData[ProfileSection::PROFILE_FRAME]));
+      const int frame = m_profileTotalData[ProfileSection::PROFILE_FRAME];
+      return frame == 0 ? 0. : (static_cast<double>(m_profileTotalData[section]) / static_cast<double>(frame));
    }
 
    double GetSlidingRatio(ProfileSection section) const
    {
       assert(0 <= section && section <= PROFILE_FRAME); // Unimplemented and not meaningful for other sections
-      double frame = GetSlidingAvg(PROFILE_FRAME);
+      const double frame = GetSlidingAvg(PROFILE_FRAME);
       return frame <= 1e-9 ? 0. : GetSlidingAvg(section) / frame;
    }
 
@@ -471,7 +481,7 @@ public:
 
    void OnPresented(uint64_t when) // May be called from any thread
    {
-      m_lastPresentedTimeStamp = when;
+      m_lastPresentedTimeStamp.store(when, std::memory_order_relaxed);
    }
 
    void SetThreadLock()
@@ -516,7 +526,7 @@ private:
    unsigned int m_presentedIndex = 0;
    unsigned int m_presentedCount = 0;
    uint64_t m_processInputTimeStampOnPrepare = 0;
-   uint64_t m_lastPresentedTimeStamp = 0;
+   std::atomic<uint64_t> m_lastPresentedTimeStamp { 0 }; // Written by the presenting thread, read by the profiler's own thread
 
    // Raw data
    unsigned int m_profileData[N_SAMPLES][PROFILE_COUNT];
@@ -528,6 +538,7 @@ private:
    char m_profileTimers[MAX_TIMER_LOG];
    size_t m_profileTimersPos = 0;
    uint64_t m_profileTimerTimeStamp;
+   bool m_timerNameWritten = false;
 
    // Worst frames data
    unsigned int m_leastWorstFrameLength;
@@ -545,26 +556,26 @@ private:
          string name;
          switch (v.first)
          {
-         case 1000: name = "GameEvents:KeyDown"s; break;
-         case 1001: name = "GameEvents:KeyUp"s; break;
-         case 1002: name = "GameEvents:Init"s; break;
-         case 1003: name = "GameEvents:MusicDone"s; break;
-         case 1004: name = "GameEvents:Exit"s; break;
-         case 1005: name = "GameEvents:Paused"s; break;
-         case 1006: name = "GameEvents:UnPaused"s; break;
-         case 1007: name = "GameEvents:OptionEvent"s; break;
-         case 1101: name = "SurfaceEvents:Slingshot"s; break;
-         case 1200: name = "FlipperEvents:Collide"s; break;
-         case 1300: name = "TimerEvents:Timer"s; break;
-         case 1301: name = "SpinnerEvents:Spin"s; break;
-         case 1302: name = "TargetEvents:Dropped"s; break;
-         case 1303: name = "TargetEvents:Raised"s; break;
-         case 1320: name = "LightSeqEvents:PlayDone"s; break;
-         case 1400: name = "HitEvents:Hit"s; break;
-         case 1401: name = "HitEvents:Unhit"s; break;
-         case 1402: name = "LimitEvents:EOS"s; break;
-         case 1403: name = "LimitEvents:BOS"s; break;
-         case 1404: name = "AnimateEvents:Animate"s; break;
+         case 1000: name = "GameEvents:KeyDown"sv; break;
+         case 1001: name = "GameEvents:KeyUp"sv; break;
+         case 1002: name = "GameEvents:Init"sv; break;
+         case 1003: name = "GameEvents:MusicDone"sv; break;
+         case 1004: name = "GameEvents:Exit"sv; break;
+         case 1005: name = "GameEvents:Paused"sv; break;
+         case 1006: name = "GameEvents:UnPaused"sv; break;
+         case 1007: name = "GameEvents:OptionEvent"sv; break;
+         case 1101: name = "SurfaceEvents:Slingshot"sv; break;
+         case 1200: name = "FlipperEvents:Collide"sv; break;
+         case 1300: name = "TimerEvents:Timer"sv; break;
+         case 1301: name = "SpinnerEvents:Spin"sv; break;
+         case 1302: name = "TargetEvents:Dropped"sv; break;
+         case 1303: name = "TargetEvents:Raised"sv; break;
+         case 1320: name = "LightSeqEvents:PlayDone"sv; break;
+         case 1400: name = "HitEvents:Hit"sv; break;
+         case 1401: name = "HitEvents:Unhit"sv; break;
+         case 1402: name = "LimitEvents:EOS"sv; break;
+         case 1403: name = "LimitEvents:BOS"sv; break;
+         case 1404: name = "AnimateEvents:Animate"sv; break;
          default: name = "DispID[" + std::to_string(v.first) + ']';
          }
          // ss << " spent in " << std::setw(3) << v.second.callCount << " calls of " << name;

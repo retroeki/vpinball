@@ -3,6 +3,12 @@
 #include "core/stdafx.h"
 #include "Texture.h"
 
+#include "math/math.h"
+#include "renderer/Renderer.h"
+#include "renderer/TextureCompressor.h"
+#include "utils/BiffReader.h"
+#include "utils/lzwreader.h"
+
 #ifndef __STANDALONE__
 #include "FreeImage.h"
 #else
@@ -10,10 +16,6 @@
 #include <SDL3/SDL_surface.h>
 #include "standalone/FreeImage.h"
 #endif
-
-#include "math/math.h"
-
-#include "utils/lzwreader.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG // only use the SSE2-JPG path from stbi, as all others are not faster than FreeImage //!! can remove stbi again if at some point FreeImage incorporates libjpeg-turbo or something similar
@@ -638,6 +640,12 @@ static std::shared_ptr<BaseTexture> ExrScaledDecode(const void* data, const size
 }
 #endif // __ANDROID__
 
+#include <atomic>
+
+#define QOI_API static
+#define QOI_IMPLEMENTATION
+#define QOI_NO_STDIO
+#include "qoi/qoi.h"
 static inline int GetPixelSize(const BaseTexture::Format format)
 {
    switch (format)
@@ -657,14 +665,20 @@ static inline int GetPixelSize(const BaseTexture::Format format)
    }
 }
 
-BaseTexture::BaseTexture(const unsigned int w, const unsigned int h, const Format format)
+static inline uint64_t NextLiveHash()
+{
+   static std::atomic<uint64_t> s_counter { 1 };
+   return s_counter.fetch_add(1, std::memory_order_relaxed);
+}
+
+BaseTexture::BaseTexture(const unsigned int w, const unsigned int h, const Format format, const bool allocate)
    : m_realWidth(w)
    , m_realHeight(h)
    , m_format(format)
    , m_width(w)
    , m_height(h)
-   , m_liveHash(((uint64_t)this) ^ usec() ^ ((uint64_t)w << 16) ^ ((uint64_t)h << 32) ^ format)
-   , m_data(reinterpret_cast<uint8_t*>(SDL_aligned_alloc(16, w * h * GetPixelSize(format))))
+   , m_liveHash(NextLiveHash())
+   , m_data(allocate ? reinterpret_cast<uint8_t*>(SDL_aligned_alloc(16, w * h * GetPixelSize(format))) : nullptr)
 {
 }
 
@@ -696,7 +710,18 @@ std::shared_ptr<BaseTexture> BaseTexture::Create(const unsigned int w, const uns
    return result;
 }
 
-std::shared_ptr<BaseTexture> BaseTexture::CreateFromFile(const string& filename, unsigned int maxTexDimension, bool resizeOnLowMem) noexcept
+#if defined(ENABLE_BGFX)
+std::shared_ptr<BaseTexture> BaseTexture::CreateCompressedOnly(std::shared_ptr<const CompressedTexture> compressed, const Format format, const bool isOpaque) noexcept
+{
+   auto result = std::shared_ptr<BaseTexture>(new BaseTexture(compressed->width, compressed->height, format, false));
+   result->m_selfPointer = result;
+   result->m_compressed = std::move(compressed);
+   result->SetIsOpaque(isOpaque);
+   return result;
+}
+#endif
+
+std::shared_ptr<BaseTexture> BaseTexture::CreateFromFile(const std::filesystem::path& filename, unsigned int maxTexDimension, bool resizeOnLowMem) noexcept
 {
    if (filename.empty())
       return nullptr;
@@ -708,6 +733,9 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromFile(const string& filename,
 std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const size_t size, const bool isImageData, unsigned int maxTexDimension, bool resizeOnLowMem) noexcept
 {
    std::shared_ptr<BaseTexture> tex;
+
+   if (data == nullptr || size == 0)
+      return nullptr;
 
    // Try to load using fast JPG path via stbi when no resize is needed. We
    // peek at the header dimensions first via stbi_info_from_memory so we can
@@ -823,16 +851,16 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromData(const void* data, const
       }
 #endif
       // Load
-      FIBITMAP * const dib = FreeImage_LoadFromMemory(fif, dataHandle, 0);
+      FIBITMAP * const dib = FreeImage_LoadFromMemory(fif, dataHandle, (fif == FIF_PNG ? PNG_IGNOREGAMMA : 0) | (fif == FIF_EXR ? EXR_ALLOW_FOR_FP16 : 0));
       FreeImage_CloseMemory(dataHandle);
       tex = dib ? BaseTexture::CreateFromFreeImage(dib, isImageData, maxTexDimension, resizeOnLowMem) : nullptr;
    }
-   
+
    #ifdef __OPENGLES__
    if (tex && (tex->m_format == SRGB || tex->m_format == RGB_FP16 || tex->m_format == RGB_FP32))
       tex = tex->NewWithAlpha();
    #endif
-   
+
    return tex;
 }
 
@@ -891,6 +919,7 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromFreeImage(FIBITMAP* dib, con
    // check if Textures exceed the maximum texture dimension
    if (maxTexDim <= 0)
       maxTexDim = 65536;
+   const unsigned int initMaxTexDim = maxTexDim;
 
    const unsigned int pictureWidth  = FreeImage_GetWidth(dib);
    const unsigned int pictureHeight = FreeImage_GetHeight(dib);
@@ -1032,11 +1061,13 @@ std::shared_ptr<BaseTexture> BaseTexture::CreateFromFreeImage(FIBITMAP* dib, con
          maxTexDim /= 2;
          while ((maxTexDim > pictureHeight) && (maxTexDim > pictureWidth))
             maxTexDim /= 2;
+
+         continue;
       }
    }
 
    assert(tex->data());
-
+   tex->m_resizedOnLowMem = maxTexDim != initMaxTexDim;
    tex->m_realWidth = pictureWidth;
    tex->m_realHeight = pictureHeight;
 
@@ -1184,7 +1215,10 @@ void BaseTexture::Update(std::shared_ptr<BaseTexture>& tex, const unsigned int w
          assert(tex->pitch() * tex->height() == width * height * pixelSize);
          if (tex->data() != image && image)
             memcpy(tex->data(), image, width * height * pixelSize);
-         tex->m_aliases.clear();
+         {
+            std::lock_guard lock(tex->m_aliasMutex);
+            tex->m_aliases.clear();
+         }
          if (g_pplayer)
             g_pplayer->m_renderer->m_renderDevice->m_texMan.SetDirty(tex.get());
          return;
@@ -1215,51 +1249,92 @@ void BaseTexture::FlipY()
    m_aliases.clear();
 }
 
-bool BaseTexture::Save(const string& filepath) const
+bool BaseTexture::Save(const std::filesystem::path& filepath) const
 {
    if ((m_format != SRGBA) && (m_format != SRGB))
       return false;
 
-   const string ext = extension_from_path(filepath);
+   const string ext = lowerCase(filepath.extension().string());
    bool success = false;
 
-#ifdef __STANDALONE__
-   SDL_Surface* pSurface = ToSDLSurface();
-   if (pSurface)
-   {
-      if (ext == "png")
-         success = IMG_SavePNG(pSurface, filepath.c_str());
-      else if (ext == "jpg" || ext == "jpeg")
-         success = IMG_SaveJPG(pSurface, filepath.c_str(), 75);
-      SDL_DestroySurface(pSurface);
-   }
+   // Create parent directory if needed
+   std::filesystem::create_directories(filepath.parent_path());
 
-#else
-   FIBITMAP* bitmap = FreeImage_Allocate(m_width, m_height, m_format == SRGB ? 24 : 32);
-   if (bitmap)
+   if (ext == ".bmp")
    {
-      uint8_t* __restrict bits = (uint8_t*)FreeImage_GetBits(bitmap);
-      memcpy(bits, m_data, pitch() * m_height);
-      FreeImage_FlipVertical(bitmap);
-      if (ext == "png")
-         success = FreeImage_Save(FIF_PNG, bitmap, filepath.c_str(), 0);
-      else if (ext == "jpg" || ext == "jpeg")
-         success = FreeImage_Save(FIF_JPEG, bitmap, filepath.c_str(), 0);
-      else if (ext == "webp")
-         //success = FreeImage_Save(FIF_WEBP, bitmap, _filePath, WEBP_LOSSLESS); // Very slow and very large files (but would better for our regression tests)
-         success = FreeImage_Save(FIF_WEBP, bitmap, filepath.c_str(), WBMP_DEFAULT);
-      FreeImage_Unload(bitmap);
+      if (SDL_Surface* pSurface = ToSDLSurface(); pSurface)
+      {
+         success = SDL_SaveBMP(pSurface, filepath.string().c_str());
+         SDL_DestroySurface(pSurface);
+      }
    }
+   else if (ext == ".qoi")
+   {
+      qoi_desc desc { .width = m_width, .height = m_height, .channels = static_cast<unsigned char>(m_format == SRGB ? 3 :4), .colorspace = QOI_SRGB };
+      int size;
+      void* encoded = qoi_encode(m_data, &desc, &size);
+      if (encoded)
+      {
+         try
+         {
+            if (std::ofstream file(filepath, std::ios::binary | std::ios::trunc); file)
+            {
+                  file.write(reinterpret_cast<const char*>(encoded), size);
+                  file.close();
+                  success = true;
+            }
+         }
+         catch (const std::filesystem::filesystem_error& e)
+         {
+            PLOGE << "Failed to save file " << filepath.string().c_str() << ": " << e.what();
+         }
+         QOI_FREE(encoded);
+      }
+   }
+   else
+   {
+   #ifdef __STANDALONE__
+      if (SDL_Surface* pSurface = ToSDLSurface(); pSurface)
+      {
+         if (ext == ".png")
+            success = IMG_SavePNG(pSurface, filepath.string().c_str());
+         else if (ext == ".jpg" || ext == ".jpeg")
+            success = IMG_SaveJPG(pSurface, filepath.string().c_str(), 75);
+         // Needs latest SDL3_image for WEBP support
+         //else if (ext == ".webp")
+         //   success = IMG_SaveWEBP(pSurface, filepath.string().c_str(), 75);
+         SDL_DestroySurface(pSurface);
+      }
 
-#endif
+   #else
+      FIBITMAP* bitmap = FreeImage_Allocate(m_width, m_height, m_format == SRGB ? 24 : 32);
+      if (bitmap)
+      {
+         uint8_t* const __restrict bits = (uint8_t*)FreeImage_GetBits(bitmap);
+         if (m_format == SRGB)
+            copy_bgr_rgb(bits, m_data, m_width * m_height);
+         else
+            copy_bgra_rgba<false>((unsigned int*)bits, (const unsigned int*)m_data, m_width * m_height);
+         FreeImage_FlipVertical(bitmap);
+         if (ext == ".png")
+            success = FreeImage_Save(FIF_PNG, bitmap, filepath.string().c_str(), PNG_Z_DEFAULT_COMPRESSION);
+         else if (ext == ".jpg" || ext == ".jpeg")
+            success = FreeImage_Save(FIF_JPEG, bitmap, filepath.string().c_str(), JPEG_QUALITYGOOD);
+         else if (ext == ".webp")
+            //success = FreeImage_Save(FIF_WEBP, bitmap, _filePath, WEBP_LOSSLESS); // Very slow and very large files (but would be better for our regression tests)
+            success = FreeImage_Save(FIF_WEBP, bitmap, filepath.string().c_str(), WBMP_DEFAULT);
+         FreeImage_Unload(bitmap);
+      }
+   #endif
+   }
 
    return success;
 }
 
 std::shared_ptr<BaseTexture> BaseTexture::GetAlias(Format format) const
 {
-   auto it = m_aliases.find(format);
-   if (it == m_aliases.end())
+   std::lock_guard lock(m_aliasMutex);
+   if (auto it = m_aliases.find(format); it == m_aliases.end())
    {
       std::shared_ptr<BaseTexture> alias = Convert(format);
       if (!m_isOpaqueDirty)
@@ -1358,13 +1433,7 @@ std::shared_ptr<BaseTexture> BaseTexture::Convert(Format format) const
          {
             const uint32_t* const __restrict src_data = reinterpret_cast<const uint32_t*>(datac());
             uint8_t* const __restrict dest_data = static_cast<uint8_t*>(tex->data());
-            for (size_t o = 0; o < (size_t)width() * height(); ++o)
-            {
-               const uint32_t rgba = src_data[o];
-               dest_data[o * 3 + 0] =  rgba        & 0xFF;
-               dest_data[o * 3 + 1] = (rgba >>  8) & 0xFF;
-               dest_data[o * 3 + 2] = (rgba >> 16) & 0xFF;
-            }
+            copy_rgba_rgb<false>(dest_data, src_data, (size_t)width() * height());
          }
          break;
       default: break;
@@ -1379,17 +1448,7 @@ std::shared_ptr<BaseTexture> BaseTexture::Convert(Format format) const
             tex = BaseTexture::Create(m_width, m_height, SRGBA);
             if (tex == nullptr)
                return nullptr;
-            static constexpr uint8_t lum32[] = { 0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173, 181, 189, 197, 206, 214, 222, 230, 239, 247, 255 };
-            static constexpr uint8_t lum64[] = { 0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 45, 49, 53, 57, 61, 65, 69, 73, 77, 81, 85, 89, 93, 97, 101, 105, 109, 113, 117, 121, 125, 130, 134, 138,
-               142, 146, 150, 154, 158, 162, 166, 170, 174, 178, 182, 186, 190, 194, 198, 202, 206, 210, 215, 219, 223, 227, 231, 235, 239, 243, 247, 251, 255 };
-            uint32_t* const __restrict data = reinterpret_cast<uint32_t*>(tex->data());
-            const uint16_t* const __restrict frame = reinterpret_cast<const uint16_t*>(datac());
-            const size_t size = (size_t)width() * height();
-            for (size_t ofs = 0; ofs < size; ++ofs)
-            {
-               const uint16_t rgb565 = frame[ofs];
-               data[ofs] = 0xFF000000 | (lum32[rgb565 & 0x1F] << 16) | (lum64[(rgb565 >> 5) & 0x3F] << 8) | lum32[(rgb565 >> 11) & 0x1F];
-            }
+            copy_rgb565_rgba(reinterpret_cast<unsigned int*>(tex->data()), reinterpret_cast<const uint16_t*>(datac()), (size_t)width() * height());
             tex->SetIsOpaque(true);
          }
          break;
@@ -1405,22 +1464,13 @@ std::shared_ptr<BaseTexture> BaseTexture::Convert(Format format) const
             tex = BaseTexture::Create(m_width, m_height, RGBA_FP16);
             if (tex == nullptr)
                return nullptr;
-            uint16_t* const __restrict dest_data16 = reinterpret_cast<uint16_t*>(tex->data());
-            const uint16_t* const __restrict src_data16 = reinterpret_cast<const uint16_t*>(datac());
-            const size_t size = (size_t)width() * height();
-            for (size_t o = 0; o < size; ++o)
-            {
-               dest_data16[o * 4 + 0] = src_data16[o * 3 + 0];
-               dest_data16[o * 4 + 1] = src_data16[o * 3 + 1];
-               dest_data16[o * 4 + 2] = src_data16[o * 3 + 2];
-               dest_data16[o * 4 + 3] = 0x3C00; //=1.f
-            }
+            copy_rgb_rgba(reinterpret_cast<uint16_t*>(tex->data()), reinterpret_cast<const uint16_t*>(datac()), (size_t)width() * height());
          }
          break;
          default: break;
       }
       break;
-   
+
    case RGB_FP32:
       switch (format)
       {
@@ -1429,16 +1479,7 @@ std::shared_ptr<BaseTexture> BaseTexture::Convert(Format format) const
             tex = BaseTexture::Create(m_width, m_height, RGBA_FP32);
             if (tex == nullptr)
                return nullptr;
-            uint32_t* const __restrict dest_data32 = reinterpret_cast<uint32_t*>(tex->data());
-            const uint32_t* const __restrict src_data32 = reinterpret_cast<const uint32_t*>(datac());
-            const size_t size = (size_t)width() * height();
-            for (size_t o = 0; o < size; ++o)
-            {
-               dest_data32[o * 4 + 0] = src_data32[o * 3 + 0];
-               dest_data32[o * 4 + 1] = src_data32[o * 3 + 1];
-               dest_data32[o * 4 + 2] = src_data32[o * 3 + 2];
-               dest_data32[o * 4 + 3] = 0x3f800000; //=1.f
-            }
+            copy_rgb_rgba(reinterpret_cast<float*>(tex->data()), reinterpret_cast<const float*>(datac()), (size_t)width() * height());
          }
          break;
          default: break;
@@ -1491,9 +1532,9 @@ std::shared_ptr<BaseTexture> BaseTexture::ToBGRA() const
          const float b = src[o * 3 + 2];
          const float l = r * 0.176204f + g * 0.812985f + b * 0.0108109f;
          const float n = (l * (float)(255. * 0.25) + 255.0f) / (l + 1.0f); // simple tonemap and scale by 255, overflow is handled by clamp below
-         tmp[o * 4 + 0] = (int)clamp(b * n, 0.f, 255.f);
-         tmp[o * 4 + 1] = (int)clamp(g * n, 0.f, 255.f);
-         tmp[o * 4 + 2] = (int)clamp(r * n, 0.f, 255.f);
+         tmp[o * 4 + 0] = (uint8_t)clamp(b * n, 0.f, 255.f);
+         tmp[o * 4 + 1] = (uint8_t)clamp(g * n, 0.f, 255.f);
+         tmp[o * 4 + 2] = (uint8_t)clamp(r * n, 0.f, 255.f);
          tmp[o * 4 + 3] = 255;
       }
    }
@@ -1508,9 +1549,9 @@ std::shared_ptr<BaseTexture> BaseTexture::ToBGRA() const
          const float b = half2float(src[o * 3 + 2]);
          const float l = r * 0.176204f + g * 0.812985f + b * 0.0108109f;
          const float n = (l * (float)(255. * 0.25) + 255.0f) / (l + 1.0f); // simple tonemap and scale by 255, overflow is handled by clamp below
-         tmp[o * 4 + 0] = (int)clamp(b * n, 0.f, 255.f);
-         tmp[o * 4 + 1] = (int)clamp(g * n, 0.f, 255.f);
-         tmp[o * 4 + 2] = (int)clamp(r * n, 0.f, 255.f);
+         tmp[o * 4 + 0] = (uint8_t)clamp(b * n, 0.f, 255.f);
+         tmp[o * 4 + 1] = (uint8_t)clamp(g * n, 0.f, 255.f);
+         tmp[o * 4 + 2] = (uint8_t)clamp(r * n, 0.f, 255.f);
          tmp[o * 4 + 3] = 255;
       }
    }
@@ -1606,9 +1647,9 @@ SDL_Surface* BaseTexture::ToSDLSurface() const
    {
    case BW: format = SDL_PIXELFORMAT_INDEX8; break;
    case RGB: format = SDL_PIXELFORMAT_RGB24; break;
-   case RGBA: format = SDL_PIXELFORMAT_ARGB8888; break;
+   case RGBA: format = SDL_PIXELFORMAT_RGBA32; break;
    case SRGB: format = SDL_PIXELFORMAT_RGB24; break;
-   case SRGBA: format = SDL_PIXELFORMAT_ARGB8888; break;
+   case SRGBA: format = SDL_PIXELFORMAT_RGBA32; break;
    case SRGB565: format = SDL_PIXELFORMAT_RGB565; break;
    case RGB_FP16: format = SDL_PIXELFORMAT_RGB48_FLOAT; break;
    case RGBA_FP16: format = SDL_PIXELFORMAT_RGBA64_FLOAT; break;
@@ -1661,14 +1702,14 @@ Texture::Texture(string name, PinBinary* ppb, unsigned int width, unsigned int h
    , m_width(width)
    , m_height(height)
    , m_ppb(ppb)
-   , m_liveHash(((uint64_t)this) ^ ((uint64_t)ppb) ^ usec() ^ ((uint64_t)width << 16) ^ ((uint64_t)height << 32))
+   , m_liveHash(NextLiveHash())
 {
    assert(m_ppb != nullptr);
    assert(m_width > 0);
    assert(m_height > 0);
 }
 
-Texture* Texture::CreateFromStream(IStream * const pstream, int version, PinTable * const pt)
+Texture* Texture::CreateFromObjectReader(IObjectReader& reader, PinTable* const pt)
 {
    string name;
    string path;
@@ -1680,31 +1721,42 @@ Texture* Texture::CreateFromStream(IStream * const pstream, int version, PinTabl
    uint8_t md5Hash[16] = {};
    bool isOpaqueDirty = true;
    bool isOpaque = true;
-   BiffReader br(pstream, nullptr, version, 0, 0);
-   br.Load([&](const int id, BiffReader* const pbr)
-   {
-      switch(id)
+   reader.AsObject(
+      [&](const int id, IObjectReader& reader)
       {
-      case FID(NAME): pbr->GetString(name); break;
-      case FID(PATH): pbr->GetString(path); break;
-      case FID(WDTH): pbr->GetInt(width); break;
-      case FID(HGHT): pbr->GetInt(height); break;
-      case FID(ALTV): pbr->GetFloat(alphaTestValue); alphaTestValue *= (float)(1.0 / 255.0); break;
-      case FID(MD5H): pbr->GetStruct(md5Hash, 16); isMD5Dirty = false; break;
-      case FID(OPAQ): pbr->GetBool(isOpaque); isOpaqueDirty = false; break;
-      case FID(BITS):
-      {
-         // Old files used to store some bitmaps as a 32-bit SBGRA picture, we now (10.8.1+) always use a compressed file format. Convert here to simplify the code
-         const size_t size = (size_t)height * width;
-         assert(ppb == nullptr && size != 0);
+         switch (id)
+         {
+         case FID(NAME): name = reader.AsString(); break;
+         case FID(PATH): path = reader.AsString(); break;
+         case FID(WDTH): width = reader.AsInt(); break;
+         case FID(HGHT): height = reader.AsInt(); break;
+         case FID(ALTV): alphaTestValue = reader.AsFloat() * (float)(1.0 / 255.0); break;
+         case FID(MD5H):
+            reader.AsRaw(md5Hash, 16);
+            isMD5Dirty = false;
+            break;
+         case FID(OPAQ):
+            isOpaque = reader.AsBool();
+            isOpaqueDirty = false;
+            break;
+         case FID(BITS):
+         {
+            // The 'BITS' field is deprecated and only used in pre 10.8.1 files which were all BIFF streams so we can safely cast here
+            BiffReader& br = (BiffReader&)reader;
 
-         uint8_t* const __restrict tmp = new uint8_t[size * 4];
-         const LZWReader lzwreader(pbr->m_pistream, tmp, width * 4);
+            // This is a legacy deprecated and largely unused feature, moreover bmp are not supposed to enter this codeblock (no undo or copy/paste)
+            // so the reader is expected to always be backed by a POLE storage stream
+            assert(br.m_stream != nullptr);
 
-         // Find out if all alpha values are 0x00 or 0xFF
-         #ifdef __OPENGLES__
-            constexpr bool has_alpha = true;
-         #else
+            // Old files used to store some bitmaps as a 32-bit SBGRA picture, we now (10.8.1+) always use a compressed file format. Convert here to simplify the code
+            const size_t size = (size_t)height * width;
+            assert(ppb == nullptr && size != 0);
+
+            // Uncompress to RGBA image
+            uint8_t* const __restrict tmp = new uint8_t[size * 4];
+            const LZWReader lzwreader(br.m_stream, tmp, width * 4);
+
+            // Find out if all alpha values are 0x00 or 0xFF
             bool has_alpha = false;
             for (size_t o = 3; o < size * 4; o += 4)
                if (tmp[o] != 0 && tmp[o] != 255)
@@ -1712,75 +1764,76 @@ Texture* Texture::CreateFromStream(IStream * const pstream, int version, PinTabl
                   has_alpha = true;
                   break;
                }
-         #endif
 
-         // Create a FreeImage from LZW data, optionally dropping a constant (0 or 255) alpha channel
-         FIBITMAP* dib = FreeImage_Allocate(width, height, has_alpha ? 32 : 24);
-         uint8_t* const pdst = (uint8_t*)FreeImage_GetBits(dib);
-         const unsigned int pitch = width * 4;
-         const unsigned int pitch_dst = FreeImage_GetPitch(dib);
-         const uint8_t* spch = tmp + (height * pitch);
-         for (unsigned int i = 0; i < height; i++)
-         {
-            const uint32_t* const __restrict src = (const uint32_t*)(spch -= pitch); // start on previous previous line
-            uint8_t* __restrict dst = pdst + i * pitch_dst;
-            if (has_alpha)
-               memcpy(dst, src, pitch);
-            else
-               for (unsigned int x = 0; x < width; x++, dst += 3) // copy without alpha channel
-               {
-                  const unsigned int rgba = src[x];
-                  dst[0] = rgba;
-                  dst[1] = rgba >> 8;
-                  dst[2] = rgba >> 16;
-               }
-         }
+            // Create a FreeImage from LZW data, optionally dropping a constant (0 or 255) alpha channel
+            FIBITMAP* dib = FreeImage_Allocate(width, height, has_alpha ? 32 : 24);
+            uint8_t* const pdst = (uint8_t*)FreeImage_GetBits(dib);
+            const unsigned int pitch = width * 4;
+            const unsigned int pitch_dst = FreeImage_GetPitch(dib);
+            const uint8_t* spch = tmp + (height * pitch);
+            for (unsigned int i = 0; i < height; i++)
+            {
+               const uint32_t* const __restrict src = (const uint32_t*)(spch -= pitch); // start on previous previous line
+               uint8_t* __restrict dst = pdst + i * pitch_dst;
+               if (has_alpha)
+                  memcpy(dst, src, pitch);
+               else
+                  copy_rgba_rgb<false>(dst, src, width); // copy without alpha channel
+            }
+            delete[] tmp;
 
-         // Convert to a lossless webp
-         auto memStream = FreeImage_OpenMemory();
-         FreeImage_SaveToMemory(FREE_IMAGE_FORMAT::FIF_WEBP, dib, memStream, WEBP_LOSSLESS);
-         ppb = new PinBinary();
-         ppb->m_buffer.resize(FreeImage_TellMemory(memStream));
-         ppb->m_name = name;
-         string ext = extension_from_path(path);
-         if (!ext.empty())
-         {
-            path.erase(path.length() - ext.length());
-            path += "webp";
+            // Convert to a lossless webp
+            auto memStream = FreeImage_OpenMemory();
+            FreeImage_SaveToMemory(FREE_IMAGE_FORMAT::FIF_WEBP, dib, memStream, WEBP_LOSSLESS);
+            ppb = new PinBinary();
+            ppb->m_buffer.resize(FreeImage_TellMemory(memStream));
+            ppb->m_name = name;
+            const string ext = extension_from_path(path);
+            if (!ext.empty())
+            {
+               path.erase(path.length() - ext.length());
+               path += "webp"sv;
+            }
+            ppb->m_path = PathFromString(path);
+            FreeImage_SeekMemory(memStream, 0, SEEK_SET);
+            FreeImage_ReadMemory(ppb->m_buffer.data(), 1, static_cast<unsigned int>(ppb->m_buffer.size()), memStream);
+            FreeImage_CloseMemory(memStream);
+            FreeImage_Unload(dib);
+            break;
          }
-         ppb->m_path = path;
-         FreeImage_SeekMemory(memStream, 0, SEEK_SET);
-         FreeImage_ReadMemory(ppb->m_buffer.data(), 1, static_cast<unsigned int>(ppb->m_buffer.size()), memStream);
-         FreeImage_CloseMemory(memStream);
-         FreeImage_Unload(dib);
-         break;
-      }
-      case FID(JPEG): // JPEG may be misleading as this chunk contains original binary image data (in whatever format JPEG, PNG, EXR,...)
-      {
-         assert(ppb == nullptr);
-         ppb = new PinBinary();
-         if (ppb->LoadFromStream(pbr->m_pistream, pbr->m_version) != S_OK)
+         case FID(JPEG): // JPEG may be misleading as this chunk contains original binary image data (in whatever format JPEG, PNG, EXR,...)
          {
-            assert(!"Invalid binary image file");
-            return false;
+            assert(ppb == nullptr);
+            ppb = new PinBinary();
+            ppb->Load(reader);
+            if (reader.HasError())
+            {
+               assert(!"Invalid binary image file");
+               return false;
+            }
+            break;
          }
-         break;
-      }
-      case FID(LINK):
-      {
-         int linkid;
-         pbr->GetInt(linkid);
-         ppb = pt->GetImageLinkBinary(linkid);
-         if (!ppb)
+         case FID(LINK):
          {
-            assert(!"Invalid PinBinary");
-            return false;
+            int linkid = reader.AsInt();
+            if (pt == nullptr)
+            {
+               assert(!"Invalid Texture load with link and no table to resolve links");
+               return false;
+            }
+            ppb = pt->GetImageLinkBinary(linkid);
+            if (!ppb)
+            {
+               assert(!"Invalid PinBinary");
+               return false;
+            }
+            break;
          }
-         break;
-      }
-      }
-      return true;
-   });
+         // Legacy field, now unused
+         case FID(SIGN): reader.AsBool(); break; // Signed image
+         }
+         return true;
+      });
 
    if (ppb == nullptr)
       return nullptr;
@@ -1791,11 +1844,10 @@ Texture* Texture::CreateFromStream(IStream * const pstream, int version, PinTabl
       tex->SetIsOpaque(isOpaque);
    if (!isMD5Dirty)
       tex->SetMD5Hash(md5Hash);
-
    return tex;
 }
 
-Texture* Texture::CreateFromFile(const string& filename, const bool isImageData)
+Texture* Texture::CreateFromFile(const std::filesystem::path& filename, const bool isImageData)
 {
    PinBinary* const ppb = new PinBinary();
    ppb->ReadFromFile(filename);
@@ -1817,34 +1869,25 @@ Texture* Texture::CreateFromFile(const string& filename, const bool isImageData)
 Texture::~Texture()
 {
    delete m_ppb;
-   #ifndef __STANDALONE__
-      if (m_hbmGDIVersion)
-      {
-         if(m_hbmGDIVersion != g_pvp->m_hbmInPlayMode)
-             DeleteObject(m_hbmGDIVersion);
-      }
-   #endif
 }
 
-HRESULT Texture::SaveToStream(IStream *pstream, const PinTable *pt) const
+void Texture::Save(IObjectWriter& writer, PinTable* pt) const
 {
-   BiffWriter bw(pstream, 0);
-   bw.WriteString(FID(NAME), m_name);
-   bw.WriteString(FID(PATH), m_ppb->m_path);
-   bw.WriteInt(FID(WDTH), m_width);
-   bw.WriteInt(FID(HGHT), m_height);
-   if (pt->GetImageLink(this))
-      bw.WriteInt(FID(LINK), 1);
+   writer.WriteString(FID(NAME), m_name);
+   writer.WriteString(FID(PATH), m_ppb->m_path.string());
+   writer.WriteInt(FID(WDTH), m_width);
+   writer.WriteInt(FID(HGHT), m_height);
+   if (pt && pt->GetImageLink(this))
+      writer.WriteInt(FID(LINK), 1);
    else
    {
-      bw.WriteTag(FID(JPEG));
-      m_ppb->SaveToStream(pstream);
+      writer.BeginObject(FID(JPEG), false, false);
+      m_ppb->Save(writer);
    }
-   bw.WriteFloat(FID(ALTV), m_alphaTestValue * 255.0f);
-   bw.WriteStruct(FID(MD5H), GetMD5Hash(), 16);
-   bw.WriteBool(FID(OPAQ), IsOpaque());
-   bw.WriteTag(FID(ENDB));
-   return S_OK;
+   writer.WriteFloat(FID(ALTV), m_alphaTestValue * 255.0f);
+   writer.WriteRaw(FID(MD5H), GetMD5Hash(), 16);
+   writer.WriteBool(FID(OPAQ), IsOpaque());
+   writer.EndObject();
 }
 
 bool Texture::IsHDR() const
@@ -1853,8 +1896,8 @@ bool Texture::IsHDR() const
    if (buffer)
       return buffer->m_format == BaseTexture::RGB_FP16 || buffer->m_format == BaseTexture::RGBA_FP16
           || buffer->m_format == BaseTexture::RGB_FP32 || buffer->m_format == BaseTexture::RGBA_FP32;
-   string ext = extension_from_path(m_ppb->m_path);
-   return (ext == "exr") || (ext == "hdr");
+   const string ext = lowerCase(m_ppb->m_path.extension().string());
+   return (ext == ".exr") || (ext == ".hdr");
 }
 
 size_t Texture::GetEstimatedGPUSize() const
@@ -1876,6 +1919,17 @@ std::shared_ptr<const BaseTexture> Texture::GetRawBitmap(bool resizeOnLowMem, un
       return buffer;
    //PLOGD << "Decoding image " << m_name;
    buffer = std::shared_ptr<BaseTexture>(BaseTexture::CreateFromData(m_ppb->m_buffer.data(), m_ppb->m_buffer.size(), true, maxTexDimension, resizeOnLowMem));
+   if (buffer && m_width != buffer->m_realWidth)
+   {
+      PLOGE << "Corrupted file: image '" << m_name << "' width (" << buffer->m_realWidth << ") does not match the width (" << m_width << ") of the image datablock.";
+      const_cast<Texture*>(this)->m_width = buffer->m_realWidth;
+   }
+   if (buffer && m_height != buffer->m_realHeight)
+   {
+      PLOGE << "Corrupted file: image '" << m_name << "' height (" << buffer->m_realHeight << ") does not match the height (" << m_height << ") of the image datablock.";
+      const_cast<Texture*>(this)->m_height = buffer->m_realHeight;
+   }
+   buffer->SetName(GetName());
    m_imageBuffer = buffer;
    UpdateOpaque();
    return buffer;
@@ -1883,22 +1937,13 @@ std::shared_ptr<const BaseTexture> Texture::GetRawBitmap(bool resizeOnLowMem, un
 
 HBITMAP Texture::GetGDIBitmap() const
 {
-#ifndef __STANDALONE__
+#ifdef VPX_ENABLE_WIN32_EDITOR
    if (m_hbmGDIVersion)
       return m_hbmGDIVersion;
 
-   if (g_pvp->m_table_played_via_command_line || g_pvp->m_table_played_via_SelectTableOnStart) // only do anything in here (and waste memory/time on it) if UI needed (i.e. if not just -Play via command line is triggered or selected on VPX start with the file popup!)
-   {
-      m_hbmGDIVersion = g_pvp->m_hbmInPlayMode;
-      return m_hbmGDIVersion;
-   }
-
    const auto buffer = GetRawBitmap(false, 0);
    if (buffer == nullptr)
-   {
-      m_hbmGDIVersion = g_pvp->m_hbmInPlayMode; // We should return an error bitmap
-      return m_hbmGDIVersion;
-   }
+      return NULL;
 
    const HDC hdcScreen = GetDC(nullptr);
    m_hbmGDIVersion = CreateCompatibleBitmap(hdcScreen, m_width, m_height);
@@ -1954,7 +1999,7 @@ void Texture::UpdateOpaque() const
    if (!m_isOpaqueDirty)
       return;
    m_isOpaqueDirty = false;
-   auto bitmap = GetRawBitmap(false, 0);
+   const auto bitmap = GetRawBitmap(false, 0);
    m_isOpaque = bitmap ? bitmap->IsOpaque() : false;
 }
 

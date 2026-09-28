@@ -4,8 +4,15 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "math/dragpoint.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
 #include "renderer/RenderDevice.h"
+#include "utils/eventproxy.h"
+
+class MeshBuffer;
 
 enum ShadowMode : int // has to be int for loading
 {
@@ -39,7 +46,6 @@ public:
    int m_blinkinterval;
    COLORREF m_color;
    COLORREF m_color2; // color full
-   TimerDataRoot m_tdr;
    Shape m_shape;
 
    float m_depthBias; // for determining depth sorting
@@ -69,22 +75,27 @@ class Light :
    public EventProxy<Light, &DIID_ILightEvents>,
    public IConnectionPointContainerImpl<Light>,
    public IProvideClassInfo2Impl<&CLSID_Light, &DIID_ILightEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
-   public IHaveDragPoints,
+   public IHitable, // only used for UI picking
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Light();
+   Light()
+      : m_curve(this, 3)
+   {
+      m_d.m_depthBias = 0.0f;
+      m_d.m_shape = ShapeCustom;
+      m_d.m_visible = true;
+   }
    virtual ~Light();
 
    BEGIN_COM_MAP(Light)
@@ -104,52 +115,42 @@ public:
       CONNECTION_POINT_ENTRY(DIID_ILightEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Light, eItemLight, LIGHT, VIEW_PLAYFIELD | VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES(Light, eItemLight, LIGHT)
 
    DECLARE_REGISTRY_RESOURCEID(IDR_LIGHT)
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   void RenderBlueprint(Sur *psur, const bool solid) final;
-
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
-
    void ClearForOverwrite() final;
-
-   void EditMenu(CMenu &menu) final;
-   void DoCommand(int icmd, int x, int y) final;
 
    void FlipY(const Vertex2D& pvCenter) final;
    void FlipX(const Vertex2D& pvCenter) final;
    void Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter) final;
    void Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter) final;
-   void Translate(const Vertex2D &pvOffset) final;
+   void Translate(const Vertex2D &offset) final;
 
    // DragPoints
-   Vertex2D GetCenter() const final { return GetPointCenter(); }
-   void PutCenter(const Vertex2D& pv) final { PutPointCenter(pv); }
-   Vertex2D GetPointCenter() const final;
-   void PutPointCenter(const Vertex2D& pv) final;
-   float GetCurrentHeight() const { return m_backglass ? 0.0f : m_initSurfaceHeight + m_d.m_height; }
+   Vertex2D GetCenter() const final { return m_d.m_vCenter; }
+   float GetCurrentHeight() const { return m_desktopBackdrop ? 0.0f : m_initSurfaceHeight + m_d.m_height; }
 
 protected:
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
 
 public:
    float GetDepth(const Vertex3Ds& viewDir) const final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemLight; }
-   void AddPoint(int x, int y, const bool smooth) final;
 
    void WriteRegDefaults() final;
+
+   void AddPoint(const Vertex2D &v, const bool smooth);
 
    void InitShape();
    void setInPlayState(const float newVal);
 
-   void RenderOutline(Sur *const psur);
-
    // Light definition
    LightData m_d;
+
+   // Custom shape outline (defines the light shape when m_d.m_shape == ShapeCustom)
+   DragPointCurve m_curve;
 
    // Live data
    float m_inPlayState; // 0..1 is modulated from off to on, 2 is blinking
@@ -159,50 +160,8 @@ public:
    bool  m_lockedByLS = false;
 
 private:
-   class LightCenter final : public ISelect
-   {
-   public:
-      LightCenter(Light *plight) : m_plight(plight) { }
-
-      HRESULT GetTypeName(BSTR *pVal) const override { return m_plight->GetTypeName(pVal); }
-
-      IDispatch *GetDispatch() override { return m_plight->GetDispatch(); }
-      const IDispatch *GetDispatch() const override { return m_plight->GetDispatch(); }
-
-      void Delete() override { m_plight->Delete(); }
-      void Uncreate() override { m_plight->Uncreate(); }
-
-      int GetSelectLevel() const override { return (m_plight->m_d.m_shape == ShapeCircle) ? 1 : 2; } // Don't select light bulb twice if we have drag points
-
-      IEditable *GetIEditable() override { return (IEditable *)m_plight; }
-      const IEditable *GetIEditable() const override { return (const IEditable *)m_plight; }
-
-      PinTable *GetPTable() override { return m_plight->GetPTable(); }
-      const PinTable *GetPTable() const override { return m_plight->GetPTable(); }
-
-      bool LoadToken(const int id, BiffReader * const pbr) override { return true; }
-
-      Vertex2D GetCenter() const override { return m_plight->m_d.m_vCenter; }
-      void PutCenter(const Vertex2D& pv) override { m_plight->m_d.m_vCenter = pv; }
-
-      void MoveOffset(const float dx, const float dy) override {
-          m_plight->m_d.m_vCenter.x += dx;
-          m_plight->m_d.m_vCenter.y += dy;
-      }
-
-      ItemTypeEnum GetItemType() const override { return eItemLightCenter; }
-
-   private:
-      Light *m_plight;
-   };
-
-
-   PinTable *m_ptable;
-
    Material *m_surfaceMaterial;
    Texture  *m_surfaceTexture;
-
-   LightCenter m_lightcenter;
 
    std::shared_ptr<MeshBuffer> m_lightmapMeshBuffer;
    // EXPERIMENTAL (ExperimentalRendererOpt): static-prepass lightmap baking. m_lightmapStableSinceMs = time the
@@ -213,7 +172,6 @@ private:
    std::shared_ptr<MeshBuffer> m_lightmapMeshEdgeBuffer;
    std::shared_ptr<MeshBuffer> m_bulbSocketMeshBuffer;
    std::shared_ptr<MeshBuffer> m_bulbLightMeshBuffer;
-   PropertyPane *m_propVisual;
 
    vector<RenderVertex> m_vvertex;
 
@@ -221,8 +179,6 @@ private:
    float m_maxDist = 0.0f;
    bool  m_lightmapMeshBufferDirty = false;
    void UpdateMeshBuffer();
-
-   bool  m_roundLight; // pre-VPX compatibility
 
    Vertex3Ds m_boundingSphereCenter;
    //float m_boundingSphereRadius = -1.f;

@@ -3,33 +3,16 @@ import SwiftUI
 class VPinballManager {
     static let shared = VPinballManager()
 
-    var activeTable: Table?
-
-    let impactGenerators: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [
-        .heavy: UIImpactFeedbackGenerator(style: .heavy),
-        .light: UIImpactFeedbackGenerator(style: .light),
-        .medium: UIImpactFeedbackGenerator(style: .medium),
-        .rigid: UIImpactFeedbackGenerator(style: .rigid),
-        .soft: UIImpactFeedbackGenerator(style: .soft),
-    ]
-
-    let vpinballViewModel = VPinballViewModel.shared
-
-    private init() {
-        impactGenerators.forEach { $0.value.prepare() }
-    }
+    private init() {}
 
     func startup() {
-        VPinballInit { value, data in
-            let vpinballManager = VPinballManager.shared
-            let vpinballViewModel = VPinballViewModel.shared
+        HapticsManager.shared.start()
+
+        VPinballInit({ value, data in
             let event = VPinballEvent(rawValue: value)
             switch event {
-            case .loadingItems,
-                 .loadingSounds,
-                 .loadingImages,
-                 .loadingFonts,
-                 .loadingCollections,
+            case .extractScript,
+                 .loading,
                  .prerendering:
                 if let data = data {
                     let json = String(cString: UnsafePointer<CChar>(data))
@@ -37,71 +20,38 @@ class VPinballManager {
                        let progressData = try? JSONDecoder().decode(ProgressEventData.self,
                                                                     from: jsonData)
                     {
-                        let apply = {
-                            if let name = event?.name {
-                                vpinballViewModel.updateProgressHUD(progress: progressData.progress,
-                                                                    status: name)
+                        let progress = progressData.progress
+                        let eventName = event?.name
+                        Task { @MainActor in
+                            if let name = eventName {
+                                VPinballModel.shared.updateHUD(progress: progress,
+                                                               status: name)
                             } else {
-                                vpinballViewModel.updateProgressHUD(progress: progressData.progress)
+                                VPinballModel.shared.updateHUD(progress: progress)
                             }
-                        }
-
-                        if Thread.isMainThread {
-                            apply()
                             CATransaction.flush()
-                            RunLoop.main.run(mode: .default,
-                                             before: Date().addingTimeInterval(0))
-                        } else {
-                            DispatchQueue.main.async {
-                                apply()
-                            }
                         }
                     }
                 }
             case .playerStarted:
-                vpinballViewModel.isPlaying = true
-            case .rumble:
-                if let data = data {
-                    let json = String(cString: UnsafePointer<CChar>(data))
-                    if let jsonData = json.data(using: .utf8),
-                       let rumbleData = try? JSONDecoder().decode(RumbleData.self,
-                                                                  from: jsonData)
-                    {
-                        vpinballManager.rumble(rumbleData)
-                    }
-                }
-            case .scriptError:
-                if vpinballViewModel.scriptError == nil,
-                   let data = data
-                {
-                    let json = String(cString: UnsafePointer<CChar>(data))
-                    if let jsonData = json.data(using: .utf8),
-                       let scriptErrorData = try? JSONDecoder().decode(ScriptErrorData.self,
-                                                                       from: jsonData)
-                    {
-                        let type = VPinballScriptErrorType(rawValue: CInt(scriptErrorData.error))!
-                        vpinballViewModel.scriptError = "\(type.name) on line \(scriptErrorData.line), position \(scriptErrorData.position):\n\n\(scriptErrorData.description)"
-                    }
+                Task { @MainActor in
+                    VPinballModel.shared.isPlaying = true
                 }
             case .playerClosed:
-                vpinballViewModel.isPlaying = false
+                Task { @MainActor in
+                    let table = VPinballModel.shared.activeTable
+                    VPinballModel.shared.activeTable = nil
+                    VPinballModel.shared.isPlaying = false
+                    MainViewModel.shared.setAction(.stopped)
 
-                if let table = vpinballManager.activeTable {
-                    Task {
-                        await TableManager.shared.clearLoadedTable(table: table)
-                        await TableManager.shared.loadTables()
+                    if let table {
+                        Task {
+                            TableManager.shared.clearLoadedTable(table: table)
+                            await TableManager.shared.loadTables()
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            await TableManager.shared.loadTables()
+                        }
                     }
-                }
-
-                vpinballManager.activeTable = nil
-
-                if vpinballViewModel.scriptError != nil {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        vpinballViewModel.setAction(action: .showError,
-                                                    table: nil)
-                    }
-                } else {
-                    vpinballViewModel.setAction(action: .stopped)
                 }
             case .webServer:
                 if let data = data {
@@ -110,13 +60,13 @@ class VPinballManager {
                        let webServerData = try? JSONDecoder().decode(WebServerData.self,
                                                                      from: jsonData)
                     {
-                        DispatchQueue.main.async {
-                            vpinballViewModel.webServerURL = webServerData.url
+                        Task { @MainActor in
+                            VPinballModel.shared.webServerURL = webServerData.url
                         }
                     }
                 } else {
-                    DispatchQueue.main.async {
-                        vpinballViewModel.webServerURL = nil
+                    Task { @MainActor in
+                        VPinballModel.shared.webServerURL = nil
                     }
                 }
             case .command:
@@ -136,7 +86,11 @@ class VPinballManager {
             default:
                 break
             }
-        }
+        }, { lowFrequencySpeed, highFrequencySpeed, durationMs in
+            HapticsManager.shared.play(lowFrequencySpeed: lowFrequencySpeed,
+                                       highFrequencySpeed: highFrequencySpeed,
+                                       durationMs: durationMs)
+        })
     }
 
     static func log(_ level: VPinballLogLevel, _ message: String) {
@@ -183,41 +137,18 @@ class VPinballManager {
         VPinballSaveValueString(section.rawValue.cstring, key.cstring, value.cstring)
     }
 
-    func rumble(_ data: RumbleData) {
-        if data.lowFrequencyRumble > 0 || data.highFrequencyRumble > 0 {
-            let style: UIImpactFeedbackGenerator.FeedbackStyle
-
-            if data.lowFrequencyRumble == data.highFrequencyRumble {
-                style = .rigid
-            } else if data.lowFrequencyRumble > 20000 || data.highFrequencyRumble > 20000 {
-                style = .heavy
-            } else if data.lowFrequencyRumble > 10000 || data.highFrequencyRumble > 10000 {
-                style = .medium
-            } else if data.lowFrequencyRumble > 1000 || data.highFrequencyRumble > 1000 {
-                style = .light
-            } else {
-                style = .soft
-            }
-
-            impactGenerators[style]!.impactOccurred()
-        }
-    }
-
     func play(table: Table) async -> Bool {
-        if activeTable != nil {
+        if await MainActor.run(body: { VPinballModel.shared.activeTable != nil }) {
             return false
         }
 
-        if loadValue(.standalone, "ResetLogOnPlay", true) {
-            VPinballResetLog()
-        }
-
-        activeTable = table
-        vpinballViewModel.scriptError = nil
-
         await MainActor.run {
-            vpinballViewModel.showProgressHUD(title: table.name,
-                                              status: "Launching")
+            VPinballModel.shared.activeTable = table
+            MainViewModel.shared.errorMessage = ""
+            tableImageCache.removeAllObjects()
+
+            VPinballModel.shared.showHUD(title: table.name,
+                                         status: "Launching")
         }
 
         var success = true
@@ -232,7 +163,7 @@ class VPinballManager {
                 if await MainActor.run(body: { VPinballStatus(rawValue: VPinballPlay()) }) != .success {
                     try? await Task.sleep(nanoseconds: 500_000_000)
 
-                    activeTable = nil
+                    await MainActor.run { VPinballModel.shared.activeTable = nil }
 
                     success = false
 
@@ -241,7 +172,7 @@ class VPinballManager {
             } else {
                 try? await Task.sleep(nanoseconds: 500_000_000)
 
-                activeTable = nil
+                await MainActor.run { VPinballModel.shared.activeTable = nil }
 
                 success = false
 
@@ -249,15 +180,15 @@ class VPinballManager {
             }
 
             await MainActor.run {
-                vpinballViewModel.hideHUD()
+                VPinballModel.shared.hideHUD()
             }
 
             return success
         } else {
             try? await Task.sleep(nanoseconds: 500_000_000)
-            activeTable = nil
             await MainActor.run {
-                vpinballViewModel.hideHUD()
+                VPinballModel.shared.activeTable = nil
+                VPinballModel.shared.hideHUD()
             }
             VPinballManager.log(.error, "unable to stage table")
             return false
@@ -265,9 +196,9 @@ class VPinballManager {
     }
 
     func stop() {
-        if let table = activeTable {
-            Task {
-                await TableManager.shared.clearLoadedTable(table: table)
+        Task { @MainActor in
+            if let table = VPinballModel.shared.activeTable {
+                TableManager.shared.clearLoadedTable(table: table)
             }
         }
         VPinballStop()
@@ -281,12 +212,7 @@ class VPinballManager {
         VPinballUpdateWebServer()
     }
 
-    func getTablesPath() -> String {
-        let customPath = loadValue(.standalone, "TablesPath", "")
-        if customPath.isEmpty {
-            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].path
-            return (documentsPath as NSString).appendingPathComponent("tables")
-        }
-        return customPath
+    func getPath(_ pathType: VPinballPath) -> String {
+        return String(cString: VPinballGetPath(pathType.rawValue))
     }
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 class Ball;
+class Collection;
 
 class EventProxyBase
 {
@@ -82,7 +83,12 @@ public:
          FireVoidEvent(dispid);
    }
 
-   HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) override
+   HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams)
+   #ifdef __STANDALONE__
+   override
+   #else
+   final
+   #endif
    {
       if (dispid != DISPID_TimerEvents_Timer)
          g_frameProfiler->EnterScriptSection(dispid, string());

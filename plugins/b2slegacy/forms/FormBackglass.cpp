@@ -26,43 +26,12 @@
 
 namespace B2SLegacy {
 
-#include <exception>
-
-FormBackglass::FormBackglass(VPXPluginAPI* vpxApi, MsgPluginAPI* msgApi,uint32_t endpointId, B2SData* pB2SData)
+FormBackglass::FormBackglass(VPXPluginAPI* vpxApi, const MsgPluginAPI* msgApi,uint32_t endpointId, B2SData* pB2SData)
    : Form(vpxApi, msgApi, endpointId, pB2SData, "Backglass"s),
      m_pB2SSettings(pB2SData->GetB2SSettings())
 {
    SetName("formBackglass"s);
 
-   m_pFormDMD = nullptr;
-   m_pStartupTimer = nullptr;
-   m_pRotateTimer = nullptr;
-   m_rotateSlowDownSteps = 0;
-   m_rotateRunTillEnd = false;
-   m_rotateRunToFirstStep = false;
-   m_rotateAngle = 0;
-   m_rotateTimerInterval = 0;
-   m_selectedLEDType = eLEDTypes_Undefined;
-   m_pDarkImage4Authentic = nullptr;
-   m_pDarkImage4Fantasy = nullptr;
-   m_pTopLightImage4Authentic = nullptr;
-   m_pTopLightImage4Fantasy = nullptr;
-   m_pSecondLightImage4Authentic = nullptr;
-   m_pSecondLightImage4Fantasy = nullptr;
-   m_pTopAndSecondLightImage4Authentic = nullptr;
-   m_pTopAndSecondLightImage4Fantasy = nullptr;
-   m_topRomID4Authentic = 0;
-   m_topRomIDType4Authentic = eRomIDType_NotDefined;
-   m_topRomInverted4Authentic = false;
-   m_secondRomID4Authentic = 0;
-   m_secondRomIDType4Authentic = eRomIDType_NotDefined;
-   m_secondRomInverted4Authentic = false;
-   m_topRomID4Fantasy = 0;
-   m_topRomIDType4Fantasy = eRomIDType_NotDefined;
-   m_topRomInverted4Fantasy = false;
-   m_secondRomID4Fantasy = 0;
-   m_secondRomIDType4Fantasy = eRomIDType_NotDefined;
-   m_secondRomInverted4Fantasy = false;
    m_pB2SAnimation = new B2SAnimation();
    m_pB2SScreen = new B2SScreen(m_pB2SData, m_msgApi, m_vpxApi, endpointId);
 
@@ -109,6 +78,28 @@ FormBackglass::~FormBackglass()
    delete m_pB2SAnimation;
    delete m_pFormDMD;
    delete m_pB2SScreen;
+
+   // unload backglass form stuff
+   for (const auto& [key, pPicbox] : *m_pB2SData->GetIlluminations()) {
+      if (pPicbox) {
+         const bool isRotating = std::ranges::any_of(*m_pB2SData->GetRotatingPictureBox(), [pPicbox](const auto& entry) { return entry.second == pPicbox; });
+         if (pPicbox->GetBackgroundImage() && !isRotating) {
+            m_vpxApi->DeleteTexture(pPicbox->GetBackgroundImage());
+            pPicbox->SetBackgroundImage(nullptr);
+         }
+         delete pPicbox;
+      }
+   }
+   for (const auto& [key, pPicbox] : *m_pB2SData->GetDMDIlluminations()) {
+      if (pPicbox) {
+         const bool isRotating = std::ranges::any_of(*m_pB2SData->GetRotatingPictureBox(), [pPicbox](const auto& entry) { return entry.second == pPicbox; });
+         if (pPicbox->GetBackgroundImage() && !isRotating) {
+            m_vpxApi->DeleteTexture(pPicbox->GetBackgroundImage());
+            pPicbox->SetBackgroundImage(nullptr);
+         }
+         delete pPicbox;
+      }
+   }
 
    if (m_pDarkImage4Authentic)
       m_vpxApi->DeleteTexture(m_pDarkImage4Authentic);
@@ -342,12 +333,12 @@ eLEDTypes FormBackglass::GetLEDType() const
 
 void FormBackglass::PlaySound(const string& szSoundName)
 {
-   LOGW("Not implemented");
+   LOGW("Not implemented"s);
 }
 
 void FormBackglass::StopSound(const string& szSoundName)
 {
-   LOGW("Not implemented");
+   LOGW("Not implemented"s);
 }
 
 const SDL_FRect& FormBackglass::GetScaleFactor() const
@@ -357,35 +348,44 @@ const SDL_FRect& FormBackglass::GetScaleFactor() const
 
 void FormBackglass::LoadB2SData()
 {
-   const string szFilename = find_case_insensitive_file_path(title_and_path_from_filename(m_pB2SData->GetTableFileName()) + ".directb2s");
-   if (szFilename.empty()) {
-      LOGD("No directb2s file found");
+   const std::filesystem::path tablePath(m_pB2SData->GetTableFileName());
+   std::filesystem::path b2sFilename = find_case_insensitive_file_path(tablePath.parent_path() / tablePath.filename().replace_extension(".directb2s"));
+   
+   // Search for a file matching the template 'foldername.directb2s' for file layout where tables are located in a folder with their companion files (b2s, pup, flex, music, ...)
+   if (b2sFilename.empty())
+   {
+      std::filesystem::path folderName = tablePath.parent_path().filename();
+      folderName += ".directb2s"sv;
+      b2sFilename = find_case_insensitive_file_path(tablePath.parent_path() / folderName);
+   }
+
+   if (b2sFilename.empty()) {
+      LOGD("No directb2s file found"s);
       throw std::exception();
    }
 
-   LOGI("directb2s file found at: %s", szFilename.c_str());
+   LOGI("directb2s file found at: " + b2sFilename.string());
 
-   m_pB2SData->SetBackglassFileName(szFilename);
+   m_pB2SData->SetBackglassFileName(b2sFilename.string());
 
-   std::ifstream infile(szFilename);
+   std::ifstream infile(b2sFilename);
    if (!infile.good())
       throw std::exception();
 
    tinyxml2::XMLDocument b2sTree;
    std::stringstream buffer;
-   std::ifstream myFile(szFilename.c_str());
+   std::ifstream myFile(b2sFilename);
    buffer << myFile.rdbuf();
    myFile.close();
 
    auto xml = buffer.str();
    if (b2sTree.Parse(xml.c_str(), xml.size())) {
-      LOGE("Failed to parse directb2s file: %s", szFilename.c_str());
+      LOGE("Failed to parse directb2s file: " + b2sFilename.string());
       throw std::exception();
    }
 
-   // try to get into the file and read some XML
    if (!b2sTree.FirstChildElement("DirectB2SData")) {
-      LOGE("Invalid directb2s file: %s", szFilename.c_str());
+      LOGE("Invalid directb2s file: " + b2sFilename.string());
       throw std::exception();
    }
 
@@ -393,13 +393,13 @@ void FormBackglass::LoadB2SData()
 
    // current backglass version is not allowed to be larger than server version and to be smaller minimum B2S version
    if (m_pB2SSettings->GetBackglassFileVersion() > string(B2S_VERSION_STRING)) {
-      LOGE("B2S backglass server version (%s) doesn't match directb2s file version (%s). Please update the B2S backglass server.",
-         B2S_VERSION_STRING, m_pB2SSettings->GetBackglassFileVersion().c_str());
+      LOGE(std::format("B2S backglass server version ({}) doesn't match directb2s file version ({}). Please update the B2S backglass server.",
+         B2S_VERSION_STRING, m_pB2SSettings->GetBackglassFileVersion()));
       return;
    }
    else if (m_pB2SSettings->GetBackglassFileVersion() < m_pB2SSettings->GetMinimumDirectB2SVersion()) {
-      LOGE("directb2s file version (%s) doesn't match minimum directb2s version. Please update the directb2s backglass file.",
-         m_pB2SSettings->GetBackglassFileVersion().c_str());
+      LOGE(std::format("directb2s file version ({}) doesn't match minimum directb2s version. Please update the directb2s backglass file.",
+         m_pB2SSettings->GetBackglassFileVersion()));
       return;
    }
 
@@ -571,6 +571,12 @@ void FormBackglass::LoadB2SData()
                   m_pB2SData->GetZOrderDMDImages()->Add(pPicbox);
                }
             }
+            else {
+               if (pImage)
+                  m_vpxApi->DeleteTexture(pImage);
+               delete pPicbox;
+               continue;
+            }
          }
          pPicbox->BringToFront();
          pPicbox->SetVisible(false);
@@ -592,9 +598,9 @@ void FormBackglass::LoadB2SData()
    }
 
    // get all score infos
-   int dream7index = 1;
-   int renderedandreelindex = 1;
    if (topnode->FirstChildElement("Scores")) {
+      int dream7index = 1;
+      int renderedandreelindex = 1;
       int rollinginterval = 0;
       if (topnode->FirstChildElement("Scores")->FindAttribute("ReelRollingInterval"))
          rollinginterval = topnode->FirstChildElement("Scores")->IntAttribute("ReelRollingInterval");
@@ -656,7 +662,7 @@ void FormBackglass::LoadB2SData()
 
          // maybe get default glow value
          if (m_pB2SSettings->GetDefaultGlow() == -1)
-             m_pB2SSettings->SetDefaultGlow(d7glow);
+             m_pB2SSettings->SetDefaultGlow(static_cast<int>(d7glow));
 
          // set preferred LED settings
          if (isRenderedLEDs || isDream7LEDs) {
@@ -667,7 +673,7 @@ void FormBackglass::LoadB2SData()
             else if (m_pB2SSettings->GetUsedLEDType() == eLEDTypes_Undefined)
                m_pB2SSettings->SetUsedLEDType(isDream7LEDs ? eLEDTypes_Dream7 : eLEDTypes_Rendered);
             if (m_pB2SSettings->IsGameNameFound() && m_pB2SSettings->GetGlowIndex() > -1)
-               glow = m_pB2SSettings->GetGlowIndex() * 8;
+               glow = static_cast<float>(m_pB2SSettings->GetGlowIndex() * 8);
             if (m_pB2SSettings->IsGameNameFound() && m_pB2SSettings->IsGlowBulbOn())
                glowbulb = { 0.0f, 0.0f, 0.1f, 0.4f };
          }
@@ -687,7 +693,7 @@ void FormBackglass::LoadB2SData()
                pLed->SetType(SegmentNumberType_FourteenSegment);
             pLed->SetScaleMode(ScaleMode_Stretch);
             pLed->SetDigits(digits);
-            pLed->SetSpacing(spacing * 5);
+            pLed->SetSpacing(static_cast<float>(spacing * 5));
             pLed->SetHidden(hidden);
             // color settings
             pLed->SetLightColor(reellitcolor);
@@ -791,7 +797,7 @@ void FormBackglass::LoadB2SData()
                if (innerNode->FindAttribute(("Sound" + std::to_string(i)).c_str())) {
                   soundName = innerNode->Attribute(("Sound" + std::to_string(i)).c_str());
                   if (soundName.empty())
-                     soundName = "stille"s;
+                     soundName = "stille"sv;
                }
                // add reel or LED pictures
                B2SReelBox* pReel = new B2SReelBox(m_vpxApi, m_pB2SData);
@@ -916,7 +922,7 @@ void FormBackglass::LoadB2SData()
                for (auto setnode = topnode->FirstChildElement("Reels")->FirstChildElement("IlluminatedImages")->FirstChildElement("Set"); setnode != nullptr; setnode = setnode->NextSiblingElement("Set")) {
                   int setid = setnode->IntAttribute("ID");
                   for (auto innerNode = setnode->FirstChildElement("IlluminatedImage"); innerNode != nullptr; innerNode = innerNode->NextSiblingElement("IlluminatedImage")) {
-                     string name = string(innerNode->Attribute("Name")) + '_' + std::to_string(setid);
+                     string name = innerNode->Attribute("Name") + ('_' + std::to_string(setid));
                      VPXTexture pImage = Base64ToImage(innerNode->Attribute("Image"));
                      if (!m_pB2SData->GetReelIlluImages()->contains(name))
                         (*m_pB2SData->GetReelIlluImages())[name] = pImage;
@@ -1134,10 +1140,10 @@ void FormBackglass::LoadB2SData()
          int interval = innerNode->IntAttribute("Interval");
          int loops = innerNode->IntAttribute("Loops");
          string idJoins = innerNode->Attribute("IDJoin");
-         bool startAnimationAtBackglassStartup = (innerNode->Attribute("StartAnimationAtBackglassStartup") == "1"s);
+         bool startAnimationAtBackglassStartup = (innerNode->Attribute("StartAnimationAtBackglassStartup") == "1"sv);
          eLightsStateAtAnimationStart lightsStateAtAnimationStart = eLightsStateAtAnimationStart_NoChange;
          eLightsStateAtAnimationEnd lightsStateAtAnimationEnd = eLightsStateAtAnimationEnd_InvolvedLightsOff;
-         eAnimationStopBehaviour animationstopbehaviour = eAnimationStopBehaviour_StopImmediatelly;
+         eAnimationStopBehaviour animationstopbehaviour = eAnimationStopBehaviour_StopImmediately;
          bool lockInvolvedLamps = false;
          bool hidescoredisplays = false;
          bool bringtofront = false;
@@ -1146,22 +1152,22 @@ void FormBackglass::LoadB2SData()
          if (innerNode->FindAttribute("LightsStateAtAnimationStart"))
             lightsStateAtAnimationStart = (eLightsStateAtAnimationStart)innerNode->IntAttribute("LightsStateAtAnimationStart");
          else if (innerNode->FindAttribute("AllLightsOffAtAnimationStart"))
-            lightsStateAtAnimationStart = (innerNode->Attribute("AllLightsOffAtAnimationStart") == "1"s) ? eLightsStateAtAnimationStart_LightsOff : eLightsStateAtAnimationStart_NoChange;
+            lightsStateAtAnimationStart = (innerNode->Attribute("AllLightsOffAtAnimationStart") == "1"sv) ? eLightsStateAtAnimationStart_LightsOff : eLightsStateAtAnimationStart_NoChange;
          if (innerNode->FindAttribute("LightsStateAtAnimationEnd"))
             lightsStateAtAnimationEnd = (eLightsStateAtAnimationEnd)innerNode->IntAttribute("LightsStateAtAnimationEnd");
          else if (innerNode->FindAttribute("ResetLightsAtAnimationEnd"))
-            lightsStateAtAnimationEnd = (innerNode->Attribute("ResetLightsAtAnimationEnd") == "1"s) ? eLightsStateAtAnimationEnd_LightsReseted : eLightsStateAtAnimationEnd_Undefined;
+            lightsStateAtAnimationEnd = (innerNode->Attribute("ResetLightsAtAnimationEnd") == "1"sv) ? eLightsStateAtAnimationEnd_LightsReseted : eLightsStateAtAnimationEnd_Undefined;
          if (innerNode->FindAttribute("AnimationStopBehaviour"))
             animationstopbehaviour = (eAnimationStopBehaviour)innerNode->IntAttribute("AnimationStopBehaviour");
          else if (innerNode->FindAttribute("RunAnimationTilEnd"))
-            animationstopbehaviour = (innerNode->Attribute("RunAnimationTilEnd") == "1"s) ? eAnimationStopBehaviour_RunAnimationTillEnd : eAnimationStopBehaviour_StopImmediatelly;
-         lockInvolvedLamps = (innerNode->Attribute("LockInvolvedLamps") == "1"s);
+            animationstopbehaviour = (innerNode->Attribute("RunAnimationTilEnd") == "1"sv) ? eAnimationStopBehaviour_RunAnimationTillEnd : eAnimationStopBehaviour_StopImmediately;
+         lockInvolvedLamps = (innerNode->Attribute("LockInvolvedLamps") == "1"sv);
          if (innerNode->FindAttribute("HideScoreDisplays"))
-            hidescoredisplays = (innerNode->Attribute("HideScoreDisplays") == "1"s);
+            hidescoredisplays = (innerNode->Attribute("HideScoreDisplays") == "1"sv);
          if (innerNode->FindAttribute("BringToFront"))
-            bringtofront = (innerNode->Attribute("BringToFront") == "1"s);
+            bringtofront = (innerNode->Attribute("BringToFront") == "1"sv);
          if (innerNode->FindAttribute("RandomStart"))
-            randomstart = (innerNode->Attribute("RandomStart") == "1"s);
+            randomstart = (innerNode->Attribute("RandomStart") == "1"sv);
          if (randomstart && innerNode->FindAttribute("RandomQuality"))
             randomquality = innerNode->IntAttribute("RandomQuality");
          if (lightsStateAtAnimationStart == eLightsStateAtAnimationStart_Undefined)
@@ -1169,7 +1175,7 @@ void FormBackglass::LoadB2SData()
          if (lightsStateAtAnimationEnd == eLightsStateAtAnimationEnd_Undefined)
             lightsStateAtAnimationEnd = eLightsStateAtAnimationEnd_InvolvedLightsOff;
          if (animationstopbehaviour == eAnimationStopBehaviour_Undefined)
-            animationstopbehaviour = eAnimationStopBehaviour_StopImmediatelly;
+            animationstopbehaviour = eAnimationStopBehaviour_StopImmediately;
          vector<PictureBoxAnimationEntry*> entries;
          for (auto stepnode = innerNode->FirstChildElement("AnimationStep"); stepnode != nullptr; stepnode = stepnode->NextSiblingElement("AnimationStep")) {
             //int step = stepnode->IntAttribute("Step");
@@ -1200,14 +1206,15 @@ void FormBackglass::LoadB2SData()
                      int id1 = 0;
                      int id2 = 0;
                      int id3 = 0;
-                     if (!idJoin.empty() && is_string_numeric(idJoin))
-                        id0 = std::stoi(idJoin);
-                     if (idJoin.length() >= 2 && is_string_numeric(idJoin.substr(1)))
-                        id1 = std::stoi(idJoin.substr(1));
-                     if (idJoin.length() >= 3 && is_string_numeric(idJoin.substr(2)))
-                        id2 = std::stoi(idJoin.substr(2));
-                     if (idJoin.length() >= 4 && is_string_numeric(idJoin.substr(3)))
-                        id3 = std::stoi(idJoin.substr(3));
+                     int result;
+                     if (is_string_numeric(idJoin,&result))
+                        id0 = result;
+                     if (idJoin.length() >= 2 && is_string_numeric(idJoin.substr(1),&result))
+                        id1 = result;
+                     if (idJoin.length() >= 3 && is_string_numeric(idJoin.substr(2),&result))
+                        id2 = result;
+                     if (idJoin.length() >= 4 && is_string_numeric(idJoin.substr(3),&result))
+                        id3 = result;
                      if (string_starts_with_case_insensitive(idJoin, "L"s)) {
                         AnimationCollection* pAnimations = randomstart ? m_pB2SData->GetUsedRandomAnimationLampIDs() : m_pB2SData->GetUsedAnimationLampIDs();
                         if (id1 > 0)
@@ -1325,6 +1332,7 @@ void FormBackglass::ResizeSomeImages()
                SDL_FRect frect = { 0.0f, 0.0f, (float)m_vpxApi->GetTextureInfo(pImage)->width / xResizeFactor, (float)m_vpxApi->GetTextureInfo(pImage)->height / yResizeFactor };
                SDL_Rect rect = { 0, 0, (int)frect.w, (int)frect.h };
                pPicbox->SetBackgroundImage(ResizeTexture(pImage, rect.w, rect.h));
+               m_vpxApi->DeleteTexture(pImage);
                if (pPicbox->GetOffImage())
                   pPicbox->SetOffImage(ResizeTexture(pPicbox->GetOffImage(), rect.w, rect.h));
             }
@@ -1395,6 +1403,9 @@ void FormBackglass::RotateImage(B2SPictureBox* pPicbox, int rotationsteps, eSnip
          rotatingAngle += m_rotateAngle;
          index++;
       }
+      VPXTexture pImage = pPicbox->GetBackgroundImage();
+      pPicbox->SetBackgroundImage((*m_pB2SData->GetRotatingImages())[romid][0]);
+      m_vpxApi->DeleteTexture(pImage);
    }
 }
 
@@ -1685,26 +1696,29 @@ VPXTexture FormBackglass::CropImageToTransparency(VPXTexture pImage, VPXTexture 
    return result;
 }
 
-VPXTexture FormBackglass::Base64ToImage(const string& image)
+VPXTexture FormBackglass::Base64ToImage(const char* image)
 {
-   vector<unsigned char> imageData = base64_decode(image);
-   if (imageData.empty()) {
-      LOGE("Base64ToImage: Failed to decode Base64 data");
+   std::string_view imageView { image };
+   vector<uint8_t> decoded = base64_decode(imageView.data(), imageView.size());
+   if (decoded.empty()) {
+      LOGE("Base64ToImage: Failed to decode Base64 data"s);
       return nullptr;
    }
 
-   VPXTexture pImage = m_vpxApi->CreateTexture(imageData.data(), static_cast<int>(imageData.size()));
+   VPXTexture pImage = m_vpxApi->CreateTexture(decoded.data(), static_cast<int>(decoded.size()));
    if (!pImage) {
-      size_t len = std::min<size_t>(image.size(), 40);
-      LOGE("Base64ToImage: Failed to create texture from data: %s", image.substr(0, len).c_str());
+      size_t len = std::min<size_t>(imageView.size(), 40);
+      LOGE("Base64ToImage: Failed to create texture from data: " + string(image, len));
    }
 
    return pImage;
 }
 
-Sound* FormBackglass::Base64ToWav(const string& data)
+Sound* FormBackglass::Base64ToWav(const char* data)
 {
-   return new Sound(base64_decode(data));
+   std::string_view dataView { data };
+   vector<uint8_t> decoded = base64_decode(dataView.data(), dataView.size());
+   return new Sound(std::move(decoded));
 }
 
 uint32_t FormBackglass::String2Color(const string& color)

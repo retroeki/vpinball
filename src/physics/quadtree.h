@@ -2,7 +2,8 @@
 
 #pragma once
 
-#include "collide.h"
+#include "math/bbox.h"
+#include "physics/collide.h"
 
 //#define DISABLE_ZTEST // z values of the BBox of (objects within) a node can be constant over some traversal levels (as its a quadtree and not an octree!), so we could also just ignore z tests overall. This can lead to performance benefits on some tables ("flat" ones) and performance penalties on others (e.g. when a ball moves under detailed meshes)
 
@@ -33,7 +34,7 @@ private:
    unsigned int m_items = 0; // number of items
 
    // everything below/including this node shares the same original primitive/hittarget object (just for early outs if not collidable), so this is actually cast then to a Primitive* or HitTarget*
-   Hitable* __restrict m_unique = nullptr; 
+   IHitable* __restrict m_unique = nullptr;
 
    HitQuadtreeNode * __restrict m_children = nullptr; // nullptr for leaf, or the 4 children otherwise
    Vertex2D m_vcenter; // center of node bounds, only defined for non leaf node

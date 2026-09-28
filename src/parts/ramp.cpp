@@ -1,76 +1,49 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-//#include "forsyth.h"
-#include "utils/objloader.h"
-#include "renderer/Shader.h"
+#include "ramp.h"
 
-Ramp::Ramp()
-{
-   m_menuid = IDR_SURFACEMENU;
-   m_d.m_collidable = true;
-   m_d.m_visible = true;
-   m_d.m_depthBias = 0.0f;
-   m_d.m_wireDiameter = 6.0f;
-   m_d.m_wireDistanceX = 38.0f;
-   m_d.m_wireDistanceY = 88.0f;
-   m_propPosition = nullptr;
-   m_rgheightInit = nullptr;
-}
+#include "core/VPApp.h"
+#include "parts/Collection.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/Texture.h"
+#include "renderer/trace.h"
+#include "utils/objloader.h"
+
 
 Ramp::~Ramp()
 {
-   assert(m_rd == nullptr);
+   assert(m_renderer == nullptr);
    delete[] m_rgheightInit;
 }
 
-Ramp *Ramp::CopyForPlay(PinTable *live_table) const
+Ramp *Ramp::CopyForPlay() const
 {
-   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Ramp, live_table, m_vdpoint)
+   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Ramp, m_curve)
    return dst;
 }
 
-void Ramp::UpdateStatusBarInfo()
+HRESULT Ramp::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   char tbuf[128];
-   sprintf_s(tbuf, sizeof(tbuf), "TopH: %.03f | BottomH: %0.3f | TopW: %.03f | BottomW: %.03f | LeftW: %.03f | RightW: %.03f", m_vpinball->ConvertToUnit(m_d.m_heighttop), m_vpinball->ConvertToUnit(m_d.m_heightbottom),
-       m_vpinball->ConvertToUnit(m_d.m_widthtop), m_vpinball->ConvertToUnit(m_d.m_widthbottom),
-       m_vpinball->ConvertToUnit(m_d.m_leftwallheightvisible), m_vpinball->ConvertToUnit(m_d.m_rightwallheightvisible));
-   m_vpinball->SetStatusBarUnitInfo(tbuf, true);
-}
-
-
-HRESULT Ramp::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
-{
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_visible = true;
 
-   const float length = 0.5f * g_pvp->m_settings.GetDefaultPropsRamp_Length();
+   const float length = 0.5f * g_settingsService.GetAppSettings().GetDefaultPropsRamp_Length();
 
-   CComObject<DragPoint> *pdp;
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x, y + length, 0.f, true);
-      pdp->m_calcHeight = m_d.m_heightbottom;
-      m_vdpoint.push_back(pdp);
-   }
+   auto pdp = std::make_unique<DragPoint>(&m_curve, x, y + length, 0.f, true);
+   pdp->SetCalcHeight(m_d.m_heightbottom);
+   m_curve.PushPoint(std::move(pdp));
 
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, x, y - length, 0.f, true);
-      pdp->m_calcHeight = m_d.m_heighttop;
-      m_vdpoint.push_back(pdp);
-   }
+   pdp = std::make_unique<DragPoint>(&m_curve, x, y - length, 0.f, true);
+   pdp->SetCalcHeight(m_d.m_heighttop);
+   m_curve.PushPoint(std::move(pdp));
 
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsRamp_##prop() : Settings::GetDefaultPropsRamp_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsRamp_##prop() : Settings::GetDefaultPropsRamp_##prop##_Default()
 void Ramp::SetDefaults(const bool fromMouseClick)
 {
    LinkProp(m_d.m_heightbottom, HeightBottom);
@@ -91,8 +64,8 @@ void Ramp::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_wireDistanceX, WireDistanceX);
    LinkProp(m_d.m_wireDistanceY, WireDistanceY);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    SetDefaultPhysics(fromMouseClick);
 }
 
@@ -106,7 +79,7 @@ void Ramp::SetDefaultPhysics(const bool fromMouseClick)
 
 void Ramp::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsRamp_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsRamp_##prop(field, false)
    LinkProp(m_d.m_heightbottom, HeightBottom);
    LinkProp(m_d.m_heighttop, HeightTop);
    LinkProp(m_d.m_widthbottom, WidthBottom);
@@ -128,130 +101,9 @@ void Ramp::WriteRegDefaults()
    LinkProp(m_d.m_friction, Friction);
    LinkProp(m_d.m_scatter, Scatter);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
-}
-
-void Ramp::UIRenderPass1(Sur * const psur)
-{
-   //make 1-wire ramps look unique in editor - uses ramp color
-   psur->SetFillColor(m_ptable->RenderSolid() ? m_vpinball->m_fillColor : -1);
-   psur->SetBorderColor(-1, false, 0);
-   psur->SetObject(this);
-
-   int cvertex;
-   const Vertex2D * const rgvLocal = GetRampVertex(cvertex, nullptr, nullptr, nullptr, nullptr, HIT_SHAPE_DETAIL_LEVEL, false);
-   psur->Polygon(rgvLocal, cvertex * 2);
-
-   delete[] rgvLocal;
-}
-
-void Ramp::UIRenderPass2(Sur * const psur)
-{
-   psur->SetFillColor(-1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetLineColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this);
-   psur->SetObject(nullptr); // nullptr so this won't be hit-tested
-
-   bool *pfCross;
-   Vertex2D *middlePoints;
-   int cvertex;
-   const Vertex2D * const rgvLocal = GetRampVertex(cvertex, nullptr, &pfCross, nullptr, &middlePoints, HIT_SHAPE_DETAIL_LEVEL, false);
-   psur->Polygon(rgvLocal, cvertex * 2);
-
-   if (IsHabitrail())
-   {
-      psur->Polyline(middlePoints, cvertex);
-      if (m_d.m_type == RampType4Wire || m_d.m_type == RampType3WireRight)
-      {
-         psur->SetLineColor(RGB(0, 0, 0), false, 3);
-         psur->Polyline(rgvLocal, cvertex);
-      }
-      if (m_d.m_type == RampType4Wire || m_d.m_type == RampType3WireLeft)
-      {
-         psur->SetLineColor(RGB(0, 0, 0), false, 3);
-         psur->Polyline(&rgvLocal[cvertex], cvertex);
-      }
-   }
-   else
-   {
-      for (int i = 0; i < cvertex; i++)
-         if (pfCross[i])
-            psur->Line(rgvLocal[i].x, rgvLocal[i].y, rgvLocal[cvertex * 2 - i - 1].x, rgvLocal[cvertex * 2 - i - 1].y);
-   }
-
-   delete[] rgvLocal;
-   delete[] pfCross;
-   delete[] middlePoints;
-
-   bool drawDragpoints = ((m_selectstate != eNotSelected) || m_vpinball->m_alwaysDrawDragPoints);
-   // if the item is selected then draw the dragpoints (or if we are always to draw dragpoints)
-   if (!drawDragpoints)
-   {
-      // if any of the drag points of this object are selected then draw all the dragpoints
-      for (size_t i = 0; i < m_vdpoint.size(); i++)
-      {
-         const CComObject<DragPoint> * const pdp = m_vdpoint[i];
-         if (pdp->m_selectstate != eNotSelected)
-         {
-            drawDragpoints = true;
-            break;
-         }
-      }
-   }
-
-   if (drawDragpoints)
-   {
-      for (size_t i = 0; i < m_vdpoint.size(); i++)
-      {
-         CComObject<DragPoint> * const pdp = m_vdpoint[i];
-         psur->SetFillColor(-1);
-         psur->SetBorderColor(pdp->m_dragging ? RGB(0, 255, 0) : ((i == 0) ? RGB(0, 0, 255) : RGB(255, 0, 0)), false, 0);
-         psur->SetObject(pdp);
-
-         psur->Ellipse2(pdp->m_v.x, pdp->m_v.y, 8);
-      }
-   }
-}
-
-void Ramp::RenderBlueprint(Sur *psur, const bool solid)
-{
-   psur->SetFillColor(solid ? BLUEPRINT_SOLID_COLOR : -1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetLineColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this);
-   psur->SetObject(nullptr); // nullptr so this won't be hit-tested
-
-   bool *pfCross;
-   Vertex2D *middlePoints;
-   int cvertex;
-   const Vertex2D * const rgvLocal = GetRampVertex(cvertex, nullptr, &pfCross, nullptr, &middlePoints, HIT_SHAPE_DETAIL_LEVEL, false);
-   psur->Polygon(rgvLocal, cvertex * 2);
-
-   if (IsHabitrail())
-   {
-      psur->Polyline(middlePoints, cvertex - 1);
-      if (m_d.m_type == RampType4Wire || m_d.m_type == RampType3WireRight)
-      {
-         psur->SetLineColor(RGB(0, 0, 0), false, 3);
-         psur->Polyline(rgvLocal, cvertex);
-      }
-      if (m_d.m_type == RampType4Wire || m_d.m_type == RampType3WireLeft)
-      {
-         psur->SetLineColor(RGB(0, 0, 0), false, 3);
-         psur->Polyline(&rgvLocal[cvertex], cvertex);
-      }
-   }
-
-   for (int i = 0; i < cvertex; i++)
-      if (pfCross[i])
-         psur->Line(rgvLocal[i].x, rgvLocal[i].y, rgvLocal[cvertex * 2 - i - 1].x, rgvLocal[cvertex * 2 - i - 1].y);
-
-   delete[] rgvLocal;
-   delete[] pfCross;
-   delete[] middlePoints;
 }
 
 void Ramp::GetBoundingVertices(vector<Vertex3Ds> &bounds, vector<Vertex3Ds> *const legacy_bounds)
@@ -308,12 +160,12 @@ void Ramp::GetBoundingVertices(vector<Vertex3Ds> &bounds, vector<Vertex3Ds> *con
    }
 }
 
-void Ramp::AssignHeightToControlPoint(const RenderVertex3D &v, const float height)
+void Ramp::AssignHeightToControlPoint(const RenderVertex3D &v, const float height) const
 {
-   for (size_t i = 0; i < m_vdpoint.size(); i++)
+   for (size_t i = 0; i < m_curve.GetPoints().size(); i++)
    {
-      if (m_vdpoint[i]->m_v.x == v.x && m_vdpoint[i]->m_v.y == v.y)
-         m_vdpoint[i]->m_calcHeight = height;
+      if (m_curve.GetPoints()[i]->GetX() == v.x && m_curve.GetPoints()[i]->GetY() == v.y)
+         m_curve.GetPoints()[i]->SetCalcHeight(height);
    }
 }
 
@@ -330,7 +182,8 @@ void Ramp::AssignHeightToControlPoint(const RenderVertex3D &v, const float heigh
  *  ppfCross     - size cvertex, true if i-th vertex corresponds to a control point
  *  ppratio      - how far along the ramp length the i-th vertex is, 1=start=bottom, 0=end=top (??)
  */
-Vertex2D *Ramp::GetRampVertex(int &pcvertex, float ** const ppheight, bool ** const ppfCross, float ** const ppratio, Vertex2D ** const pMiddlePoints, const float _accuracy, const bool inc_width)
+Vertex2D *Ramp::GetRampVertex(
+   int &pcvertex, float **const ppheight, bool **const ppfCross, float **const ppratio, Vertex2D **const pMiddlePoints, const float _accuracy, const bool inc_width) const
 {
    vector<RenderVertex3D> vvertex;
    GetCentralCurve(vvertex, _accuracy);
@@ -829,31 +682,31 @@ void Ramp::SetupHitObject(PhysicsEngine* physics, HitObject *obj, const bool isU
 
 #pragma region Rendering
 
-void Ramp::RenderSetup(RenderDevice *device)
+void Ramp::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
    UpdateBounds();
 }
 
 void Ramp::RenderRelease()
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
    m_meshBuffer = nullptr;
    m_meshEdgeBuffer = nullptr;
    m_dynamicVertexBufferRegenerate = true;
-   m_rd = nullptr;
+   m_renderer = nullptr;
 }
 
 void Ramp::UpdateAnimation(const float diff_time_msec)
 {
-   assert(m_rd != nullptr);
+   assert(m_renderer != nullptr);
 }
 
 void Ramp::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
@@ -882,11 +735,11 @@ void Ramp::Render(const unsigned int renderMask)
       if (isUIPass)
       {
          if (renderMask & Renderer::UI_FILL)
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
          /* if (renderMask & Renderer::UI_EDGES)
          {
             // FIXME create line list index buffer and reuse vertex buffer
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::LINELIST, 0, m_numIndices);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::LINELIST, 0, m_numIndices);
          }*/
          return;
       }
@@ -894,23 +747,23 @@ void Ramp::Render(const unsigned int renderMask)
       /* TODO: This is a misnomer right now, but clamp fixes some visual glitches (single-pixel lines)
        * with transparent textures. Probably the option should simply be renamed to ImageModeClamp,
        * since the texture coordinates always stay within [0,1] anyway. */
-      const SamplerAddressMode sam = m_d.m_imagealignment == ImageModeWrap ? SA_CLAMP : SA_REPEAT;
-      m_rd->ResetRenderState();
-      m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
+      const SamplerAddressMode sam = m_d.m_imagealignment == ImageModeWrap ? SamplerAddressMode::SA_CLAMP : SamplerAddressMode::SA_REPEAT;
+      m_renderer->m_renderDevice->ResetRenderState();
+      m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE);
       Texture * const pin = m_ptable->GetImage(m_d.m_szImage);
       if (!pin)
       {
-         m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_without_texture, *mat);
-         m_rd->m_basicShader->SetMaterial(mat, false);
+         m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_without_texture, *mat);
+         m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, false);
       }
       else
       {
-         m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, pin, false, SF_TRILINEAR, sam, sam);
-         m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
-         m_rd->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
-         m_rd->m_basicShader->SetMaterial(mat, !pin->IsOpaque());
+         m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, pin, false, SamplerFilter::SF_TRILINEAR, sam, sam);
+         m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
+         m_renderer->m_renderDevice->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
+         m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, !pin->IsOpaque());
       }
-      m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
    }
    else
    {
@@ -920,7 +773,7 @@ void Ramp::Render(const unsigned int renderMask)
       if (isUIPass)
       {
          if (renderMask & Renderer::UI_FILL)
-            m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6 * 3);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6 * 3);
          if (renderMask & Renderer::UI_EDGES && m_meshEdgeBuffer == nullptr)
          {
             vector<unsigned int> indices(8 * m_meshIndices.size() / 6);
@@ -935,15 +788,15 @@ void Ramp::Render(const unsigned int renderMask)
                indices[i * 8 + 6] = m_meshIndices[i * 6 + 5];
                indices[i * 8 + 7] = m_meshIndices[i * 6 + 4];
             }
-            m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_rd, indices), true);
+            m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, indices), true);
          }
          if (renderMask & Renderer::UI_EDGES)
-            m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_meshEdgeBuffer->m_ib->m_count);
+            m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, m_meshEdgeBuffer->m_ib->m_count);
          return;
       }
 
-      m_rd->ResetRenderState();
-      m_rd->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE); // as both floor and walls are thinwalled
+      m_renderer->m_renderDevice->ResetRenderState();
+      m_renderer->m_renderDevice->SetRenderState(RenderState::CULLMODE, RenderState::CULL_NONE); // as both floor and walls are thinwalled
 
       Texture * const pin = m_ptable->GetImage(m_d.m_szImage);
       if (pin)
@@ -951,40 +804,40 @@ void Ramp::Render(const unsigned int renderMask)
          /* TODO: This is a misnomer right now, but clamp fixes some visual glitches (single-pixel lines)
           * with transparent textures. Probably the option should simply be renamed to ImageModeClamp,
           * since the texture coordinates always stay within [0,1] anyway. */
-         const SamplerAddressMode sam = m_d.m_imagealignment == ImageModeWrap ? SA_CLAMP : SA_REPEAT;
-         m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
-         m_rd->m_basicShader->SetTexture(SHADER_tex_base_color, pin, false, SF_TRILINEAR, sam, sam);
-         m_rd->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
-         m_rd->m_basicShader->SetMaterial(mat, !pin->IsOpaque());
+         const SamplerAddressMode sam = m_d.m_imagealignment == ImageModeWrap ? SamplerAddressMode::SA_CLAMP : SamplerAddressMode::SA_REPEAT;
+         m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_with_texture, *mat, pin->m_alphaTestValue >= 0.f && !pin->IsOpaque());
+         m_renderer->m_renderDevice->m_basicShader->SetTexture(ShaderUniform::tex_base_color, pin, false, SamplerFilter::SF_TRILINEAR, sam, sam);
+         m_renderer->m_renderDevice->m_basicShader->SetAlphaTestValue(pin->m_alphaTestValue);
+         m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, !pin->IsOpaque());
       }
       else
       {
-         m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_without_texture, *mat);
-         m_rd->m_basicShader->SetMaterial(mat, false);
+         m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_without_texture, *mat);
+         m_renderer->m_renderDevice->m_basicShader->SetMaterial(mat, false);
       }
 
       if (m_d.m_rightwallheightvisible != 0.f && m_d.m_leftwallheightvisible != 0.f && (!pin || m_d.m_imageWalls))
       {
          // both walls with image and floor
-         m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6 * 3);
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6 * 3);
       }
       else
       {
          // only floor
-         m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6);
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, (m_rampVertex - 1) * 6);
 
          if (m_d.m_rightwallheightvisible != 0.f || m_d.m_leftwallheightvisible != 0.f)
          {
             if (pin && !m_d.m_imageWalls)
-               m_rd->m_basicShader->SetTechniqueMaterial(SHADER_TECHNIQUE_basic_without_texture, *mat);
+               m_renderer->m_renderDevice->m_basicShader->SetTechniqueMaterial(ShaderTechnique::basic_without_texture, *mat);
             if (m_d.m_rightwallheightvisible != 0.f && m_d.m_leftwallheightvisible != 0.f) //only render left & right side if the height is >0
-               m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6,
+               m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6,
                   (m_rampVertex - 1) * 6 * 2);
             else if (m_d.m_rightwallheightvisible != 0.f) //only render right side if the height is >0
-               m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6,
+               m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6,
                   (m_rampVertex - 1) * 6);
             else if (m_d.m_leftwallheightvisible != 0.f) //only render left side if the height is >0
-               m_rd->DrawMesh(m_rd->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6 * 2,
+               m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, mat->m_bOpacityActive, m_boundingSphereCenter, m_d.m_depthBias, m_meshBuffer, RenderDevice::TRIANGLELIST, (m_rampVertex - 1) * 6 * 2,
                   (m_rampVertex - 1) * 6);
          }
       }
@@ -1001,7 +854,7 @@ float Ramp::GetDepth(const Vertex3Ds& viewDir) const
 
 void Ramp::UpdateBounds()
 {
-   const Vertex2D center2D = GetPointCenter();
+   const Vertex2D& center2D = m_curve.GetCenter();
    m_boundingSphereCenter.Set(center2D.x, center2D.y, 0.5f * (m_d.m_heightbottom + m_d.m_heighttop));
 }
 
@@ -1024,7 +877,7 @@ void Ramp::CreateWire(const int numRings, const int numSegments, const Vertex2D 
       const int i2 = (i == (numRings - 1)) ? i : i + 1;
       const float height = m_rgheightInit[i];
 
-      Vertex3Ds tangent(midPoints[i2].x - midPoints[i].x, midPoints[i2].y - midPoints[i].y, m_rgheightInit[i2]- m_rgheightInit[i]);
+      Vertex3Ds tangent(midPoints[i2].x - midPoints[i].x, midPoints[i2].y - midPoints[i].y, m_rgheightInit[i2] - m_rgheightInit[i]);
       if (i == numRings - 1)
       {
          // for the last spline point use the previous tangent again, otherwise we won't see the complete wire (it stops one control point too early)
@@ -1084,13 +937,13 @@ void Ramp::GenerateWireMesh(Vertex3D_NoTex2 **meshBuf1, Vertex3D_NoTex2 **meshBu
    }
    else
    {
-      accuracy = (int)((float)m_ptable->GetDetailLevel()*1.3f); // see below
+      accuracy = (int)((float)m_ptable->GetDetailLevel() * 1.30000007152557373046875f); // see below
    }
 
    // as solid ramps are rendered into the static buffer, always use maximum precision
    const Material * const mat = m_ptable->GetMaterial(m_d.m_szMaterial);
    if (!mat->m_bOpacityActive)
-      accuracy = (int)(10.f*1.3f); // see above
+      accuracy = (int)(10.f * 1.30000007152557373046875f); // see above
 
    delete [] m_rgheightInit;
    m_rgheightInit = nullptr;
@@ -1198,8 +1051,8 @@ void Ramp::PrepareHabitrail()
    {
    case RampType1Wire:
    {
-      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_meshIndices);
-      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices, (float *)tmpBuf1);
+      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_meshIndices);
+      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices, (float *)tmpBuf1);
       m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
       break;
    }
@@ -1218,8 +1071,8 @@ void Ramp::PrepareHabitrail()
       memcpy(indices, m_meshIndices.data(), m_numIndices * sizeof(WORD));
       for (int i = 0; i < m_numIndices; i++)
          indices[m_numIndices + i] = indices[i] + m_numVertices;
-      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_numIndices * 2, indices);
-      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices * 2, (float *)vertices);
+      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_numIndices * 2, indices);
+      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices * 2, (float *)vertices);
       m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
       m_numVertices *= 2;
       m_numIndices *= 2;
@@ -1248,8 +1101,8 @@ void Ramp::PrepareHabitrail()
          indices[m_numIndices + i] = indices[i] + m_numVertices;
          indices[m_numIndices * 2 + i] = indices[i] + m_numVertices * 2;
       }
-      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_numIndices * 3, indices);
-      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices * 3, (float *)vertices);
+      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_numIndices * 3, indices);
+      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices * 3, (float *)vertices);
       m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
       m_numVertices *= 3;
       m_numIndices *= 3;
@@ -1281,8 +1134,8 @@ void Ramp::PrepareHabitrail()
          indices[m_numIndices*2 + i] = indices[i] + m_numVertices*2;
          indices[m_numIndices*3 + i] = indices[i] + m_numVertices*3;
       }
-      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_numIndices * 4, indices);
-      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices * 4, (float *)vertices);
+      std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_numIndices * 4, indices);
+      std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices * 4, (float *)vertices);
       m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
       m_numVertices *= 4;
       m_numIndices *= 4;
@@ -1311,142 +1164,94 @@ void Ramp::PrepareHabitrail()
 #pragma endregion
 
 
-void Ramp::SetObjectPos()
+void Ramp::ClearForOverwrite() { m_curve.ClearPoints(); }
+
+void Ramp::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   m_vpinball->SetObjectPosCur(0, 0);
+   writer.WriteFloat(FID(HTBT), m_d.m_heightbottom);
+   writer.WriteFloat(FID(HTTP), m_d.m_heighttop);
+   writer.WriteFloat(FID(WDBT), m_d.m_widthbottom);
+   writer.WriteFloat(FID(WDTP), m_d.m_widthtop);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteInt(FID(TYPE), m_d.m_type);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteInt(FID(ALGN), m_d.m_imagealignment);
+   writer.WriteBool(FID(IMGW), m_d.m_imageWalls);
+   writer.WriteFloat(FID(WLHL), m_d.m_leftwallheight);
+   writer.WriteFloat(FID(WLHR), m_d.m_rightwallheight);
+   writer.WriteFloat(FID(WVHL), m_d.m_leftwallheightvisible);
+   writer.WriteFloat(FID(WVHR), m_d.m_rightwallheightvisible);
+   writer.WriteBool(FID(HTEV), m_d.m_hitEvent);
+   writer.WriteFloat(FID(THRS), m_d.m_threshold);
+   writer.WriteFloat(FID(ELAS), m_d.m_elasticity);
+   writer.WriteFloat(FID(RFCT), m_d.m_friction);
+   writer.WriteFloat(FID(RSCT), m_d.m_scatter);
+   writer.WriteBool(FID(CLDR), m_d.m_collidable);
+   writer.WriteBool(FID(RVIS), m_d.m_visible);
+   writer.WriteFloat(FID(RADB), m_d.m_depthBias);
+   writer.WriteFloat(FID(RADI), m_d.m_wireDiameter);
+   writer.WriteFloat(FID(RADX), m_d.m_wireDistanceX);
+   writer.WriteFloat(FID(RADY), m_d.m_wireDistanceY);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+   writer.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
+   writer.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
+   SaveSharedEditableFields(writer);
+   m_curve.SavePoints(writer);
+   writer.EndObject();
 }
 
-void Ramp::MoveOffset(const float dx, const float dy)
-{
-   for (size_t i = 0; i < m_vdpoint.size(); i++)
-   {
-      CComObject<DragPoint> * const pdp = m_vdpoint[i];
-
-      pdp->m_v.x += dx;
-      pdp->m_v.y += dy;
-   }
-}
-
-void Ramp::ClearForOverwrite()
-{
-   ClearPointsForOverwrite();
-}
-
-HRESULT Ramp::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
-{
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteFloat(FID(HTBT), m_d.m_heightbottom);
-   bw.WriteFloat(FID(HTTP), m_d.m_heighttop);
-   bw.WriteFloat(FID(WDBT), m_d.m_widthbottom);
-   bw.WriteFloat(FID(WDTP), m_d.m_widthtop);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteInt(FID(TYPE), m_d.m_type);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteInt(FID(ALGN), m_d.m_imagealignment);
-   bw.WriteBool(FID(IMGW), m_d.m_imageWalls);
-   bw.WriteFloat(FID(WLHL), m_d.m_leftwallheight);
-   bw.WriteFloat(FID(WLHR), m_d.m_rightwallheight);
-   bw.WriteFloat(FID(WVHL), m_d.m_leftwallheightvisible);
-   bw.WriteFloat(FID(WVHR), m_d.m_rightwallheightvisible);
-   bw.WriteBool(FID(HTEV), m_d.m_hitEvent);
-   bw.WriteFloat(FID(THRS), m_d.m_threshold);
-   bw.WriteFloat(FID(ELAS), m_d.m_elasticity);
-   bw.WriteFloat(FID(RFCT), m_d.m_friction);
-   bw.WriteFloat(FID(RSCT), m_d.m_scatter);
-   bw.WriteBool(FID(CLDR), m_d.m_collidable);
-   bw.WriteBool(FID(RVIS), m_d.m_visible);
-   bw.WriteFloat(FID(RADB), m_d.m_depthBias);
-   bw.WriteFloat(FID(RADI), m_d.m_wireDiameter);
-   bw.WriteFloat(FID(RADX), m_d.m_wireDistanceX);
-   bw.WriteFloat(FID(RADY), m_d.m_wireDistanceY);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-   bw.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
-   bw.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(PNTS));
-   HRESULT hr;
-   if (FAILED(hr = SavePointData(pstm, hcrypthash)))
-      return hr;
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
-}
-
-HRESULT Ramp::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Ramp::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(HTBT): m_d.m_heightbottom = reader.AsFloat(); break;
+         case FID(HTTP): m_d.m_heighttop = reader.AsFloat(); break;
+         case FID(WDBT): m_d.m_widthbottom = reader.AsFloat(); break;
+         case FID(WDTP): m_d.m_widthtop = reader.AsFloat(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(TYPE): m_d.m_type = static_cast<RampType>(reader.AsInt()); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(ALGN): m_d.m_imagealignment = static_cast<RampImageAlignment>(reader.AsInt()); break;
+         case FID(IMGW): m_d.m_imageWalls = reader.AsBool(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(WLHL): m_d.m_leftwallheight = reader.AsFloat(); break;
+         case FID(WLHR): m_d.m_rightwallheight = reader.AsFloat(); break;
+         case FID(WVHL): m_d.m_leftwallheightvisible = reader.AsFloat(); break;
+         case FID(WVHR): m_d.m_rightwallheightvisible = reader.AsFloat(); break;
+         case FID(HTEV): m_d.m_hitEvent = reader.AsBool(); break;
+         case FID(THRS): m_d.m_threshold = reader.AsFloat(); break;
+         case FID(ELAS): m_d.m_elasticity = reader.AsFloat(); break;
+         case FID(RFCT): m_d.m_friction = reader.AsFloat(); break;
+         case FID(RSCT): m_d.m_scatter = reader.AsFloat(); break;
+         case FID(CLDR): m_d.m_collidable = reader.AsBool(); break;
+         case FID(RVIS): m_d.m_visible = reader.AsBool(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         case FID(RADB): m_d.m_depthBias = reader.AsFloat(); break;
+         case FID(RADI): m_d.m_wireDiameter = reader.AsFloat(); break;
+         case FID(RADX): m_d.m_wireDistanceX = reader.AsFloat(); break;
+         case FID(RADY): m_d.m_wireDistanceY = reader.AsFloat(); break;
+         case FID(MAPH): m_d.m_szPhysicsMaterial = reader.AsString(); break;
+         case FID(OVPH): m_d.m_overwritePhysics = reader.AsBool(); break;
+         case FID(PNTS): break; // Empty tag placed before drag point data (unused)
+         case FID(DPNT): m_curve.LoadPointToken(reader); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
 }
 
-bool Ramp::LoadToken(const int id, BiffReader * const pbr)
+void Ramp::AddPoint(const Vertex2D &v, const bool smooth)
 {
-   switch(id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(HTBT): pbr->GetFloat(m_d.m_heightbottom); break;
-   case FID(HTTP): pbr->GetFloat(m_d.m_heighttop); break;
-   case FID(WDBT): pbr->GetFloat(m_d.m_widthbottom); break;
-   case FID(WDTP): pbr->GetFloat(m_d.m_widthtop); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(TYPE): pbr->GetInt(&m_d.m_type); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(ALGN): pbr->GetInt(&m_d.m_imagealignment); break;
-   case FID(IMGW): pbr->GetBool(m_d.m_imageWalls); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(WLHL): pbr->GetFloat(m_d.m_leftwallheight); break;
-   case FID(WLHR): pbr->GetFloat(m_d.m_rightwallheight); break;
-   case FID(WVHL): pbr->GetFloat(m_d.m_leftwallheightvisible); break;
-   case FID(WVHR): pbr->GetFloat(m_d.m_rightwallheightvisible); break;
-   case FID(HTEV): pbr->GetBool(m_d.m_hitEvent); break;
-   case FID(THRS): pbr->GetFloat(m_d.m_threshold); break;
-   case FID(ELAS): pbr->GetFloat(m_d.m_elasticity); break;
-   case FID(RFCT): pbr->GetFloat(m_d.m_friction); break;
-   case FID(RSCT): pbr->GetFloat(m_d.m_scatter); break;
-   case FID(CLDR): pbr->GetBool(m_d.m_collidable); break;
-   case FID(RVIS): pbr->GetBool(m_d.m_visible); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   case FID(RADB): pbr->GetFloat(m_d.m_depthBias); break;
-   case FID(RADI): pbr->GetFloat(m_d.m_wireDiameter); break;
-   case FID(RADX): pbr->GetFloat(m_d.m_wireDistanceX); break;
-   case FID(RADY): pbr->GetFloat(m_d.m_wireDistanceY); break;
-   case FID(MAPH): pbr->GetString(m_d.m_szPhysicsMaterial); break;
-   case FID(OVPH): pbr->GetBool(m_d.m_overwritePhysics); break;
-   default:
-   {
-      if (id == FID(DPNT))
-         LoadPointToken(pbr);
-      ISelect::LoadToken(id, pbr);
-      break;
-   }
-   }
-   return true;
-}
-
-HRESULT Ramp::InitPostLoad()
-{
-   return S_OK;
-}
-
-void Ramp::AddPoint(int x, int y, const bool smooth)
-{
-   STARTUNDO
-   const Vertex2D v = m_ptable->TransformPoint(x, y);
-
    vector<RenderVertex3D> vvertex;
    GetCentralCurve(vvertex);
 
@@ -1461,78 +1266,31 @@ void Ramp::AddPoint(int x, int y, const bool smooth)
          icp++;
 
    //if (icp == 0) // need to add point after the last point
-   //icp = m_vdpoint.size();
+   //icp = m_curve.GetPoints().size();
 
-   CComObject<DragPoint> *pdp;
-   CComObject<DragPoint>::CreateInstance(&pdp);
-   if (pdp)
-   {
-      pdp->AddRef();
-      pdp->Init(this, vOut.x, vOut.y, (vvertex[max(iSeg - 1, 0)].z + vvertex[min(iSeg + 1, (int)vvertex.size() - 1)].z)*0.5f, smooth); // Ramps are usually always smooth
-      m_vdpoint.insert(m_vdpoint.begin() + icp, pdp); // push the second point forward, and replace it with this one.  Should work when index2 wraps.
-   }
-
-   STOPUNDO
-}
-
-void Ramp::DoCommand(int icmd, int x, int y)
-{
-   ISelect::DoCommand(icmd, x, y);
-
-   switch (icmd)
-   {
-   case ID_WALLMENU_FLIP:
-      FlipPointY(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_MIRROR:
-      FlipPointX(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_ROTATE:
-      RotateDialog();
-      break;
-
-   case ID_WALLMENU_SCALE:
-      ScaleDialog();
-      break;
-
-   case ID_WALLMENU_TRANSLATE:
-      TranslateDialog();
-      break;
-
-   case ID_WALLMENU_ADDPOINT:
-   {
-      AddPoint(x, y, true);
-   }
-   break;
-   }
+   // Ramps are usually always smooth; push the second point forward, and replace it with this one. Should work when index2 wraps.
+   m_curve.InsertPoint(icp, std::make_unique<DragPoint>(&m_curve, vOut.x, vOut.y, (vvertex[max(iSeg - 1, 0)].z + vvertex[min(iSeg + 1, (int)vvertex.size() - 1)].z) * 0.5f, smooth));
+   m_curve.OnPointsModified();
 }
 
 void Ramp::FlipY(const Vertex2D& pvCenter)
 {
-   IHaveDragPoints::FlipPointY(pvCenter);
+   m_curve.FlipPointY(pvCenter);
 }
 
 void Ramp::FlipX(const Vertex2D& pvCenter)
 {
-   IHaveDragPoints::FlipPointX(pvCenter);
+   m_curve.FlipPointX(pvCenter);
 }
 
-void Ramp::Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter)
+void Ramp::Rotate(const float ang, const Vertex2D &center, const bool useElementCenter) { m_curve.RotatePoints(ang, useElementCenter ? GetCenter() : center); }
+
+void Ramp::Scale(const float scalex, const float scaley, const Vertex2D &center, const bool useElementCenter)
 {
-   IHaveDragPoints::RotatePoints(ang, pvCenter, useElementCenter);
+   m_curve.ScalePoints(scalex, scaley, useElementCenter ? GetCenter() : center);
 }
 
-void Ramp::Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter)
-{
-   IHaveDragPoints::ScalePoints(scalex, scaley, pvCenter, useElementCenter);
-}
-
-void Ramp::Translate(const Vertex2D &pvOffset)
-{
-   IHaveDragPoints::TranslatePoints(pvOffset);
-}
+void Ramp::Translate(const Vertex2D &offset) { m_curve.TranslatePoints(offset); }
 
 STDMETHODIMP Ramp::InterfaceSupportsErrorInfo(REFIID riid)
 {
@@ -1800,7 +1558,7 @@ STDMETHODIMP Ramp::get_Friction(float *pVal)
 
 STDMETHODIMP Ramp::put_Friction(float newVal)
 {
-   newVal = clamp(newVal, 0.f, 1.f);
+   newVal = saturate(newVal);
    m_d.m_friction = newVal;
 
    return S_OK;
@@ -1820,7 +1578,7 @@ STDMETHODIMP Ramp::put_Scatter(float newVal)
 
 STDMETHODIMP Ramp::get_Collidable(VARIANT_BOOL *pVal)
 {
-   *pVal = FTOVB((!g_pplayer) ? m_d.m_collidable : m_vhoCollidable[0]->m_enabled);
+   *pVal = FTOVB(m_vhoCollidable.empty() ? m_d.m_collidable : m_vhoCollidable[0]->m_enabled);
 
    return S_OK;
 }
@@ -1828,14 +1586,11 @@ STDMETHODIMP Ramp::get_Collidable(VARIANT_BOOL *pVal)
 STDMETHODIMP Ramp::put_Collidable(VARIANT_BOOL newVal)
 {
    const bool val = VBTOb(newVal);
-   if (!g_pplayer)
+   if (m_vhoCollidable.empty())
       m_d.m_collidable = val;
-   else
-   {
-       if (!m_vhoCollidable.empty() && m_vhoCollidable[0]->m_enabled != val)
-           for (size_t i = 0; i < m_vhoCollidable.size(); i++) //!! costly
-               m_vhoCollidable[i]->m_enabled = val; //copy to hit checking on entities composing the object
-   }
+   else if (m_vhoCollidable[0]->m_enabled != val)
+      for (size_t i = 0; i < m_vhoCollidable.size(); i++) //!! costly
+         m_vhoCollidable[i]->m_enabled = val; //copy to hit checking on entities composing the object
 
    return S_OK;
 }
@@ -2340,10 +2095,10 @@ void Ramp::GenerateVertexBuffer()
    Vertex3D_NoTex2 *tmpBuffer = nullptr;
    GenerateRampMesh(&tmpBuffer);
    std::shared_ptr<VertexBuffer> dynamicVertexBuffer
-      = std::make_shared<VertexBuffer>(m_rd, m_numVertices * 3, (float *)tmpBuffer); //!! use USAGE_DYNAMIC if it would actually be "really" dynamic
+      = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices * 3, (float *)tmpBuffer); //!! use USAGE_DYNAMIC if it would actually be "really" dynamic
    delete[] tmpBuffer;
 
-   std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_meshIndices);
+   std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_meshIndices);
    
    m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
 }

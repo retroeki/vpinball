@@ -13,6 +13,8 @@ enum Link {
     case libzedmd
     case libserum
     case libdof
+    case libvni
+    case libwinevbs
     case thirdparty
 
     var url: URL {
@@ -36,11 +38,15 @@ enum Link {
         case .libdmdutil:
             return URL(string: "https://github.com/vpinball/libdmdutil")!
         case .libzedmd:
-            return URL(string: "https://github.com/ppuc/libzedmd")!
+            return URL(string: "https://github.com/PPUC/libzedmd")!
         case .libserum:
-            return URL(string: "https://github.com/ppuc/libserum_concentrate")!
+            return URL(string: "https://github.com/PPUC/libserum")!
         case .libdof:
-            return URL(string: "https://github.com/jsm174/libdof")!
+            return URL(string: "https://github.com/vpinball/libdof")!
+        case .libvni:
+            return URL(string: "https://github.com/PPUC/libvni")!
+        case .libwinevbs:
+            return URL(string: "https://github.com/vpinball/libwinevbs")!
         case .thirdparty:
             return URL(string: "https://github.com/vpinball/vpinball/blob/master/third-party/README.md")!
         }
@@ -61,6 +67,8 @@ enum Credit {
     case libzedmd
     case libserum
     case libdof
+    case libvni
+    case libwinevbs
     case other
     case artwork
 
@@ -71,6 +79,8 @@ enum Credit {
                                 .libzedmd,
                                 .libserum,
                                 .libdof,
+                                .libvni,
+                                .libwinevbs,
                                 .other,
                                 .artwork]
 
@@ -90,6 +100,10 @@ enum Credit {
             return "libserum"
         case .libdof:
             return "libdof"
+        case .libvni:
+            return "libvni"
+        case .libwinevbs:
+            return "libwinevbs"
         case .other:
             return "Other third party libraries"
         case .artwork:
@@ -100,7 +114,7 @@ enum Credit {
     var authors: String? {
         switch self {
         case .vpinball:
-            return "toxieainc, vbousquet, fuzzelhjb, jsm174, c-f-h, francisdb, bcd, cupidsf, djrobx, brandrew2, mjrgh, koadic76, shagendo, Nicals, horseyhorsey, CraftedCart, superhac, snail_gary, Matthias Buecher, Le-Syl21, baxelrod-bdai, YellowLabrador, claytgreene, markmon, JockeJarre, WildCoder, ScaryG, nkissebe, mkalkbrenner, freezy, Wylted1, WizardsHat, RandyDavis2000, ntleverenz, latsao, Chickenzilla, Yuki, teamsuperpanda, surtarso, RockfordRoe, ravarcade, poiuyterry, omigeot, manofwar32, LeHaine, KutsuyaYuki, kaicherry, joni999, jmarzka, droscoe, cschmidtpxc, CapitaineSheridan, Billiam, andremichi"
+            return "toxieainc, vbousquet, fuzzelhjb, jsm174, c-f-h, francisdb, bcd, cupidsf, djrobx, brandrew2, mjrgh, koadic76, shagendo, Nicals, horseyhorsey, CraftedCart, superhac, snail_gary, Matthias Buecher, Le-Syl21, baxelrod-bdai, YellowLabrador, claytgreene, markmon, JockeJarre, WildCoder, ScaryG, nkissebe, mkalkbrenner, freezy, Wylted1, WizardsHat, RandyDavis2000, ntleverenz, latsao, Chickenzilla, Yuki, teamsuperpanda, surtarso, RockfordRoe, ravarcade, poiuyterry, omigeot, manofwar32, LeHaine, KutsuyaYuki, kaicherry, joni999, jmarzka, droscoe, cschmidtpxc, CapitaineSheridan, Billiam, andremichi, evilwraith, gitfool, cwick, Pyrrvs, hughfitzgerald, dekay, dynajoe, Herschel, colas-sebastien, nicolaspr56, herrMirto, mcragun, garybrowndev, kara2010"
         case .pinmame:
             return "toxieainc, volkenborn, Steve Ellenoff, bcd, Tom, Haukap, wpcmame, Matthias Buecher, jsm174, vbousquet, mkalkbrenner, droscoe, djrobx, Thomas Behrens, bontango, tomlogic, mjrgh, Oliver, Kaegi, syllebra, JockeJarre, Randall, Perlow, gstellenberg, Netsplits, gnulnulf, Sunnucks, mattwalsh, Mark, freezy, uid68989, Sereda, Pavel, noflip95, No, francisdb, diego-link-eggy"
         case .libaltsound:
@@ -108,11 +122,15 @@ enum Credit {
         case .libdmdutil:
             return "mkalkbrenner, jsm174, toxieainc, francisdb, bartdesign, freezy"
         case .libzedmd:
-            return "mkalkbrenner, jsm174, zesinger, bartdesign"
+            return "mkalkbrenner, jsm174, zesinger, Cpasjuste, bartdesign"
         case .libserum:
-            return "zesinger, mkalkbrenner, pinballpower, jsm174, vbousquet, toxieainc"
+            return "zesinger, mkalkbrenner, pinballpower, jsm174, vbousquet, toxieainc, PastorL69"
         case .libdof:
-            return "jsm174, dekay"
+            return "jsm174, dekay, dynajoe, dejaloomer, patsoffice, superhac"
+        case .libvni:
+            return "mkalkbrenner, freezy, jsm174"
+        case .libwinevbs:
+            return "jsm174, francisdb, gitfool"
         case .artwork:
             return "smillard316 (Table placeholder), adam.co (App icon enhancements), twostraws (Shimmer metal shader)"
         default:
@@ -136,6 +154,10 @@ enum Credit {
             return .libserum
         case .libdof:
             return .libdof
+        case .libvni:
+            return .libvni
+        case .libwinevbs:
+            return .libwinevbs
         case .other:
             return .thirdparty
         default:

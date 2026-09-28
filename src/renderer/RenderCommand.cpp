@@ -2,7 +2,10 @@
 
 #include "core/stdafx.h"
 #include "RenderCommand.h"
-#include "VRDevice.h"
+
+#include "parts/Collection.h"
+#include "renderer/Renderer.h"
+#include "renderer/VRDevice.h"
 
 #include <iomanip>
 
@@ -35,16 +38,18 @@ bool RenderCommand::IsFullClear(const bool hasDepth) const
 
 void RenderCommand::Execute(const int nInstances, const bool log)
 {
+   if (log)
+   {
+      PLOGI << ToString(false);
+   }
+
    switch (m_command)
    {
    case RC_CLEAR:
    {
-      if (log) {
-         PLOGI << "> Clear";
-      }
       m_renderState.Apply(m_rd);
       constexpr float z = 1.0f;
-      constexpr DWORD stencil = 0L;
+      constexpr DWORD stencil = 0;
 
       #if defined(ENABLE_BGFX)
       const uint32_t r = (m_clearARGB & 0x000000ff);
@@ -52,7 +57,11 @@ void RenderCommand::Execute(const int nInstances, const bool log)
       const uint32_t b = (m_clearARGB & 0x00ff0000) >> 16;
       const uint32_t a = (m_clearARGB & 0xff000000) >> 24;
       const uint32_t rgba = (r << 24) | (g << 16) | (b << 8) | a;
-      bgfx::setViewClear(m_rd->m_activeViewId, (uint16_t) m_clearFlags, rgba);
+      // BGFX applies a single clear per view when it is submitted, using the last defined clear state: combine this clear with the previous ones of the active view
+      m_rd->m_activeViewClearFlags = (uint16_t)(m_rd->m_activeViewClearFlags | m_clearFlags);
+      if (m_clearFlags & clearType::TARGET)
+         m_rd->m_activeViewClearColor = rgba;
+      bgfx::setViewClear(m_rd->m_activeViewId, m_rd->m_activeViewClearFlags, m_rd->m_activeViewClearColor);
       bgfx::touch(m_rd->m_activeViewId);
 
       #elif defined(ENABLE_OPENGL)
@@ -90,10 +99,6 @@ void RenderCommand::Execute(const int nInstances, const bool log)
 
    case RC_COPY:
    {
-      if (log) {
-         PLOGI << "> Copy " << m_copyFrom->m_name << " => " << m_copyTo->m_name;
-      }
-
       // Original VPX code state that on DirectX 9 StretchRect must not be called between BeginScene/EndScene.
       // This does not seem to appear in Microsoft's docs and I could not find any glitch.
       #if defined(ENABLE_DX9)
@@ -110,33 +115,16 @@ void RenderCommand::Execute(const int nInstances, const bool log)
       break;
    }
 
-   case RC_SUBMIT_VR:
-   {
-      if (log) {
-         PLOGI << "> Submit VR";
-      }
-      #if defined(ENABLE_VR)
-         if (g_pplayer->m_vrDevice && g_pplayer->m_vrDevice->IsVRReady())
-         {
-            g_pplayer->m_logicProfiler.EnterProfileSection(FrameProfiler::PROFILE_RENDER_FLIP); 
-            g_pplayer->m_vrDevice->SubmitFrame(g_pplayer->m_renderer->GetOffscreenVR(0)->GetColorSampler(), g_pplayer->m_renderer->GetOffscreenVR(1)->GetColorSampler());
-            g_pplayer->m_logicProfiler.OnPresented(usec());
-            g_pplayer->m_logicProfiler.ExitProfileSection();
-         }
-      #endif
-      break;
-   }
-
    case RC_DRAW_QUAD_PT:
    case RC_DRAW_QUAD_PNT:
    case RC_DRAW_MESH:
    {
       m_renderState.Apply(m_rd);
-      m_shaderState->SetInt(SHADER_layer, RenderTarget::GetCurrentRenderLayer() < 0 ? 0 : RenderTarget::GetCurrentRenderLayer());
+      m_shaderState->SetInt(ShaderUniform::layer, RenderTarget::GetCurrentRenderLayer() < 0 ? 0 : RenderTarget::GetCurrentRenderLayer());
       // EXPERIMENTAL (ExperimentalRendererOpt): skip the per-draw deep copy of the whole uniform byte-blob + the
       // sampler shared_ptr vector (atomic refcount inc/dec x samplers x ~376 draws/frame). Point the shader at the
       // command's snapshot for this draw, then restore after End(). OFF = the original CopyTo. m_shaderState already
-      // holds the snapshot captured at record time (CopyTo(true) in SetDrawMesh) plus the per-draw SHADER_layer set above.
+      // holds the snapshot captured at record time (CopyTo(true) in SetDrawMesh) plus the per-draw layer uniform set above.
       ShaderState* savedShaderState = nullptr;
       if (m_rd->m_experimentalRendererOpt)
       {
@@ -178,7 +166,7 @@ void RenderCommand::Execute(const int nInstances, const bool log)
          bgfx::setVertexBuffer(0, &tvb);
          bgfx::setInstanceCount(nInstances);
          bgfx::setState(m_rd->m_bgfxState | BGFX_STATE_PT_TRISTRIP);
-         bgfx::submit(m_rd->m_activeViewId, m_shader->GetCore());         
+         bgfx::submit(m_rd->m_activeViewId, m_shader->GetCore());
 
          #elif defined(ENABLE_OPENGL)
          void* bufvb;
@@ -367,25 +355,6 @@ void RenderCommand::Execute(const int nInstances, const bool log)
       if (savedShaderState != nullptr)
          m_shader->m_state = savedShaderState; // restore live state pointer (see ExperimentalRendererOpt swap above)
 
-      if (log)
-      {
-         std::stringstream ss;
-         if (m_command == RC_DRAW_QUAD_PT)
-            ss << "> Draw Quad PT  ";
-         else if (m_command == RC_DRAW_QUAD_PNT)
-            ss << "> Draw Quad PNT ";
-         else if (m_command == RC_DRAW_MESH)
-            ss << "> Draw Mesh     ";
-         ss << (m_isTransparent ? "T "s : "O "s);
-         ss << std::setw(40) << Shader::GetTechniqueName(m_shaderState->GetTechnique()) << std::setw(0) << ' ' << m_renderState.GetLog();
-         ss << " Depth: " << std::fixed << std::setw(8) << std::setprecision(2) << m_depth;
-         if (m_command == RC_DRAW_MESH)
-         {
-            ss << " MB:" << std::setw(4) << std::hex << m_mb->GetSortKey() << std::dec;
-            ss << " IndCount: " << std::setw(8) << m_indicesCount << ' ' << m_mb->m_name.c_str();
-         }
-         PLOGI << ss.str();
-      }
       break;
    }
    }
@@ -424,12 +393,6 @@ void RenderCommand::SetCopy(RenderTarget* from, RenderTarget* to, bool color, bo
    m_copyDstRect = vec4((const float)x2, (const float)y2, (const float)w2, (const float)h2);
    m_copySrcLayer = srcLayer;
    m_copyDstLayer = dstLayer;
-}
-
-void RenderCommand::SetSubmitVR(RenderTarget* from)
-{
-   m_command = Command::RC_SUBMIT_VR;
-   m_copyFrom = from;
 }
 
 void RenderCommand::SetDrawMesh(
@@ -481,4 +444,39 @@ void RenderCommand::SetDrawTexturedQuad(Shader* shader, const Vertex3D_NoTex2* v
    else
       m_shaderState = new ShaderState(m_shader, m_rd->UseLowPrecision());
    m_shader->m_state->CopyTo(true, m_shaderState);
+}
+
+string RenderCommand::ToString(bool detailled) const
+{
+   std::stringstream ss;
+   switch (m_command)
+   {
+   case RC_CLEAR: ss << "> Clear"; break;
+
+   case RC_COPY: ss << "> Copy " << m_copyFrom->m_name << " => " << m_copyTo->m_name; break;
+
+   case RC_DRAW_QUAD_PT:
+   case RC_DRAW_QUAD_PNT:
+   case RC_DRAW_MESH:
+      if (m_command == RC_DRAW_QUAD_PT)
+         ss << "> Draw Quad PT  ";
+      else if (m_command == RC_DRAW_QUAD_PNT)
+         ss << "> Draw Quad PNT ";
+      else if (m_command == RC_DRAW_MESH)
+         ss << "> Draw Mesh     ";
+      ss << (m_isTransparent ? "T "s : "O "s);
+      ss << std::setw(40) << Shader::GetTechniqueName(m_shaderState->GetTechnique()) << std::setw(0) << ' ' << m_renderState.GetLog();
+      ss << " Depth: " << std::fixed << std::setw(8) << std::setprecision(2) << m_depth;
+      if (m_command == RC_DRAW_MESH)
+      {
+         ss << " MB:" << std::setw(4) << std::hex << m_mb->GetSortKey() << std::dec;
+         ss << " IndCount: " << std::setw(8) << m_indicesCount << ' ' << m_mb->m_name;
+      }
+      if (detailled)
+      {
+         ss << '\n' << m_shaderState->ToString();
+      }
+      break;
+   }
+   return ss.str();
 }

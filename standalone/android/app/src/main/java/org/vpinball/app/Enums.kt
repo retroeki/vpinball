@@ -15,9 +15,11 @@ enum class Link(val url: String) {
     PINMAME("https://github.com/vpinball/pinmame"),
     LIBALTSOUND("https://github.com/vpinball/libaltsound"),
     LIBDMDUTIL("https://github.com/vpinball/libdmdutil"),
-    LIBZEDMD("https://github.com/ppuc/libzedmd"),
-    LIBSERUM("https://github.com/ppuc/libserum_concentrate"),
-    LIBDOF("https://github.com/jsm174/libdof"),
+    LIBZEDMD("https://github.com/PPUC/libzedmd"),
+    LIBSERUM("https://github.com/PPUC/libserum"),
+    LIBDOF("https://github.com/vpinball/libdof"),
+    LIBVNI("https://github.com/PPUC/libvni"),
+    LIBWINEVBS("https://github.com/vpinball/libwinevbs"),
     THIRDPARTY("https://github.com/vpinball/vpinball/blob/master/third-party/README.md");
 
     fun open(context: Context) {
@@ -29,7 +31,7 @@ enum class Link(val url: String) {
 enum class Credit(val displayName: String, val authors: String? = null, val link: Link? = null) {
     VPINBALL(
         "Visual Pinball",
-        "toxieainc, vbousquet, fuzzelhjb, jsm174, c-f-h, francisdb, bcd, cupidsf, djrobx, brandrew2, mjrgh, koadic76, shagendo, Nicals, horseyhorsey, CraftedCart, superhac, snail_gary, Matthias Buecher, Le-Syl21, baxelrod-bdai, YellowLabrador, claytgreene, markmon, JockeJarre, WildCoder, ScaryG, nkissebe, mkalkbrenner, freezy, Wylted1, WizardsHat, RandyDavis2000, ntleverenz, latsao, Chickenzilla, Yuki, teamsuperpanda, surtarso, RockfordRoe, ravarcade, poiuyterry, omigeot, manofwar32, LeHaine, KutsuyaYuki, kaicherry, joni999, jmarzka, droscoe, cschmidtpxc, CapitaineSheridan, Billiam, andremichi",
+        "toxieainc, vbousquet, fuzzelhjb, jsm174, c-f-h, francisdb, bcd, cupidsf, djrobx, brandrew2, mjrgh, koadic76, shagendo, Nicals, horseyhorsey, CraftedCart, superhac, snail_gary, Matthias Buecher, Le-Syl21, baxelrod-bdai, YellowLabrador, claytgreene, markmon, JockeJarre, WildCoder, ScaryG, nkissebe, mkalkbrenner, freezy, Wylted1, WizardsHat, RandyDavis2000, ntleverenz, latsao, Chickenzilla, Yuki, teamsuperpanda, surtarso, RockfordRoe, ravarcade, poiuyterry, omigeot, manofwar32, LeHaine, KutsuyaYuki, kaicherry, joni999, jmarzka, droscoe, cschmidtpxc, CapitaineSheridan, Billiam, andremichi, evilwraith, gitfool, cwick, Pyrrvs, hughfitzgerald, dekay, dynajoe, Herschel, colas-sebastien, nicolaspr56, herrMirto, mcragun, garybrowndev, kara2010",
         Link.VPINBALL,
     ),
     PINMAME(
@@ -39,9 +41,11 @@ enum class Credit(val displayName: String, val authors: String? = null, val link
     ),
     LIBALTSOUND("libaltsound", "droscoe, jsm174, toxieainc, francisdb", Link.LIBALTSOUND),
     LIBDMDUTIL("libdmdutil", "mkalkbrenner, jsm174, toxieainc, francisdb, bartdesign, freezy", Link.LIBDMDUTIL),
-    LIBZEDMD("libzedmd", "mkalkbrenner, jsm174, zesinger, bartdesign", Link.LIBZEDMD),
-    LIBSERUM("libserum", "zesinger, mkalkbrenner, pinballpower, jsm174, vbousquet, toxieainc", Link.LIBSERUM),
-    LIBDOF("libdof", "jsm174, dekay", Link.LIBDOF),
+    LIBZEDMD("libzedmd", "mkalkbrenner, jsm174, zesinger, Cpasjuste, bartdesign", Link.LIBZEDMD),
+    LIBSERUM("libserum", "zesinger, mkalkbrenner, pinballpower, jsm174, vbousquet, toxieainc, PastorL69", Link.LIBSERUM),
+    LIBDOF("libdof", "jsm174, dekay, dynajoe, dejaloomer, patsoffice, superhac", Link.LIBDOF),
+    LIBVNI("libvni", "mkalkbrenner, freezy, jsm174", Link.LIBVNI),
+    LIBWINEVBS("libwinevbs", "jsm174, francisdb, gitfool", Link.LIBWINEVBS),
     ARTWORK("Artwork", "smillard316 (Table placeholder), adam.co (App icon enhancements)"),
     OTHER("Other third party libraries", link = Link.THIRDPARTY),
 }

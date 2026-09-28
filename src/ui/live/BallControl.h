@@ -31,10 +31,13 @@ public:
    void SetMode(bool ballControl, bool throwBall);
    void SetMode(Mode mode);
    Mode GetMode() const { return m_mode; }
-   HitBall* GetDraggedBall() const { return m_mode == Mode::DragBall && m_dragging ? m_draggedBall : nullptr; }
+   Ball* GetSelectedBall() const { return m_draggedBall; }
+   Ball* GetDraggedBall() const { return m_mode == Mode::DragBall && m_dragging ? m_draggedBall : nullptr; }
    const Vertex3Ds& GetDraggedBallTarget() const { return m_dragTarget; }
-   void SetDraggedBall(HitBall* ball) { if (!m_dragging) m_draggedBall = ball; }
-   void EndBallDrag() { m_dragging = false; }
+   void SetDraggedBall(Ball* ball) { if (!m_dragging) m_draggedBall = ball; }
+   void ReleaseDragTarget() { m_dragging = false; }
+   void EndBallDrag() { m_dragging = false; m_draggedBall = nullptr; }
+   void ClearDraggedBall(const Ball* ball) { if (m_draggedBall == ball) EndBallDrag(); }
    
    void Update(const int width, const int height);
    
@@ -42,11 +45,12 @@ private:
    void HandleDragBall(const int width, const int height);
    void HandleDestroyBall(const int width, const int height) const;
    void HandleThrowBalls(const int width, const int height);
+   bool IsSelectedBallDraggable() const;
 
    LiveUI& m_liveUI;
    Mode m_mode = Mode::Disabled;
    bool m_dragging = false;
-   HitBall *m_draggedBall = nullptr;
+   bool m_prevLeftFlipperPressed = false;
+   Ball *m_draggedBall = nullptr;
    Vertex3Ds m_dragTarget;
-   InputManager::ActionState m_prevActionState { };
 };

@@ -1,105 +1,97 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-#include "utils/objloader.h"
+#include "spinner.h"
+
+#include "core/VPApp.h"
+#include "math/matrix.h"
 #include "meshes/spinnerBracketMesh.h"
 #include "meshes/spinnerPlateMesh.h"
-#include "renderer/Shader.h"
+#include "parts/Collection.h"
 #include "renderer/IndexBuffer.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/trace.h"
 #include "renderer/VertexBuffer.h"
+#include "utils/objloader.h"
 
-Spinner::Spinner()
-{
-   m_phitspinner = nullptr;
-   m_vertexBuffer_spinneranimangle = -FLT_MAX;
-}
 
 Spinner::~Spinner()
 {
-   assert(m_rd == nullptr);
+   assert(m_renderer == nullptr);
 }
 
-Spinner *Spinner::CopyForPlay(PinTable *live_table) const
+Spinner *Spinner::CopyForPlay() const
 {
-   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Spinner, live_table)
+   STANDARD_EDITABLE_COPY_FOR_PLAY_IMPL(Spinner)
    return dst;
 }
 
-void Spinner::UpdateStatusBarInfo()
-{
-   char tbuf[128];
-   sprintf_s(tbuf, sizeof(tbuf), "Length: %.3f | Height: %.3f", m_vpinball->ConvertToUnit(m_d.m_length), m_vpinball->ConvertToUnit(m_d.m_height));
-   m_vpinball->SetStatusBarUnitInfo(tbuf, true);
-}
-
-float Spinner::GetAngleMax() const
-{
-   return (g_pplayer) ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMax) : // player active value
-                        m_d.m_angleMax;
-}
+float Spinner::GetAngleMax() const { return m_phitspinner ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMax) : m_d.m_angleMax; }
 
 void Spinner::SetAngleMax(const float angle)
 {
-    float newVal = angle;
+   float newVal = angle;
 
-    if (g_pplayer)
-    {
-        if (m_d.m_angleMin != m_d.m_angleMax)	// allow only if in limited angle mode
-        {
-            if (newVal > m_d.m_angleMax) newVal = m_d.m_angleMax;
-            else if (newVal < m_d.m_angleMin) newVal = m_d.m_angleMin;
+   if (m_phitspinner)
+   {
+      if (m_d.m_angleMin != m_d.m_angleMax) // allow only if in limited angle mode
+      {
+         if (newVal > m_d.m_angleMax)
+            newVal = m_d.m_angleMax;
+         else if (newVal < m_d.m_angleMin)
+            newVal = m_d.m_angleMin;
 
-            newVal = ANGTORAD(newVal);
+         newVal = ANGTORAD(newVal);
 
-            if (m_phitspinner->m_spinnerMover.m_angleMin < newVal)  // Min is smaller???
-                m_phitspinner->m_spinnerMover.m_angleMax = newVal;  // yes set new max
-            else m_phitspinner->m_spinnerMover.m_angleMin = newVal; // no set new minumum
-        }
-    }
-    else
-        m_d.m_angleMax = newVal;
+         if (m_phitspinner->m_spinnerMover.m_angleMin < newVal) // Min is smaller???
+            m_phitspinner->m_spinnerMover.m_angleMax = newVal; // yes set new max
+         else
+            m_phitspinner->m_spinnerMover.m_angleMin = newVal; // no set new minumum
+      }
+   }
+   else
+      m_d.m_angleMax = newVal;
 }
 
-float Spinner::GetAngleMin() const
-{
-    return (g_pplayer) ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMin) : // player active value
-                        m_d.m_angleMin;
-}
+float Spinner::GetAngleMin() const { return m_phitspinner ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMin) : m_d.m_angleMin; }
 
 void Spinner::SetAngleMin(const float angle)
 {
-    float newVal = angle;
-    if (g_pplayer)
-    {
-        if (m_d.m_angleMin != m_d.m_angleMax)	// allow only if in limited angle mode
-        {
-            if (newVal > m_d.m_angleMax) newVal = m_d.m_angleMax;
-            else if (newVal < m_d.m_angleMin) newVal = m_d.m_angleMin;
+   float newVal = angle;
+   if (m_phitspinner)
+   {
+      if (m_d.m_angleMin != m_d.m_angleMax) // allow only if in limited angle mode
+      {
+         if (newVal > m_d.m_angleMax)
+            newVal = m_d.m_angleMax;
+         else if (newVal < m_d.m_angleMin)
+            newVal = m_d.m_angleMin;
 
-            newVal = ANGTORAD(newVal);
+         newVal = ANGTORAD(newVal);
 
-            if (m_phitspinner->m_spinnerMover.m_angleMax > newVal)  // max is bigger
-                m_phitspinner->m_spinnerMover.m_angleMin = newVal;  // then set new minumum
-            else m_phitspinner->m_spinnerMover.m_angleMax = newVal; // else set new max
-        }
-    }
-    else
-        m_d.m_angleMin = newVal;
+         if (m_phitspinner->m_spinnerMover.m_angleMax > newVal) // max is bigger
+            m_phitspinner->m_spinnerMover.m_angleMin = newVal; // then set new minumum
+         else
+            m_phitspinner->m_spinnerMover.m_angleMax = newVal; // else set new max
+      }
+   }
+   else
+      m_d.m_angleMin = newVal;
 }
 
-HRESULT Spinner::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
+HRESULT Spinner::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_vCenter.x = x;
    m_d.m_vCenter.y = y;
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
 
 void Spinner::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsSpinner_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsSpinner_##prop(field, false)
    LinkProp(m_d.m_length, Length);
    LinkProp(m_d.m_rotation, Rotation);
    LinkProp(m_d.m_showBracket, ShowBracket);
@@ -112,12 +104,12 @@ void Spinner::WriteRegDefaults()
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSurface, Surface);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsSpinner_##prop() : Settings::GetDefaultPropsSpinner_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsSpinner_##prop() : Settings::GetDefaultPropsSpinner_##prop##_Default()
 void Spinner::SetDefaults(const bool fromMouseClick)
 {
    LinkProp(m_d.m_length, Length);
@@ -130,8 +122,8 @@ void Spinner::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_szImage, Image);
    LinkProp(m_d.m_szSurface, Surface);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    SetDefaultPhysics(fromMouseClick);
 }
 
@@ -141,38 +133,6 @@ void Spinner::SetDefaultPhysics(const bool fromMouseClick)
    LinkProp(m_d.m_damping, AntiFriction);
 }
 #undef LinkProp
-
-void Spinner::UIRenderPass1(Sur * const psur)
-{
-}
-
-void Spinner::UIRenderPass2(Sur * const psur)
-{
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetLineColor(RGB(0, 0, 0), false, 3);
-   psur->SetObject(this);
-
-   const float halflength = m_d.m_length * 0.5f;
-
-   const float radangle = ANGTORAD(m_d.m_rotation);
-   float sn = sinf(radangle);
-   float cs = cosf(radangle);
-
-   psur->Line(m_d.m_vCenter.x + cs*halflength, m_d.m_vCenter.y + sn*halflength,
-      m_d.m_vCenter.x - cs*halflength, m_d.m_vCenter.y - sn*halflength);
-
-   psur->SetLineColor(RGB(0, 0, 0), false, 1);
-   psur->SetObject(this);
-
-   psur->Line(m_d.m_vCenter.x + cs*halflength, m_d.m_vCenter.y + sn*halflength,
-      m_d.m_vCenter.x - cs*halflength, m_d.m_vCenter.y - sn*halflength);
-
-   if (sn == 0.0f) sn = 1.0f;
-   if (cs == 0.0f) cs = 1.0f;
-   psur->Rectangle(m_d.m_vCenter.x - cs * halflength * 0.65f, m_d.m_vCenter.y - sn * halflength * 0.65f,
-                   m_d.m_vCenter.x + cs * halflength * 0.65f, m_d.m_vCenter.y + sn * halflength * 0.65f);
-}
-
 
 #pragma region Physics
 
@@ -185,7 +145,23 @@ void Spinner::PhysicSetup(PhysicsEngine* physics, const bool isUI)
 
    if (isUI)
    {
-      // FIXME implement UI picking
+      // Editor picking proxy: the plate rotates around a horizontal axis, a thin line in top view, so use a flat quad
+      // covering the axis and the brackets at its ends, placed at the pivot height
+      const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y);
+      const float radangle = ANGTORAD(m_d.m_rotation);
+      const Vertex2D tangent(cosf(radangle), sinf(radangle));
+      const Vertex2D normal(-tangent.y, tangent.x);
+      const float halfLength = m_d.m_length * 0.75f; // extend over the axis ends to include the brackets
+      const float halfWidth = m_d.m_length * 0.1f;
+      Vertex3Ds *const rgv3D = new Vertex3Ds[4]; // CCW winding for upward facing normal
+      for (int i = 0; i < 4; i++)
+      {
+         const Vertex2D p = m_d.m_vCenter + tangent * ((i >= 2) ? halfLength : -halfLength) + normal * ((i == 1 || i == 2) ? halfWidth : -halfWidth);
+         rgv3D[i] = Vertex3Ds(p.x, p.y, height + m_d.m_height);
+      }
+      Hit3DPoly *const ph3dpoly = new Hit3DPoly(this, rgv3D, 4);
+      ph3dpoly->m_ObjType = eSpinner;
+      physics->AddCollider(ph3dpoly, isUI);
    }
    else
    {
@@ -198,10 +174,9 @@ void Spinner::PhysicSetup(PhysicsEngine* physics, const bool isUI)
       m_d.m_angleMin = angleMin;
       m_d.m_angleMax = angleMax;
 
-      HitSpinner *const phitspinner = new HitSpinner(this, height);
-      m_phitspinner = phitspinner;
+      m_phitspinner = new HitSpinner(this, height);
 
-      physics->AddCollider(phitspinner, isUI);
+      physics->AddCollider(m_phitspinner, isUI);
 
       if (m_d.m_showBracket)
       {
@@ -295,16 +270,16 @@ void Spinner::ExportMesh(ObjLoader& loader)
 
 #pragma region Rendering
 
-void Spinner::RenderSetup(RenderDevice *device)
+void Spinner::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
 
    const float height = m_ptable->GetSurfaceHeight(m_d.m_szSurface, m_d.m_vCenter.x, m_d.m_vCenter.y);
    m_posZ = height + m_d.m_height;
 
-   std::shared_ptr<IndexBuffer> bracketIndexBuffer = std::make_shared<IndexBuffer>(m_rd, spinnerBracketNumFaces, spinnerBracketIndices);
-   std::shared_ptr<VertexBuffer> bracketVertexBuffer = std::make_shared<VertexBuffer>(m_rd, spinnerBracketNumVertices);
+   std::shared_ptr<IndexBuffer> bracketIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, spinnerBracketNumFaces, spinnerBracketIndices);
+   std::shared_ptr<VertexBuffer> bracketVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, spinnerBracketNumVertices);
    m_bracketMeshBuffer = std::make_shared<MeshBuffer>(GetName() + ".Bracket"s, bracketVertexBuffer, bracketIndexBuffer, true);
 
    m_fullMatrix = Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
@@ -328,8 +303,8 @@ void Spinner::RenderSetup(RenderDevice *device)
    }
    bracketVertexBuffer->Unlock();
 
-   std::shared_ptr<IndexBuffer> plateIndexBuffer = std::make_shared<IndexBuffer>(m_rd, spinnerPlateNumFaces, spinnerPlateIndices);
-   std::shared_ptr<VertexBuffer> plateVertexBuffer = std::make_shared<VertexBuffer>(m_rd, spinnerPlateNumVertices, nullptr, true);
+   std::shared_ptr<IndexBuffer> plateIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, spinnerPlateNumFaces, spinnerPlateIndices);
+   std::shared_ptr<VertexBuffer> plateVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, spinnerPlateNumVertices, nullptr, true);
    m_plateMeshBuffer = std::make_shared<MeshBuffer>(GetName() + ".Plate"s, plateVertexBuffer, plateIndexBuffer, true);
 
    m_vertexBuffer_spinneranimangle = -FLT_MAX;
@@ -338,8 +313,8 @@ void Spinner::RenderSetup(RenderDevice *device)
 
 void Spinner::RenderRelease()
 {
-   assert(m_rd != nullptr);
-   m_rd = nullptr;
+   assert(m_renderer != nullptr);
+   m_renderer = nullptr;
    m_bracketMeshBuffer = nullptr;
    m_plateMeshBuffer = nullptr;
 }
@@ -357,8 +332,8 @@ void Spinner::UpdateAnimation(const float diff_time_msec)
 
 void Spinner::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
@@ -368,7 +343,7 @@ void Spinner::Render(const unsigned int renderMask)
    || (isReflectionPass && !m_d.m_reflectionEnabled))
       return;
 
-   m_rd->ResetRenderState();
+   m_renderer->m_renderDevice->ResetRenderState();
 
    if (m_d.m_showBracket && !isDynamicOnly)
    {
@@ -383,29 +358,33 @@ void Spinner::Render(const unsigned int renderMask)
       mat.m_cClearcoat = 0x20202020;
       mat.m_fEdge = 1.0f;
       mat.m_fEdgeAlpha = 1.0f;
-      m_rd->m_basicShader->SetBasic(&mat, nullptr);
+      m_renderer->m_renderDevice->m_basicShader->SetBasic(&mat, nullptr);
       Vertex3Ds pos(m_d.m_vCenter.x, m_d.m_vCenter.y, m_posZ);
-      m_rd->DrawMesh(m_rd->m_basicShader, false, pos, 0.f, m_bracketMeshBuffer, RenderDevice::TRIANGLELIST, 0, spinnerBracketNumFaces);
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, pos, 0.f, m_bracketMeshBuffer, RenderDevice::TRIANGLELIST, 0, spinnerBracketNumFaces);
    }
 
-   if (m_phitspinner->m_spinnerMover.m_visible && !isStaticOnly)
+   const bool plateVisible = m_phitspinner ? m_phitspinner->m_spinnerMover.m_visible : m_d.m_visible;
+   if (plateVisible && !isStaticOnly)
    {
       UpdatePlate(nullptr);
       Vertex3Ds pos(m_d.m_vCenter.x, m_d.m_vCenter.y, m_posZ);
-      m_rd->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
-      m_rd->DrawMesh(m_rd->m_basicShader, false, pos, 0.f, m_plateMeshBuffer, RenderDevice::TRIANGLELIST, 0, spinnerPlateNumFaces);
+      m_renderer->m_renderDevice->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, pos, 0.f, m_plateMeshBuffer, RenderDevice::TRIANGLELIST, 0, spinnerPlateNumFaces);
    }
 }
 
 void Spinner::UpdatePlate(Vertex3D_NoTex2 * const vertBuffer)
 {
+   const float angle = m_phitspinner ? m_phitspinner->m_spinnerMover.m_angle
+      : clamp(0.f, ANGTORAD(min(m_d.m_angleMin, m_d.m_angleMax)), ANGTORAD(max(m_d.m_angleMin, m_d.m_angleMax)));
+
    // early out in case still same rotation
-   if (m_phitspinner->m_spinnerMover.m_angle == m_vertexBuffer_spinneranimangle)
+   if (angle == m_vertexBuffer_spinneranimangle)
        return;
 
-   m_vertexBuffer_spinneranimangle = m_phitspinner->m_spinnerMover.m_angle;
+   m_vertexBuffer_spinneranimangle = angle;
 
-   const Matrix3D fullMatrix = Matrix3D::MatrixRotateX(-m_phitspinner->m_spinnerMover.m_angle)
+   const Matrix3D fullMatrix = Matrix3D::MatrixRotateX(-angle)
                              * Matrix3D::MatrixRotateZ(ANGTORAD(m_d.m_rotation));
 
    Vertex3D_NoTex2 *buf;
@@ -436,15 +415,10 @@ void Spinner::UpdatePlate(Vertex3D_NoTex2 * const vertBuffer)
 #pragma endregion
 
 
-void Spinner::SetObjectPos()
+void Spinner::Translate(const Vertex2D &offset)
 {
-   m_vpinball->SetObjectPosCur(m_d.m_vCenter.x, m_d.m_vCenter.y);
-}
-
-void Spinner::MoveOffset(const float dx, const float dy)
-{
-   m_d.m_vCenter.x += dx;
-   m_d.m_vCenter.y += dy;
+   m_d.m_vCenter.x += offset.x;
+   m_d.m_vCenter.y += offset.y;
 }
 
 Vertex2D Spinner::GetCenter() const
@@ -452,83 +426,62 @@ Vertex2D Spinner::GetCenter() const
    return m_d.m_vCenter;
 }
 
-void Spinner::PutCenter(const Vertex2D& pv)
+void Spinner::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   m_d.m_vCenter = pv;
+   writer.WriteVector2(FID(VCEN), m_d.m_vCenter);
+   writer.WriteFloat(FID(ROTA), m_d.m_rotation);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteFloat(FID(HIGH), m_d.m_height);
+   writer.WriteFloat(FID(LGTH), m_d.m_length);
+   writer.WriteFloat(FID(AFRC), m_d.m_damping);
+
+   writer.WriteFloat(FID(SMAX), m_d.m_angleMax);
+   writer.WriteFloat(FID(SMIN), m_d.m_angleMin);
+   writer.WriteFloat(FID(SELA), m_d.m_elasticity);
+   writer.WriteBool(FID(SVIS), m_d.m_visible);
+   writer.WriteBool(FID(SSUP), m_d.m_showBracket);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteString(FID(IMGF), m_d.m_szImage);
+   writer.WriteString(FID(SURF), m_d.m_szSurface);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+
+   SaveSharedEditableFields(writer);
+
+   writer.EndObject();
 }
 
-HRESULT Spinner::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
-{
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteVector2(FID(VCEN), m_d.m_vCenter);
-   bw.WriteFloat(FID(ROTA), m_d.m_rotation);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteFloat(FID(HIGH), m_d.m_height);
-   bw.WriteFloat(FID(LGTH), m_d.m_length);
-   bw.WriteFloat(FID(AFRC), m_d.m_damping);
-
-   bw.WriteFloat(FID(SMAX), m_d.m_angleMax);
-   bw.WriteFloat(FID(SMIN), m_d.m_angleMin);
-   bw.WriteFloat(FID(SELA), m_d.m_elasticity);
-   bw.WriteBool(FID(SVIS), m_d.m_visible);
-   bw.WriteBool(FID(SSUP), m_d.m_showBracket);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteString(FID(IMGF), m_d.m_szImage);
-   bw.WriteString(FID(SURF), m_d.m_szSurface);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
-}
-
-HRESULT Spinner::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Spinner::Load(IObjectReader& reader)
 {
    SetDefaults(false);
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool Spinner::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch(id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(VCEN): pbr->GetVector2(m_d.m_vCenter); break;
-   case FID(ROTA): pbr->GetFloat(m_d.m_rotation); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(SSUP): pbr->GetBool(m_d.m_showBracket); break;
-   case FID(HIGH): pbr->GetFloat(m_d.m_height); break;
-   case FID(LGTH): pbr->GetFloat(m_d.m_length); break;
-   case FID(AFRC): pbr->GetFloat(m_d.m_damping); break;
-   case FID(SMAX): pbr->GetFloat(m_d.m_angleMax); break;
-   case FID(SMIN): pbr->GetFloat(m_d.m_angleMin); break;
-   case FID(SELA): pbr->GetFloat(m_d.m_elasticity); break;
-   case FID(SVIS): pbr->GetBool(m_d.m_visible); break;
-   case FID(IMGF): pbr->GetString(m_d.m_szImage); break;
-   case FID(SURF): pbr->GetString(m_d.m_szSurface); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   default: ISelect::LoadToken(id, pbr); break;
-   }
-   return true;
-}
-
-HRESULT Spinner::InitPostLoad()
-{
-   return S_OK;
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(VCEN): m_d.m_vCenter = reader.AsVector2(); break;
+         case FID(ROTA): m_d.m_rotation = reader.AsFloat(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(SSUP): m_d.m_showBracket = reader.AsBool(); break;
+         case FID(HIGH): m_d.m_height = reader.AsFloat(); break;
+         case FID(LGTH): m_d.m_length = reader.AsFloat(); break;
+         case FID(AFRC): m_d.m_damping = reader.AsFloat(); break;
+         case FID(SMAX): m_d.m_angleMax = reader.AsFloat(); break;
+         case FID(SMIN): m_d.m_angleMin = reader.AsFloat(); break;
+         case FID(SELA): m_d.m_elasticity = reader.AsFloat(); break;
+         case FID(SVIS): m_d.m_visible = reader.AsBool(); break;
+         case FID(IMGF): m_d.m_szImage = reader.AsString(); break;
+         case FID(SURF): m_d.m_szSurface = reader.AsString(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
 }
 
 STDMETHODIMP Spinner::InterfaceSupportsErrorInfo(REFIID riid)
@@ -583,14 +536,14 @@ STDMETHODIMP Spinner::put_Height(float newVal)
 
 STDMETHODIMP Spinner::get_Damping(float *pVal)
 {
-   *pVal = !g_pplayer ? m_d.m_damping : powf(m_phitspinner->m_spinnerMover.m_damping,(float)(1.0/PHYS_FACTOR));
+   *pVal = m_phitspinner ? powf(m_phitspinner->m_spinnerMover.m_damping, (float)(1.0 / PHYS_FACTOR)) : m_d.m_damping;
    return S_OK;
 }
 
 STDMETHODIMP Spinner::put_Damping(float newVal)
 {
-   const float tmp = clamp(newVal, 0.0f, 1.0f);
-   if (g_pplayer)
+   const float tmp = saturate(newVal);
+   if (m_phitspinner)
       m_phitspinner->m_spinnerMover.m_damping = powf(tmp, (float)PHYS_FACTOR);
    else
       m_d.m_damping = tmp;
@@ -686,8 +639,8 @@ STDMETHODIMP Spinner::get_AngleMax(float *pVal)
 
 STDMETHODIMP Spinner::put_AngleMax(float newVal)
 {
-   if (g_pplayer && (m_d.m_angleMin == m_d.m_angleMax)) // allow only if in limited angle mode
-      return S_FAIL;
+   if (m_phitspinner && (m_d.m_angleMin == m_d.m_angleMax)) // allow only if in limited angle mode
+      return E_FAIL;
 
    SetAngleMax(newVal);
    return S_OK;
@@ -695,15 +648,14 @@ STDMETHODIMP Spinner::put_AngleMax(float newVal)
 
 STDMETHODIMP Spinner::get_AngleMin(float *pVal)
 {
-   *pVal = (g_pplayer) ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMin) :	//player active value
-                         m_d.m_angleMin;
+   *pVal = m_phitspinner ? RADTOANG(m_phitspinner->m_spinnerMover.m_angleMin) : m_d.m_angleMin;
    return S_OK;
 }
 
 STDMETHODIMP Spinner::put_AngleMin(float newVal)
 {
-   if (g_pplayer && (m_d.m_angleMin != m_d.m_angleMax))	// allow only if in limited angle mode
-      return S_FAIL;
+   if (m_phitspinner && (m_d.m_angleMin != m_d.m_angleMax)) // allow only if in limited angle mode
+      return E_FAIL;
 
    SetAngleMin(newVal);
    return S_OK;
@@ -711,15 +663,14 @@ STDMETHODIMP Spinner::put_AngleMin(float newVal)
 
 STDMETHODIMP Spinner::get_Elasticity(float *pVal)
 {
-   *pVal = (g_pplayer) ? m_phitspinner->m_spinnerMover.m_elasticity :	//player active value
-                         m_d.m_elasticity;
+   *pVal = m_phitspinner ? m_phitspinner->m_spinnerMover.m_elasticity : m_d.m_elasticity;
    return S_OK;
 }
 
 STDMETHODIMP Spinner::put_Elasticity(float newVal)
 {
-   if (g_pplayer)
-      m_phitspinner->m_spinnerMover.m_elasticity = newVal;	//player active value
+   if (m_phitspinner)
+      m_phitspinner->m_spinnerMover.m_elasticity = newVal; //player active value
    else
       m_d.m_elasticity = newVal;
 
@@ -728,13 +679,13 @@ STDMETHODIMP Spinner::put_Elasticity(float newVal)
 
 STDMETHODIMP Spinner::get_Visible(VARIANT_BOOL *pVal)
 {
-   *pVal = FTOVB((g_pplayer) ? m_phitspinner->m_spinnerMover.m_visible : m_d.m_visible);
+   *pVal = FTOVB(m_phitspinner ? m_phitspinner->m_spinnerMover.m_visible : m_d.m_visible);
    return S_OK;
 }
 
 STDMETHODIMP Spinner::put_Visible(VARIANT_BOOL newVal)
 {
-   if (g_pplayer)
+   if (m_phitspinner)
       m_phitspinner->m_spinnerMover.m_visible = VBTOb(newVal);// && m_d.m_visible;
    else
       m_d.m_visible = VBTOb(newVal);

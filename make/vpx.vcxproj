@@ -74,6 +74,9 @@
     <ProjectReference Include="plugin-alphadmd.vcxproj">
       <Project>{2bf90d88-9139-4e66-a778-4327311af7a7}</Project>
     </ProjectReference>
+    <ProjectReference Include="plugin-altsound.vcxproj">
+      <Project>{2bf90d88-9139-4e66-a778-4327311af77d}</Project>
+    </ProjectReference>
     <ProjectReference Include="plugin-b2s.vcxproj">
       <Project>{7D58C20E-53F4-4AD6-9004-CA6148082491}</Project>
     </ProjectReference>
@@ -95,11 +98,11 @@
     <ProjectReference Include="plugin-helloworld.vcxproj">
       <Project>{2bf90d88-9139-4e66-a778-4327311af777}</Project>
     </ProjectReference>
+    <ProjectReference Include="plugin-inspector.vcxproj">
+      <Project>{82ABAE8C-59FB-4734-BA0B-AD6FB04D7B38}</Project>
+    </ProjectReference>
     <ProjectReference Include="plugin-pinmame.vcxproj">
       <Project>{2bf90d88-9139-4e66-a778-4327311af77c}</Project>
-    </ProjectReference>
-    <ProjectReference Include="plugin-pinup-events.vcxproj" Condition="'$(Platform)'=='x64'">
-      <Project>{2bf90d88-9139-4e66-a778-4327311af779}</Project>
     </ProjectReference>
     <ProjectReference Include="plugin-pup.vcxproj" Condition="'$(Platform)'=='x64'">
       <Project>{5DFB5344-B339-49BC-B93C-B3B8D307199B}</Project>
@@ -115,6 +118,9 @@
     </ProjectReference>
     <ProjectReference Include="plugin-upscaledmd.vcxproj">
       <Project>{b48b0595-952b-4529-a387-61011d406d42}</Project>
+    </ProjectReference>
+    <ProjectReference Include="plugin-vni.vcxproj">
+      <Project>{a87f99d4-f3a3-4e5e-8e0a-40bbeebfe51a}</Project>
     </ProjectReference>
     <ProjectReference Include="plugin-wmp.vcxproj">
       <Project>{A5155099-A29F-46B1-9D8A-75BCC9F6616C}</Project>

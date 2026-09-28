@@ -2,40 +2,41 @@ package org.vpinball.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import org.koin.android.ext.android.inject
+import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.vpinball.app.ui.VPinballContent
+import org.vpinball.app.ui.screens.landing.LandingScreenViewModel
 
 class VPinballActivity : ComponentActivity() {
-    val viewModel: VPinballViewModel by inject()
+    val viewModel: VPinballModel by viewModel()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        VPinballManager.setMainActivity(this)
+        window.addFlags(FLAG_KEEP_SCREEN_ON)
+
+        VPinballManager.onActivityReady(this)
+
+        VPinballManager.whenReady { TableManager.initialize(this) }
+
+        handleIntent(intent)
 
         setContent {
-            val state by viewModel.state.collectAsStateWithLifecycle()
-
             LaunchedEffect(Unit) { viewModel.startSplashTimer() }
 
-            LaunchedEffect(state.loading, state.table) {
-                if (state.loading && state.table != null) {
-                    val table = state.table!!
+            LaunchedEffect(viewModel.showHUD, viewModel.activeTable) {
+                if (viewModel.showHUD && viewModel.activeTable != null) {
+                    val table = viewModel.activeTable!!
 
-                    val success =
-                        VPinballManager.load(table) { progress, status ->
-                            lifecycleScope.launch {
-                                viewModel.progress(progress)
-                                viewModel.status(status)
-                            }
-                        }
+                    val success = VPinballManager.load(table) { progress, status -> lifecycleScope.launch { viewModel.updateHUD(progress, status) } }
 
                     if (success) {
                         val intent = Intent(this@VPinballActivity, VPinballPlayerActivity::class.java)
@@ -49,8 +50,28 @@ class VPinballActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
     override fun onDestroy() {
         VPinballManager.setMainActivity(null)
         super.onDestroy()
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra("autoplay")?.let { name ->
+            intent.removeExtra("autoplay")
+            VPinballManager.whenReady {
+                lifecycleScope.launch {
+                    val table = TableManager.getInstance().tables.map { list -> list.firstOrNull { it.name == name } }.filterNotNull().first()
+                    viewModel.activeTable = table
+                    viewModel.showHUD(table.name, "Launching")
+                }
+            }
+        }
+        val uri = intent?.data ?: return
+        LandingScreenViewModel.triggerOpenUri(uri)
     }
 }

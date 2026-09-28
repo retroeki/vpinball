@@ -1,9 +1,13 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "VRSettingsPage.h"
+
 #include "renderer/VRDevice.h"
+#include "parts/flasher.h"
+#include "ui/live/LiveUI.h"
+#include "utils/color.h"
+
 
 namespace VPX::InGameUI
 {
@@ -11,6 +15,12 @@ namespace VPX::InGameUI
 VRSettingsPage::VRSettingsPage()
    : InGameUIPage("Virtual Reality Settings"s, ""s, SaveMode::Both)
 {
+}
+
+void VRSettingsPage::BuildPage()
+{
+   AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "View Offset"s));
+
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayerVR_Orientation, 1.f, "%4.1f deg"s, //
       [this]() { return m_player->m_vrDevice->GetSceneOrientation(); }, //
@@ -46,40 +56,63 @@ VRSettingsPage::VRSettingsPage()
          m_player->m_vrDevice->SetSceneOffset(offset);
       }));
 
+   AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Cabinet Layout"s));
+
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_LockbarWidth, 1.f, "%4.1f cm"s, //
       [this]() { return m_player->m_vrDevice->GetLockbarWidth(); }, //
       [this](float, float v) { m_player->m_vrDevice->SetLockbarWidth(v); }));
+
+#ifdef ENABLE_BGFX
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayer_LockbarHeight, 1.f, "%4.1f cm"s, //
+      [this]() { return m_player->m_vrDevice->GetLockbarHeight(); }, //
+      [this](float, float v) { m_player->m_vrDevice->SetLockbarHeight(v); }));
+#endif
+
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayer_ScreenPlayerX, 1.f, "%4.1f cm"s, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_ScreenPlayerX(); }, //
+      [this](float, float v)
+      {
+         m_notifId = m_player->m_liveUI->PushNotification("This change is directly persisted and is used when centering view"s, 5000, m_notifId);
+         g_settingsService.GetActiveSettings().SetPlayer_ScreenPlayerX(v, false);
+      })).m_excludeFromDefault = true;
+
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayer_ScreenPlayerY, 1.f, "%4.1f cm"s, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayer_ScreenPlayerY(); }, //
+      [this](float, float v)
+      {
+         m_notifId = m_player->m_liveUI->PushNotification("This change is directly persisted and is used when centering view"s, 5000, m_notifId);
+         g_settingsService.GetActiveSettings().SetPlayer_ScreenPlayerY(v, false);
+      })).m_excludeFromDefault = true;
+
+   AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Augmented Reality"s));
 
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayerVR_UsePassthroughColor, //
       [this]() { return m_player->m_renderer->m_vrApplyColorKey; }, //
       [this](bool v) { m_player->m_renderer->m_vrApplyColorKey = v; }));
 
-   // TODO it would be nice to implement a pincab friendly color picker
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::IntPropertyDef(""s, ""s, "Color Key Red"s, ""s, false, 0, 255, 128), "%3d / 255"s, //
-      [this]() { return static_cast<int>(sRGB(m_player->m_renderer->m_vrColorKey.x) * 255.f); }, //
-      [this](Settings& settings) { return settings.GetPlayerVR_PassthroughColor() & 0xFF; }, //
-      [this](int, int v) { m_player->m_renderer->m_vrColorKey.x = InvsRGB(static_cast<float>(v) / 255.f); }, //
-      [](Settings& settings) { settings.ResetPlayerVR_PassthroughColor(); }, // we reset the 3 channels at once
-      [](int v, Settings& settings, bool isTableOverride) { settings.SetPlayerVR_PassthroughColor((settings.GetPlayerVR_PassthroughColor() & 0xFFFF00) | v, isTableOverride); }));
+   AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Miscellaneous Settings"s));
 
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::IntPropertyDef(""s, ""s, "Color Key Green"s, ""s, false, 0, 255, 128), "%3d / 255"s, //
-      [this]() { return static_cast<int>(sRGB(m_player->m_renderer->m_vrColorKey.y) * 255.f); }, //
-      [this](Settings& settings) { return (settings.GetPlayerVR_PassthroughColor() >> 8) & 0xFF; }, //
-      [this](int, int v) { m_player->m_renderer->m_vrColorKey.y = InvsRGB(static_cast<float>(v) / 255.f); }, //
-      [](Settings& settings) { settings.ResetPlayerVR_PassthroughColor(); }, // we reset the 3 channels at once
-      [](int v, Settings& settings, bool isTableOverride) { settings.SetPlayerVR_PassthroughColor((settings.GetPlayerVR_PassthroughColor() & 0xFF00FF) | (v << 8), isTableOverride); }));
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayerVR_LockFeetToGround, //
+      [this]() { return m_player->m_vrDevice->IsLockFeetToGround(); }, //
+      [this](bool v) { m_player->m_vrDevice->SetLockFeetToGround(v); }));
 
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::IntPropertyDef(""s, ""s, "Color Key Blue"s, ""s, false, 0, 255, 128), "%3d / 255"s, //
-      [this]() { return static_cast<int>(sRGB(m_player->m_renderer->m_vrColorKey.z) * 255.f); }, //
-      [this](Settings& settings) { return (settings.GetPlayerVR_PassthroughColor() >> 16) & 0xFF; }, //
-      [this](int, int v) { m_player->m_renderer->m_vrColorKey.z = InvsRGB(static_cast<float>(v) / 255.f); }, //
-      [](Settings& settings) { settings.ResetPlayerVR_PassthroughColor(); }, // we reset the 3 channels at once
-      [](int v, Settings& settings, bool isTableOverride) { settings.SetPlayerVR_PassthroughColor((settings.GetPlayerVR_PassthroughColor() & 0x00FFFF) | (v << 16), isTableOverride); }));
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayerVR_AddBackglass, //
+      [this]() { return m_player->m_implicitVRBackglass->m_d.m_isVisible; }, //
+      [this](bool v) { m_player->m_implicitVRBackglass->m_d.m_isVisible = v; }));
+
+#ifdef ENABLE_XR
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayerVR_DisplayRefreshRate, //
+      [this]() { return m_player->m_vrDevice->GetDisplayRefreshRateMode(); }, //
+      [this](int, int v) { m_player->m_vrDevice->SetDisplayRefreshRateMode(v); }));
+#endif
 
    AddItem(std::make_unique<InGameUIItem>( //
       Settings::m_propPlayer_VRPreview, //
@@ -90,6 +123,25 @@ VRSettingsPage::VRSettingsPage()
       Settings::m_propPlayerVR_ShrinkPreview, //
       [this]() { return m_player->m_renderer->m_vrPreviewShrink; }, //
       [this](bool v) { m_player->m_renderer->m_vrPreviewShrink = v; }));
+
+#ifdef ENABLE_XR
+   AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Header, "Cabinet positioning using controllers"s));
+
+   // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayerVR_ControllerCabYOffset, 1.f, "%4.1f cm"s, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayerVR_ControllerCabYOffset(); }, //
+      [this](float, float v) { g_settingsService.GetActiveSettings().SetPlayerVR_ControllerCabYOffset(v, false); }));
+
+   // TODO this property is directly persisted. It does not follow the overall UI design: App/Table/Live state => Implement live state (will also enable table override)
+   AddItem(std::make_unique<InGameUIItem>( //
+      Settings::m_propPlayerVR_ControllerLockbarScale, 100.f, "%4.1f %%"s, //
+      [this]() { return g_settingsService.GetActiveSettings().GetPlayerVR_ControllerLockbarScale(); }, //
+      [this](float, float v) { g_settingsService.GetActiveSettings().SetPlayerVR_ControllerLockbarScale(v, false); }));
+
+   const auto& action = m_player->m_pininput.GetInputActions()[m_player->m_pininput.GetVRControllerViewCenteringActionId()];
+   AddItem(std::make_unique<InGameUIItem>(action->GetLabel(), "Select to add a new input binding which can be composed of multiple pressed button."s, action.get()));
+#endif
 }
 
 void VRSettingsPage::ResetToDefaults()

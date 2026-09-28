@@ -2,10 +2,11 @@
 
 #include "core/stdafx.h"
 #include "AudioStreamPlayer.h"
+#include "utils/denormals.h"
 
 #ifdef __ANDROID__
-// We only need the headers / type declarations here; miniaudio.c is compiled
-// in AudioPlayer.cpp so the symbols are linked from this same translation
+// We only need the headers / type declarations here; the miniaudio implementation
+// is compiled in AudioPlayer.cpp so the symbols are linked from this same translation
 // unit set. Match AudioPlayer.cpp's backend defines exactly so struct
 // layouts (ma_device's backend-specific union, in particular) agree across
 // TUs and we don't trip ODR.
@@ -354,7 +355,7 @@ void AudioStreamPlayer::Enqueue(const uint8_t* buffer, int length)
       else if (nowTS > playedTS)
       {
          const uint64_t deltaTS = nowTS - playedTS;
-         if (queuedBytes > 1000 * nBytePerSec && deltaTS > 1000)
+         if (queuedBytes > nBytePerSec && deltaTS > 1000)
             m_resync = true;
       }
    }
@@ -483,7 +484,9 @@ void AudioStreamPlayer::SetMainVolume(const float volume)
 
 void AudioStreamPlayer::AudioStreamCallback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
-   auto const me = static_cast<AudioStreamPlayer*>(userdata);
+   set_denormals_flush_to_zero_once(); // SDL resamples and mixes on this thread, which is created by SDL
+
+   const auto me = static_cast<AudioStreamPlayer*>(userdata);
    const unsigned int nQueueSize = max(0, SDL_GetAudioStreamQueued(stream) - total_amount);
    const uint64_t nBytePerSec = me->m_audioSpec.freq * (uint64_t)SDL_AUDIO_FRAMESIZE(me->m_audioSpec);
    const uint64_t sourceTS = (1000 * me->m_streamedTotal) / nBytePerSec;
@@ -494,14 +497,15 @@ void AudioStreamPlayer::AudioStreamCallback(void *userdata, SDL_AudioStream *str
    const uint64_t nowTS = SDL_GetTicks() - me->m_startTimestamp;
    #endif
    float throttle = 1.f;
+   //PLOGI << "Get stream data for " << me->m_name << " enqueued: " << ((float)SDL_GetAudioStreamQueued(stream) / SDL_AUDIO_FRAMESIZE(me->m_audioSpec)) << " samples enqueued";
    if (playedTS > nowTS)
    {
       me->m_startTimestamp += playedTS - nowTS;
    }
    else if (nowTS > playedTS)
    {
-      uint64_t deltaTS = nowTS - playedTS;
-      if (nQueueSize > 1000 * nBytePerSec && deltaTS > 1000)
+      const uint64_t deltaTS = nowTS - playedTS;
+      if (nQueueSize > nBytePerSec && deltaTS > 1000)
       {
          throttle = me->m_throttling;
          me->m_resync = true;

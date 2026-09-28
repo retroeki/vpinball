@@ -4,29 +4,46 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "physics/hitplunger.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
 
 constexpr int MAXTIPSHAPE = 256;
+
+class MeshBuffer;
 
 class PlungerData final : public BaseProperty
 {
 public:
-   COLORREF m_color;
-   Vertex2D m_v;
-   float m_width;
-   float m_height;
-   float m_stroke;
-   float m_zAdjust;
+   Vertex2D m_v; // Origin in VPU (plunger are always flat and axis aligned, with rod pointing toward lower y)
+   float m_width; // Physical & visual **half** width in VPU
+   float m_height; // Physical length in VPU that the plunger hit box extends behind the rod span. Also determine 'Flat' & 'Modern' type plunger lower y bound.
+   float m_stroke; // Physical plunger frame length in VPU. Plunger goes from extended = (m_v.y - m_stroke) to retracted = m_v.y, collider extends behind to (m_v.y + m_height)
+   float m_parkPosition; // Relative park position (0 = parked at fully extended, 1 = parked at fully retracted)
+   string m_szSurface; // Physical & visual plunger z origin (a plunger always has a 50 VPU high hitbox)
    float m_speedPull;
    float m_speedFire;
-   float m_mechStrength;
-   PlungerType m_type;
-   int m_animFrames;
-   TimerDataRoot m_tdr;
-   float m_parkPosition;
-   string m_szSurface;
    float m_scatterVelocity;
    float m_momentumXfer;
+   bool m_autoPlunger;
+   bool m_mechPlunger;
+   // Stiffness between mech sensor and virtual plunger, i.e. tracking lag between sensor and simulation.
+   // Unused for release speed in all 10.x versions, except 10.8's velocity-sensor path where it scaled
+   // the launch impulse, creating a discrepancy between setups (in VP9 it was the release force itself).
+   // FIXME this should be part of the sensor setup, not a plunger prop
+   float m_mechStrength; 
+
+   // Global render properties
+   PlungerType m_type;
+   float m_zAdjust; // Offset height in VPU to apply when rendering the plunger rod
+
+   // PlungerTypeFlat render properties
+   int m_animFrames; // Number of images in the texture atlas
+
+   // PlungerTypeCustom render properties (all expressed in VPU)
    string m_szTipShape;
    float m_rodDiam;
    float m_ringGap;
@@ -36,8 +53,6 @@ public:
    float m_springGauge;
    float m_springLoops;
    float m_springEndLoops;
-   bool m_mechPlunger;
-   bool m_autoPlunger;
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -103,19 +118,19 @@ class Plunger :
    public IProvideClassInfo2Impl<&CLSID_Plunger, &DIID_IPlungerEvents, &LIBID_VPinballLib>,
    //public CComObjectRootEx<CComSingleThreadModel>,
 
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
-   HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) override;
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
    BEGIN_COM_MAP(Plunger)
       COM_INTERFACE_ENTRY(IDispatch)
@@ -134,18 +149,15 @@ public:
    // Remove the comment from the line above if you don't want your object to
    // support aggregation.
 
-   Plunger();
+   Plunger() { }
    virtual ~Plunger();
 
-   STANDARD_EDITABLE_DECLARES(Plunger, eItemPlunger, PLUNGER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Plunger, eItemPlunger, PLUNGER)
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
    void SetDefaultPhysics(const bool fromMouseClick) final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemPlunger; }
 
    void WriteRegDefaults() final;
 
@@ -156,9 +168,7 @@ public:
    PlungerData m_d;
 
 private:
-   PinTable *m_ptable = nullptr;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_meshBuffer;
 
    HitPlunger *m_phitplunger = nullptr;

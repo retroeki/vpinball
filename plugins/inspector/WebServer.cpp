@@ -2,7 +2,13 @@
 
 #include "WebServer.h"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
+#include <cstdint>
+#include <optional>
+#include <nlohmann/json.hpp>
 
 using namespace std::string_literals;
 using namespace std::string_view_literals;
@@ -11,8 +17,10 @@ using namespace std::string_view_literals;
 namespace Inspector
 {
 
-extern std::string GetInputStatesJson();
-extern std::string GetDeviceStatesJson();
+extern std::string GetStatesJson();
+extern SetSwitchResult SetSwitchState(const std::string& stateId, std::optional<bool> targetValue = std::nullopt, bool* outNewState = nullptr);
+extern bool IsDisplayKnown(uint64_t mapping);
+extern bool GetDisplayFrameRGB(uint64_t mapping, const uint32_t* lastFrameId, size_t headerSize, std::vector<uint8_t>& rgb, uint32_t& width, uint32_t& height, uint32_t& frameId);
 
 constexpr const char* HEADER_JSON = "Content-Type: application/json\r\n";
 constexpr int STATUS_OK = 200;
@@ -26,7 +34,7 @@ WebServer::WebServer()
 
 WebServer::~WebServer() { Stop(); }
 
-void WebServer::Start(int port)
+void WebServer::Start(int port, const std::string& assetPath)
 {
    if (m_run)
    {
@@ -43,13 +51,17 @@ void WebServer::Start(int port)
    if (mg_http_listen(&m_mgr, bindUrl.c_str(), &WebServer::EventHandler, this))
    {
       m_run = true;
+      m_assetPath = assetPath;
       printf("[Inspector] Web server started\n");
 
       m_pThread = std::make_unique<std::thread>(
          [this]()
          {
             while (m_run)
-               mg_mgr_poll(&m_mgr, 100);
+            {
+               mg_mgr_poll(&m_mgr, m_displayWsClients.empty() ? 100 : 10);
+               PushDisplayWsFrames();
+            }
 
             mg_mgr_free(&m_mgr);
             printf("[Inspector] Web server closed\n");
@@ -58,6 +70,7 @@ void WebServer::Start(int port)
    else
    {
       printf("[Inspector] Unable to start web server\n");
+      mg_mgr_free(&m_mgr);
    }
 }
 
@@ -94,16 +107,83 @@ void WebServer::EventHandler(struct mg_connection* c, int ev, void* ev_data)
          webServer->Info(c, hm);
       else if (mg_match(hm->uri, mg_str("/api/tree"), NULL))
          webServer->ApiTree(c, hm);
-      else if (mg_match(hm->uri, mg_str("/api/input_states"), NULL))
-         webServer->ApiInputStates(c, hm);
-      else if (mg_match(hm->uri, mg_str("/api/device_states"), NULL))
-         webServer->ApiDeviceStates(c, hm);
+      else if (mg_match(hm->uri, mg_str("/api/states"), NULL))
+         webServer->ApiStates(c, hm);
+      else if (mg_match(hm->uri, mg_str("/api/state/toggle"), NULL) || mg_match(hm->uri, mg_str("/api/state"), NULL))
+         webServer->ApiState(c, hm);
+      else if (mg_match(hm->uri, mg_str("/ws/display"), NULL))
+         webServer->DisplayWsUpgrade(c, hm);
+      else if (mg_match(hm->uri, mg_str("/display-stream.js"), NULL))
+         webServer->Asset(c, hm, "/display-stream.js");
+      else if (mg_match(hm->uri, mg_str("/displays"), NULL) || mg_match(hm->uri, mg_str("/displays.html"), NULL))
+         webServer->Displays(c, hm);
       else if (mg_match(hm->uri, mg_str("/"), NULL))
          webServer->Root(c, hm);
       else
       {
          mg_http_reply(c, 404, "", "Not found\n");
       }
+   }
+   else if (ev == MG_EV_WS_OPEN)
+   {
+      if (auto it = webServer->m_displayWsClients.find(c); it != webServer->m_displayWsClients.end())
+         it->second.ready = true;
+   }
+   else if (ev == MG_EV_WS_CTL)
+   {
+      // Stop pushing as soon as the client starts the close handshake
+      if ((((struct mg_ws_message*)ev_data)->flags & 15) == WEBSOCKET_OP_CLOSE)
+         webServer->m_displayWsClients.erase(c);
+   }
+   else if (ev == MG_EV_CLOSE)
+   {
+      webServer->m_displayWsClients.erase(c);
+   }
+}
+
+void WebServer::DisplayWsUpgrade(struct mg_connection* c, struct mg_http_message* hm)
+{
+   char idBuf[32];
+   const int idLen = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf) - 1);
+   if (idLen <= 0)
+   {
+      mg_http_reply(c, 400, "", "Missing or invalid 'id' parameter\n");
+      return;
+   }
+   idBuf[idLen] = '\0';
+
+   DisplayWsClient client;
+   client.mapping = std::strtoull(idBuf, nullptr, 10);
+   m_displayWsClients[c] = client;
+   mg_ws_upgrade(c, hm, NULL);
+}
+
+// Pushes a binary message per new display frame to each streaming client:
+// 12 byte header (uint32 LE width, height, frameId) followed by top-down RGB24 data
+void WebServer::PushDisplayWsFrames()
+{
+   for (auto& [c, client] : m_displayWsClients)
+   {
+      if (!client.ready)
+         continue;
+      if (!IsDisplayKnown(client.mapping)) // Display is gone (e.g. table ended), close instead of going silent
+      {
+         client.ready = false;
+         mg_ws_send(c, "", 0, WEBSOCKET_OP_CLOSE);
+         continue;
+      }
+      if (c->send.len > 4 * 1024 * 1024) // Slow client, skip frames instead of growing the send buffer
+         continue;
+      uint32_t width, height, frameId;
+      // Converted straight into m_displayWsFrame behind the header, and only when this client lacks the frame
+      if (!GetDisplayFrameRGB(client.mapping, client.hasFrame ? &client.lastFrameId : nullptr, 12, m_displayWsFrame, width, height, frameId))
+         continue;
+      client.hasFrame = true;
+      client.lastFrameId = frameId;
+      memcpy(m_displayWsFrame.data() + 0, &width, 4);
+      memcpy(m_displayWsFrame.data() + 4, &height, 4);
+      memcpy(m_displayWsFrame.data() + 8, &frameId, 4);
+      mg_ws_send(c, m_displayWsFrame.data(), m_displayWsFrame.size(), WEBSOCKET_OP_BINARY);
    }
 }
 
@@ -123,254 +203,92 @@ void WebServer::ApiTree(struct mg_connection* c, struct mg_http_message* hm)
    mg_http_reply(c, STATUS_OK, HEADER_JSON, "%s", response.c_str());
 }
 
-void WebServer::ApiInputStates(struct mg_connection* c, struct mg_http_message* hm)
+void WebServer::ApiStates(struct mg_connection* c, struct mg_http_message* hm)
 {
-   std::string response = GetInputStatesJson();
+   std::string response = GetStatesJson();
    mg_http_reply(c, STATUS_OK, HEADER_JSON, "%s", response.c_str());
 }
 
-void WebServer::ApiDeviceStates(struct mg_connection* c, struct mg_http_message* hm)
+void WebServer::ApiState(struct mg_connection* c, struct mg_http_message* hm)
 {
-   std::string response = GetDeviceStatesJson();
-   mg_http_reply(c, STATUS_OK, HEADER_JSON, "%s", response.c_str());
+   char idBuf[64] = { 0 };
+   int idLen = mg_http_get_var(&hm->query, "id", idBuf, sizeof(idBuf) - 1);
+   if (idLen <= 0)
+      idLen = mg_http_get_var(&hm->body, "id", idBuf, sizeof(idBuf) - 1);
+   
+   std::optional<bool> optValue;
+   char valBuf[16] = { 0 };
+   int valLen = mg_http_get_var(&hm->query, "value", valBuf, sizeof(valBuf) - 1);
+   if (valLen <= 0)
+      valLen = mg_http_get_var(&hm->body, "value", valBuf, sizeof(valBuf) - 1);
+   if (valLen > 0)
+   {
+      valBuf[valLen] = '\0';
+      if (strcmp(valBuf, "true") == 0 || strcmp(valBuf, "1") == 0)
+         optValue = true;
+      else if (strcmp(valBuf, "false") == 0 || strcmp(valBuf, "0") == 0)
+         optValue = false;
+   }
+
+   if (idLen <= 0 && hm->body.len > 0)
+   {
+      try
+      {
+         const auto bodyJson = nlohmann::json::parse(std::string_view(hm->body.buf, hm->body.len));
+         if (bodyJson.contains("id") && bodyJson["id"].is_string())
+         {
+            const std::string idStr = bodyJson["id"];
+            if (idStr.length() < sizeof(idBuf))
+            {
+               memcpy(idBuf, idStr.c_str(), idStr.length());
+               idBuf[idStr.length()] = '\0';
+               idLen = static_cast<int>(idStr.length());
+            }
+         }
+         if (bodyJson.contains("value") && bodyJson["value"].is_boolean())
+         {
+            optValue = bodyJson["value"].get<bool>();
+         }
+      }
+      catch (...)
+      {
+      }
+   }
+
+   if (idLen <= 0)
+   {
+      mg_http_reply(c, 400, HEADER_JSON, "{\"status\": \"error\", \"message\": \"Missing 'id' parameter\"}\n");
+      return;
+   }
+
+   idBuf[idLen] = '\0';
+   bool newState = false;
+   const SetSwitchResult result = SetSwitchState(idBuf, optValue, &newState);
+
+   switch (result)
+   {
+   case SetSwitchResult::Success: mg_http_reply(c, STATUS_OK, HEADER_JSON, "{\"status\": \"ok\", \"id\": \"%s\", \"state\": %s}\n", idBuf, newState ? "true" : "false"); break;
+   case SetSwitchResult::NotFound: mg_http_reply(c, 404, HEADER_JSON, "{\"status\": \"error\", \"message\": \"State not found\"}\n"); break;
+   case SetSwitchResult::NotASwitch: mg_http_reply(c, 400, HEADER_JSON, "{\"status\": \"error\", \"message\": \"State is not a switch\"}\n"); break;
+   case SetSwitchResult::NotWritable: mg_http_reply(c, 403, HEADER_JSON, "{\"status\": \"error\", \"message\": \"Switch is read-only\"}\n"); break;
+   }
+}
+
+void WebServer::Asset(struct mg_connection* c, struct mg_http_message* hm, const char* name)
+{
+   struct mg_http_serve_opts opts = {};
+   mg_http_serve_file(c, hm, (m_assetPath + name).c_str(), &opts);
 }
 
 void WebServer::Root(struct mg_connection* c, struct mg_http_message* hm)
 {
-   const char* html = R"html(<!DOCTYPE html>
-<html>
-<head>
-    <title>Inspector TreeView</title>
-    <style>
-        body { font-family: 'Inter', sans-serif; background: #121212; color: #ffffff; padding: 20px; }
-        ul { list-style-type: none; }
-        .tree-root { padding-left: 0; }
-        details > summary { cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s; }
-        details > summary:hover { background: #222222; }
-        .node-game { color: #4CAF50; font-weight: bold; }
-        .node-controller { color: #2196F3; }
-        .node-category { color: #FF9800; }
-        .node-item { color: #E0E0E0; font-size: 0.9em; margin-left: 20px; padding: 2px 0; font-family: 'Consolas', 'Menlo', 'Courier New', monospace; }
-        h1 { font-weight: 300; border-bottom: 1px solid #333; padding-bottom: 10px; }
+   struct mg_http_serve_opts opts = {};
+   mg_http_serve_file(c, hm, (m_assetPath + "/index.html").c_str(), &opts);
+}
 
-        .matrix-content { margin: 8px 0 16px 20px; display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; margin-top: 8px; }
-        .matrix-table { border-collapse: collapse; font-family: 'Consolas', 'Menlo', 'Courier New', monospace; font-size: 0.82em; }
-        .matrix-table td { border: 1px solid #333; padding: 5px 7px; min-width: 30px; text-align: center; background: #181818; }
-        .matrix-table td.active { background: #14381f; color: #9BE79B; }
-        .matrix-table td.inactive { color: #BDBDBD; }
-        .matrix-state { display: block; font-weight: bold; }
-        .matrix-mapping { display: block; color: #B0BEC5; }
-        .matrix-list {
-             height: var(--matrix-height, auto);
-             max-height: var(--matrix-height, none);
-             column-gap: 24px;
-             column-fill: auto;
-             column-width: 140px;
-             overflow: visible;
-             width: max-content;
-             font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
-             font-size: 0.86em;
-        }
-        .matrix-list-item { break-inside: avoid; color: #E0E0E0; }
-        .matrix-list-mapping { color: #B0BEC5; }
-        .matrix-list-name { color: #FFFFFF; }
-    </style>
-</head>
-<body>
-    <h1>VPX Inspector</h1>
-    <div id="tree">Loading...</div>
-    <script>
-        const MATRIX_COLUMNS = 8;
-
-        function escapeHtml(value) {
-            return String(value ?? '')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function formatMapping(mapping, deviceOnly) {
-            const deviceId = (mapping >>> 16) & 0xFFFF;
-            const groupId = mapping & 0xFFFF;
-            return deviceOnly ? `${deviceId.toString(16).padStart(4, '0')}` : `${groupId.toString(16).padStart(4, '0')}.${deviceId.toString(16).padStart(4, '0')}`;
-        }
-
-        function formatBinaryState(state) {
-            return state ? '[X]' : '[ ]';
-        }
-
-        function formatFloatState(state) {
-            return state > 0.5 ? '[X]' : '[ ]';
-        }
-
-        function formatState(node) {
-            return node.type === 'device' ? formatFloatState(node.state) : formatBinaryState(node.state);
-        }
-
-        function isActiveState(itemType, state) {
-            return itemType === 'device' ? state > 0.5 : !!state;
-        }
-
-        function updateMatrixListHeights() {
-            document.querySelectorAll('.matrix-content').forEach(content => {
-                const table = content.querySelector('.matrix-table');
-                const list = content.querySelector('.matrix-list');
-                if (!table || !list)
-                    return;
-                const height = table.getBoundingClientRect().height;
-                list.style.setProperty('--matrix-height', `${height}px`);
-            });
-        }
-
-        function updateVisualState(el, itemType, state) {
-            el.textContent = itemType === 'device' ? formatFloatState(state) : formatBinaryState(state);
-
-            const cell = el.closest('.matrix-cell');
-            if (cell) {
-                cell.classList.toggle('active', isActiveState(itemType, state));
-                cell.classList.toggle('inactive', !isActiveState(itemType, state));
-            }
-        }
-
-        function itemDataAttributes(node) {
-            const kind = node.type === 'device' ? 'device' : 'input';
-            return `data-${kind}-id="${node.mapping}" data-${kind}-name="${escapeHtml(node.name)}" data-state-kind="${kind}"`;
-        }
-
-        function isMatrixGroup(children) {
-            if (!Array.isArray(children) || children.length < 64 || children.length % MATRIX_COLUMNS !== 0) {
-                return false;
-            }
-
-            return children.every(child => child && (child.type === 'input' || child.type === 'device'));
-        }
-
-        function buildStateSpan(node) {
-            return `<span class="state-value" ${itemDataAttributes(node)}>${formatState(node)}</span>`;
-        }
-
-        function buildLeafNode(node) {
-            const mapping = formatMapping(node.mapping, false);
-            return `<div class="node-item">${buildStateSpan(node)} ${escapeHtml(node.name)} (Mapping: ${mapping})</div>`;
-        }
-
-        function buildMatrixGroup(node) {
-            const children = node.children;
-            const rows = children.length / MATRIX_COLUMNS;
-            let table = '<table class="matrix-table"><tbody>';
-
-            for (let row = 0; row < rows; ++row) {
-                table += '<tr>';
-                for (let col = 0; col < MATRIX_COLUMNS; ++col) {
-                    const child = children[row * MATRIX_COLUMNS + col];
-                    const mapping = (child.mapping>>> 16) & 0xFFFF;
-                    const activeClass = isActiveState(child.type, child.state) ? 'active' : 'inactive';
-                    table += `<td class="matrix-cell ${activeClass}" title="${escapeHtml(child.name)}">
-                        <span class="matrix-state">${buildStateSpan(child)}</span>
-                        <span class="matrix-mapping">${mapping}</span>
-                    </td>`;
-                }
-                table += '</tr>';
-            }
-            table += '</tbody></table>';
-
-            let list = '<div class="matrix-list">';
-            for (const child of children) {
-                list += `<div class="matrix-list-item"><span class="matrix-list-mapping">${(child.mapping>>> 16) & 0xFFFF}</span> - <span class="matrix-list-name">${escapeHtml(child.name)}</span></div>`;
-            }
-            list += '</div>';
-
-            return `<details open>
-                <summary class="node-${escapeHtml(node.type)}">${escapeHtml(node.name)} (${children.length} items, ${rows}x${MATRIX_COLUMNS})</summary>
-                <div class="matrix-content">${table}${list}</div>
-            </details>`;
-        }
-
-        function buildNode(node) {
-            if (!node || Object.keys(node).length === 0) return '<em>No active controllers</em>';
-            if (Array.isArray(node)) {
-                if (node.length === 0) return '<em>No active controllers</em>';
-                let html = '';
-                for (let child of node) {
-                    html += `<li>${buildNode(child)}</li>`;
-                }
-                return html;
-            }
-
-            if (node.type === 'input' || node.type === 'device') {
-                return buildLeafNode(node);
-            } else if (node.type === 'display' || node.type === 'seg_display') {
-                return `<div class="node-item">${escapeHtml(node.name)}</div>`;
-            }
-
-            if (isMatrixGroup(node.children)) {
-                return buildMatrixGroup(node);
-            }
-
-            let html = `<details open><summary class="node-${escapeHtml(node.type)}">${escapeHtml(node.name)} (${node.children.length} items)</summary><ul>`;
-            if (node.children) {
-                for (let child of node.children) {
-                    html += `<li>${buildNode(child)}</li>`;
-                }
-            }
-            html += `</ul></details>`;
-            return html;
-        }
-
-        function fetchTree() {
-            fetch('/api/tree')
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('tree').innerHTML = `<ul class="tree-root">${buildNode(data)}</ul>`;
-                    updateMatrixListHeights();
-                })
-                .catch(err => {
-                    document.getElementById('tree').innerHTML = `Error loading tree: ${err}`;
-                });
-        }
-
-        function updateInputState(item) {
-            document.querySelectorAll(`[data-input-id="${item.id}"]`).forEach(el => updateVisualState(el, 'input', item.state));
-        }
-
-        function updateDeviceState(item) {
-            document.querySelectorAll(`[data-device-id="${item.id}"]`).forEach(el => updateVisualState(el, 'device', item.state));
-        }
-
-        function fetchInputStates() {
-            fetch('/api/input_states')
-                .then(res => res.json())
-                .then(data => {
-                    data.forEach(updateInputState);
-                })
-                .catch(err => console.error('Input states error', err));
-            setTimeout(fetchInputStates, 30);
-        }
-
-        function fetchDeviceStates() {
-            fetch('/api/device_states')
-                .then(res => res.json())
-                .then(data => {
-                    data.forEach(updateDeviceState);
-                })
-                .catch(err => console.error('Device states error', err));
-            setTimeout(fetchDeviceStates, 30);
-        }
-
-        // Initial load
-        fetchTree();
-
-        // Keep matrix legends constrained to matrix height when the layout changes
-        window.addEventListener('resize', updateMatrixListHeights);
-
-        // Refresh states periodically
-        setTimeout(fetchInputStates, 30);
-        setTimeout(fetchDeviceStates, 30);
-    </script>
-</body>
-</html>)html";
-   mg_http_reply(c, STATUS_OK, "Content-Type: text/html\r\n", "%s", html);
+void WebServer::Displays(struct mg_connection* c, struct mg_http_message* hm)
+{
+   struct mg_http_serve_opts opts = {};
+   mg_http_serve_file(c, hm, (m_assetPath + "/displays.html").c_str(), &opts);
 }
 } // namespace Inspector

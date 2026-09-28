@@ -2,7 +2,16 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "math/matrix.h"
+#include "parts/Collection.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
+#include "renderer/Texture.h"
+#include "utils/eventproxy.h"
+
+class MeshBuffer;
 
 class BumperData final : public BaseProperty
 {
@@ -14,7 +23,6 @@ public:
    float m_orientation;
    float m_ringSpeed;
    float m_ringDropOffset;
-   TimerDataRoot m_tdr;
    string m_szCapMaterial;
    string m_szBaseMaterial;
    string m_szSkirtMaterial;
@@ -35,22 +43,21 @@ class Bumper :
    public EventProxy<Bumper, &DIID_IBumperEvents>,
    public IConnectionPointContainerImpl<Bumper>,
    public IProvideClassInfo2Impl<&CLSID_Bumper, &DIID_IBumperEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
-   //public EditableImpl<Bumper>
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Bumper();
+   Bumper() { m_d.m_ringDropOffset = 0.0f; }
    virtual ~Bumper();
 
    BEGIN_COM_MAP(Bumper)
@@ -66,7 +73,7 @@ public:
    // Remove the comment from the line above if you don't want your object to
    // support aggregation.
 
-   STANDARD_EDITABLE_DECLARES(Bumper, eItemBumper, BUMPER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Bumper, eItemBumper, BUMPER)
 
    BEGIN_CONNECTION_POINT_MAP(Bumper)
       CONNECTION_POINT_ENTRY(DIID_IBumperEvents)
@@ -77,20 +84,13 @@ public:
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   // ISelect implementation
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
    void SetDefaultPhysics(const bool fromMouseClick) final;
    void ExportMesh(ObjLoader &loader) final;
 
    // IEditable implementation
-   void RenderBlueprint(Sur *psur, const bool solid) final;
    void WriteRegDefaults() final;
-
-   // IHitable implementation
-   ItemTypeEnum HitableGetItemType() const final { return eItemBumper; }
 
    // IBumper
    STDMETHOD(get_BaseMaterial)(/*[out, retval]*/ BSTR *pVal);
@@ -153,9 +153,7 @@ private:
    void GenerateRingMesh(Vertex3D_NoTex2 *buf) const;
    void GenerateCapMesh(Vertex3D_NoTex2 *buf) const;
 
-   PinTable *m_ptable;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_baseMeshBuffer;
    std::shared_ptr<MeshBuffer> m_socketMeshBuffer;
    std::shared_ptr<MeshBuffer> m_ringMeshBuffer;

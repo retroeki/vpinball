@@ -4,21 +4,16 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
 #include "physics/hittimer.h"
 #include "physics/hitable.h"
-
-class TimerDataRoot final
-{
-public:
-   int m_TimerInterval = 100;
-   bool m_TimerEnabled = false;
-};
+#include "utils/eventproxy.h"
+#include "utils/fileio.h"
+#include "parts/pintable.h"
 
 class TimerData final
 {
 public:
-   TimerDataRoot m_tdr;
    Vertex2D m_v;
 };
 
@@ -33,21 +28,19 @@ class Timer :
    public IConnectionPointContainerImpl<Timer>,
    public IProvideClassInfo2Impl<&CLSID_Timer, &DIID_ITimerEvents, &LIBID_VPinballLib>,
    public EventProxy<Timer, &DIID_ITimerEvents>,
-   public ISelect,
    public IEditable,
    public IScriptable,
-   public IFireEvents,
-   public Hitable
-   //public EditableImpl<Timer>
+   //public IHitable, // FIXME implement UI picking
+   public IFireEvents
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Timer();
+   Timer() { }
    virtual ~Timer();
 
    //HRESULT Init(PinTable * const ptable, const float x, const float y);
@@ -65,18 +58,13 @@ public:
       CONNECTION_POINT_ENTRY(DIID_ITimerEvents)
    END_CONNECTION_POINT_MAP()
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
-
-   void RenderBlueprint(Sur *psur, const bool solid) final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemTimer; }
 
    void WriteRegDefaults() final;
 
-   STANDARD_EDITABLE_DECLARES(Timer, eItemTimer, TIMER, VIEW_PLAYFIELD | VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES_NO_RENDERABLE_NO_HITABLE(Timer, eItemTimer, TIMER)
 
    //DECLARE_NOT_AGGREGATABLE(Timer)
    // Remove the comment from the line above if you don't want your object to
@@ -87,13 +75,10 @@ public:
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
    // ITimer
-   STDMETHOD(get_Interval)(/*[out, retval]*/ LONG *pVal);
-   STDMETHOD(put_Interval)(/*[in]*/ LONG newVal);
-   STDMETHOD(get_Enabled)(/*[out, retval]*/ VARIANT_BOOL *pVal);
-   STDMETHOD(put_Enabled)(/*[in]*/ VARIANT_BOOL newVal);
+   STDMETHOD(get_Interval)(/*[out, retval]*/ LONG *pVal) { return get_TimerInterval(pVal); }
+   STDMETHOD(put_Interval)(/*[in]*/ LONG newVal) { return put_TimerInterval(newVal); }
+   STDMETHOD(get_Enabled)(/*[out, retval]*/ VARIANT_BOOL *pVal) { return get_TimerEnabled(pVal); }
+   STDMETHOD(put_Enabled)(/*[in]*/ VARIANT_BOOL newVal) { return put_TimerEnabled(newVal); }
 
    TimerData m_d;
-
-private:
-   PinTable *m_ptable;
 };

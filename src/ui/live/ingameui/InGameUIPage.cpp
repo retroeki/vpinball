@@ -1,17 +1,18 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "InGameUIPage.h"
 
-#include "SensorSetupPage.h"
+#include "core/VPApp.h"
 #include "fonts/IconsForkAwesome.h"
+#include "ui/live/LiveUI.h"
+#include "ui/live/ingameui/SensorSetupPage.h"
+
+#include "imgui/imgui_internal.h"
+#include "imgui/imgui_stdlib.h"
 
 namespace VPX::InGameUI
 {
-
-static constexpr const char* SELECT_TABLE_OR_GLOBAL = "Save globally or for table ?";
-static constexpr const char* CONFIRM_GLOBAL_SAVE = "Save to global setting ?";
 
 InGameUIPage::InGameUIPage(const string& title, const string& info, SaveMode saveMode)
    : m_player(g_pplayer)
@@ -31,7 +32,8 @@ void InGameUIPage::Open(bool isBackwardAnimation)
       m_openAnimPos = isBackwardAnimation ? -1.f : 1.f;
    m_openAnimStart = m_openAnimPos;
    m_selectedItem = 0;
-   m_pressedItemLabel = ""s;
+   m_pressedItemLabel.clear();
+   RequestRebuild();
 }
 
 void InGameUIPage::Close(bool isBackwardAnimation)
@@ -41,11 +43,20 @@ void InGameUIPage::Close(bool isBackwardAnimation)
    m_openAnimStart = m_openAnimPos;
 }
 
-void InGameUIPage::ClearItems() { m_items.clear(); }
+void InGameUIPage::ClearItems()
+{
+   assert(m_isBuildingPage);
+   m_items.clear();
+}
 
-void InGameUIPage::AddItem(std::unique_ptr<InGameUIItem> item) { m_items.push_back(std::move(item)); }
+InGameUIItem& InGameUIPage::AddItem(std::unique_ptr<InGameUIItem> item)
+{
+   assert(m_isBuildingPage);
+   m_items.push_back(std::move(item));
+   return *m_items.back();
+}
 
-Settings& InGameUIPage::GetSettings() { return m_player->m_ptable->m_settings; }
+Settings& InGameUIPage::GetSettings() { return g_settingsService.GetActiveSettings(); }
 
 bool InGameUIPage::IsAdjustable() const
 {
@@ -58,7 +69,7 @@ bool InGameUIPage::IsAdjustable() const
 bool InGameUIPage::IsDefaults() const
 {
    for (const auto& item : m_items)
-      if (!item->IsDefaultValue())
+      if (!item->m_excludeFromDefault && !item->IsDefaultValue())
          return false;
    return true;
 }
@@ -102,7 +113,8 @@ void InGameUIPage::ResetToDefaults()
    assert(!m_resettingToDefaults);
    m_resettingToDefaults = true;
    for (size_t i = 0; i < m_items.size(); i++)
-      m_items[i]->ResetToDefault();
+      if (!m_items[i]->m_excludeFromDefault)
+         m_items[i]->ResetToDefault();
    m_resetNotifId = g_pplayer->m_liveUI->PushNotification("Settings reset to defaults"s, 5000, m_resetNotifId);
    if (IsDefaults())
       m_selectedItem = 0;
@@ -119,6 +131,12 @@ public:
               : "This table was not saved yet, therefore the changes can only be saved globally."s,
            SaveMode::None)
       , m_page(page)
+      , m_canSaveTableOverrides(canSaveTableOverrides)
+   {
+   }
+
+private:
+   void BuildPage()
    {
       AddItem(std::make_unique<InGameUIItem>("Save Globally"s, "Your changes will be saved as the new default for all tables."s,
          [this]()
@@ -126,7 +144,7 @@ public:
             m_page->SaveGlobally();
             m_player->m_liveUI->m_inGameUI.NavigateBack();
          }));
-      if (canSaveTableOverrides)
+      if (m_canSaveTableOverrides)
          AddItem(std::make_unique<InGameUIItem>("Save as Table Override"s, "The settings adjusted for this specific table will be persisted for the next time you play this table."s,
             [this]()
             {
@@ -142,6 +160,7 @@ public:
    };
 
    InGameUIPage* m_page;
+   bool m_canSaveTableOverrides;
 };
 
 void InGameUIPage::Save()
@@ -174,12 +193,12 @@ void InGameUIPage::Save()
 void InGameUIPage::SaveGlobally()
 {
    // First reset any table override
-   Settings& tableSettings = m_player->m_ptable->m_settings;
+   Settings& tableSettings = g_settingsService.GetActiveSettings();
    for (const auto& item : m_items)
       item->ResetSave(tableSettings);
    tableSettings.Save();
    // Then save to application settings
-   Settings& appSettings = g_pvp->m_settings;
+   Settings& appSettings = g_settingsService.GetAppSettings();
    for (const auto& item : m_items)
       item->Save(appSettings, false);
    appSettings.Save();
@@ -188,7 +207,7 @@ void InGameUIPage::SaveGlobally()
 void InGameUIPage::SaveTableOverride()
 {
    // First reset any table override (to start from a clear ground if saved items depends on user selection, note that some item may impact multiple settings so we save them afterward)
-   Settings& tableSettings = m_player->m_ptable->m_settings;
+   Settings& tableSettings = g_settingsService.GetActiveSettings();
    for (const auto& item : m_items)
       item->ResetSave(tableSettings);
    // Then save to table override
@@ -217,7 +236,7 @@ void InGameUIPage::SelectPrevItem()
 
 void InGameUIPage::AdjustItem(float direction, bool isInitialPress)
 {
-   if (m_selectedItem < 0 || m_selectedItem > (int)m_items.size())
+   if (m_selectedItem < 0 || m_selectedItem >= (int)m_items.size())
       return;
    const auto& item = m_items[m_selectedItem];
    const uint32_t now = msec();
@@ -297,21 +316,6 @@ void InGameUIPage::AdjustItem(float direction, bool isInitialPress)
       }
       break;
 
-   case InGameUIItem::Type::PhysicsSensorMapping:
-      if (isInitialPress)
-      {
-         if (direction < 0.f)
-         {
-            item->m_physicsSensor->ClearMapping();
-         }
-         else
-         {
-            m_player->m_liveUI->m_inGameUI.AddPage("popup/sensor_setup"s, [this, ptr = item.get()]() { return std::make_unique<SensorSetupPage>(*ptr); });
-            m_player->m_liveUI->m_inGameUI.Navigate("popup/sensor_setup"s);
-         }
-      }
-      break;
-
    case InGameUIItem::Type::Property:
       switch (item->m_property->m_type)
       {
@@ -365,7 +369,18 @@ void InGameUIPage::AdjustItem(float direction, bool isInitialPress)
 
 void InGameUIPage::Render(float elapsedS)
 {
-   const ImGuiIO& io = ImGui::GetIO();
+   if (m_needsRebuild)
+   {
+      // Pages are always built here, before rendering and interaction handling, to avoid item lifecycle issues (for example when changing a setting may result in other settings being added/removed).
+      assert(!m_isBuildingPage);
+      m_needsRebuild = false;
+      m_isBuildingPage = true;
+      ClearItems();
+      BuildPage();
+      m_isBuildingPage = false;
+   }
+
+   ImGuiIO& io = ImGui::GetIO();
    const ImGuiStyle& style = ImGui::GetStyle();
 
    if (m_openAnimTarget != m_openAnimPos)
@@ -377,8 +392,7 @@ void InGameUIPage::Render(float elapsedS)
    }
    const float animPos = m_openAnimPos;
 
-   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.f - fabs(GetOpenCloseAnimPos()));
-   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.5f);
+   ImGui::SetNextWindowBgAlpha(m_player->m_renderer->m_vrApplyColorKey ? 1.f : 0.666f);
    // Size is selected to match pinball instruction cards format which have an aspect ratio of roughly 6" x 3.25" (WPC, other varies), except for mobile where we favor size
    constexpr float pinballCardAR = 6.f / 3.5f;
    ImVec2 winSize;
@@ -414,7 +428,7 @@ void InGameUIPage::Render(float elapsedS)
    }
 #endif
    ImGui::SetNextWindowSize(winSize);
-   ImGui::Begin(std::to_string(reinterpret_cast<uint64_t>(this)).c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+   ImGui::Begin(std::to_string(reinterpret_cast<size_t>(this)).c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
 
    ImGui::PushStyleColor(ImGuiCol_Separator, style.Colors[ImGuiCol_Text]);
 
@@ -475,7 +489,7 @@ void InGameUIPage::Render(float elapsedS)
       {
          m_items.push_back(std::make_unique<InGameUIItem>(InGameUIItem::Type::ResetToStoredValues));
          ImGui::BeginDisabled(false);
-         highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == m_items.size() - 1);
+         highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == (int)m_items.size() - 1);
       }
       else
       {
@@ -507,7 +521,7 @@ void InGameUIPage::Render(float elapsedS)
          {
             m_items.push_back(std::make_unique<InGameUIItem>(InGameUIItem::Type::SaveChanges));
             ImGui::BeginDisabled(false);
-            highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == m_items.size() - 1);
+            highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == (int)m_items.size() - 1);
          }
          else
          {
@@ -530,21 +544,30 @@ void InGameUIPage::Render(float elapsedS)
    }
 
    // Get back to previous page or to game
-   m_items.push_back(std::make_unique<InGameUIItem>(InGameUIItem::Type::Back));
-   const bool highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == m_items.size() - 1);
-   if (highlighted)
-      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 0, 255));
-   if (ImGui::Button(ICON_FK_REPLY))
+   if (m_player->m_isLoading)
+      ImGui::NewLine();
+   else
    {
-      m_selectedItem = static_cast<int>(m_items.size()) - 1;
-      AdjustItem(1.f, true);
+      m_items.push_back(std::make_unique<InGameUIItem>(InGameUIItem::Type::Back));
+      const bool highlighted = m_player->m_liveUI->m_inGameUI.IsFlipperNav() && (m_selectedItem == m_items.size() - 1);
+      if (highlighted)
+         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 0, 255));
+      if (ImGui::Button(ICON_FK_REPLY))
+      {
+         m_selectedItem = static_cast<int>(m_items.size()) - 1;
+         AdjustItem(1.f, true);
+      }
+      if (highlighted)
+         ImGui::PopStyleColor();
    }
-   if (highlighted)
-      ImGui::PopStyleColor();
-   const bool backHovered = ImGui::IsItemHovered();
+   const bool backHovered = !m_player->m_isLoading && ImGui::IsItemHovered();
 
-   // As we may have changed the number of selectable items, ensure m_selectedItem is still valid
-   m_selectedItem = clamp(m_selectedItem, 0, static_cast<int>(m_items.size()) - 1);
+   // As we may have changed the number of selectable items, ensure m_selectedItem is still valid and pointing to a selectable item
+   {
+      m_selectedItem = clamp(m_selectedItem, 0, static_cast<int>(m_items.size()) - 1);
+      while (!m_items[m_selectedItem]->IsSelectable())
+         m_selectedItem = (m_selectedItem + 1) % static_cast<int>(m_items.size());
+   }
 
    // Page items
    // Note that items may trigger state change which in turn may trigger a rebuild of the page (changing m_items)
@@ -552,17 +575,66 @@ void InGameUIPage::Render(float elapsedS)
    const ImVec2 itemPadding = style.ItemSpacing;
    ImGui::BeginChild("PageItems", ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeight() * 3.f - itemPadding.y * 2.f), ImGuiChildFlags_None,
       ImGuiWindowFlags_NoBackground);
+
+   // Drag scroll for easier mobile navigation
+   if (g_isMobile)
+   {
+      constexpr float kDragThreshold  = 6.f;  // px before we commit to a drag
+      constexpr float kFriction       = 8.f;  // deceleration rate (higher = quicker stop)
+      constexpr float kVelocitySmooth = 0.2f; // EMA weight for velocity sampling
+
+      if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+      {
+         m_isDraggingScroll = false;
+         m_dragScrollStartPos = ImGui::GetMousePos();
+         m_dragScrollVelocity = 0.f;
+      }
+
+      const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+      if (mouseDown && !m_isDraggingScroll && fabsf(ImGui::GetMousePos().y - m_dragScrollStartPos.y) > kDragThreshold)
+      {
+         // Start drag after threshold is passed to avoid interfering with clicks
+         m_isDraggingScroll = true;
+      }
+      else if (mouseDown && m_isDraggingScroll)
+      {
+         // Scroll by the raw finger delta and track velocity
+         const float dy = io.MouseDelta.y;
+         ImGui::SetScrollY(ImGui::GetScrollY() - dy);
+         const float frameVel = (elapsedS > 0.f) ? (-dy / elapsedS) : 0.f;
+         m_dragScrollVelocity = m_dragScrollVelocity * (1.f - kVelocitySmooth) + frameVel * kVelocitySmooth;
+      }
+      else if (!mouseDown && fabsf(m_dragScrollVelocity) > 0.5f)
+      {
+         // Inertial glide after finger lifts
+         ImGui::SetScrollY(ImGui::GetScrollY() + m_dragScrollVelocity * elapsedS);
+         m_dragScrollVelocity *= max(0.f, 1.f - kFriction * elapsedS);
+         if (fabsf(m_dragScrollVelocity) < 0.5f)
+            m_dragScrollVelocity = 0.f;
+      }
+   }
+
    float maxLabelWidth = 0.f;
    for (const auto& item : m_items)
       if (item->IsAdjustable())
          maxLabelWidth = max(maxLabelWidth, ImGui::CalcTextSize(item->m_label.c_str()).x);
    maxLabelWidth = min(maxLabelWidth, ImGui::CalcTextSize("Maximum label length before ellipsis").x);
-   const float labelEndScreenX = ImGui::GetCursorScreenPos().x + maxLabelWidth + style.ItemSpacing.x * 2.0f + 30.f;
-   const float itemEndScreenX = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("*", nullptr, true).x - itemPadding.x;
+   const float rowStartScreenX = ImGui::GetCursorScreenPos().x;
+   const float labelEndScreenX = rowStartScreenX + maxLabelWidth + style.ItemSpacing.x * 2.0f + 30.f;
+   const float itemEndScreenX = rowStartScreenX + ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("*", nullptr, true).x - itemPadding.x;
+   const bool stackFields = (itemEndScreenX - labelEndScreenX) < 12.f * ImGui::GetFontSize();
+   const float labelMaxWidth = stackFields ? itemEndScreenX - rowStartScreenX : maxLabelWidth;
    const float closeButtonWidth = ImGui::CalcTextSize(ICON_FK_TIMES, nullptr, true).x + style.FramePadding.x * 2.0f;
    const float circleTextWidth = ImGui::CalcTextSize(ICON_FK_CIRCLE, nullptr, true).x + style.FramePadding.x * 2.0f;
    for (int i = 0; i < (int)m_items.size(); i++)
    {
+      // A value change handled while rendering a previous item may have requested a page rebuild (e.g.
+      // switching a window output to embedded destroys the window that the following items query). The
+      // rebuild is deferred to the next frame, so stop here to avoid evaluating the now-stale items
+      // (their live getters would dereference freed state).
+      if (m_needsRebuild)
+         break;
+
       using enum InGameUIItem::Type;
       const auto& item = m_items[i];
 
@@ -570,7 +642,9 @@ void InGameUIPage::Render(float elapsedS)
       if (item->m_type == Back || item->m_type == SaveChanges || item->m_type == ResetToDefaults || item->m_type == ResetToStoredValues)
          continue;
 
-      const float itemHeight = ImGui::GetTextLineHeight() + itemPadding.y * 2.f;
+      const bool isStackedItem = stackFields && item->IsAdjustable() && !(item->m_type == Property && item->m_property->m_type == VPX::Properties::PropertyDef::Type::Bool);
+      const float rowHeight = isStackedItem ? ImGui::GetTextLineHeight() + itemPadding.y + ImGui::GetFrameHeight() : ImGui::GetTextLineHeight();
+      const float itemHeight = rowHeight + itemPadding.y * 2.f;
       const bool isMouseOver = (ImGui::IsWindowHovered()) && (ImGui::GetMousePos().y >= ImGui::GetCursorScreenPos().y - itemPadding.y - 1.f)
          && (ImGui::GetMousePos().y <= ImGui::GetCursorScreenPos().y + itemHeight - itemPadding.y);
       const bool hovered = (m_player->m_liveUI->m_inGameUI.IsFlipperNav() && i == m_selectedItem) || (!m_player->m_liveUI->m_inGameUI.IsFlipperNav() && isMouseOver && item->IsSelectable());
@@ -579,7 +653,7 @@ void InGameUIPage::Render(float elapsedS)
          hoveredItem = item.get();
          ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(0, 255, 0, 255));
          ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetCursorScreenPos() - itemPadding,
-            ImGui::GetCursorScreenPos() + ImVec2(itemPadding.x, itemPadding.y * 2.f) + ImVec2(itemEndScreenX - ImGui::GetCursorScreenPos().x + itemPadding.x, ImGui::GetTextLineHeight()),
+            ImGui::GetCursorScreenPos() + ImVec2(itemPadding.x, itemPadding.y * 2.f) + ImVec2(itemEndScreenX - ImGui::GetCursorScreenPos().x + itemPadding.x, rowHeight),
             IM_COL32(0, 255, 0, 50));
          if (m_player->m_liveUI->m_inGameUI.IsFlipperNav())
          {
@@ -588,6 +662,10 @@ void InGameUIPage::Render(float elapsedS)
             else if (ImGui::GetCursorPosY() - ImGui::GetScrollY() > ImGui::GetWindowHeight() - itemHeight)
                ImGui::SetScrollY(ImGui::GetCursorPosY() - ImGui::GetWindowHeight() + itemHeight);
          }
+      }
+      else if (!m_player->m_liveUI->m_inGameUI.IsFlipperNav() && isMouseOver)
+      {
+         hoveredItem = item.get();
       }
 
       switch (item->m_type)
@@ -638,7 +716,7 @@ void InGameUIPage::Render(float elapsedS)
          ImGui::SameLine(0.f, 10.f);
          ImGui::Text("%s", item->m_label.c_str());
          ImGui::SetCursorScreenPos(ImGui::GetCursorScreenPos() + ImVec2(0.f, itemPadding.y));
-         if (isMouseOver && ImGui::IsMouseClicked(ImGuiMouseButton_::ImGuiMouseButton_Left))
+         if (isMouseOver && !m_isDraggingScroll && ImGui::IsMouseReleased(ImGuiMouseButton_::ImGuiMouseButton_Left))
          {
             m_selectedItem = i;
             AdjustItem(1.f, true);
@@ -658,11 +736,12 @@ void InGameUIPage::Render(float elapsedS)
 
       case ActionInputMapping:
       {
-         ImGui::Text("%s", item->m_label.c_str());
+         TextWithEllipsis(item->m_label, labelMaxWidth);
          if (item->m_inputAction->IsMapped())
          {
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
-            if (ImGui::Button((ICON_FK_TIMES + "##"s + item->m_label).c_str(), ImVec2(closeButtonWidth, 0)))
+            if (!stackFields)
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            if (ImGui::Button(std::format("{}##Item{:d}", ICON_FK_TIMES, i).c_str(), ImVec2(closeButtonWidth, 0)))
             {
                item->m_inputAction->ClearMapping();
                if (item->m_inputAction->IsNavigationAction())
@@ -673,13 +752,17 @@ void InGameUIPage::Render(float elapsedS)
             }
             ImGui::SameLine();
          }
-         else
+         else if (!stackFields)
          {
             ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x + closeButtonWidth + style.ItemSpacing.x);
          }
+         else
+         {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + closeButtonWidth + style.ItemSpacing.x);
+         }
          const string mappingLabel = item->m_inputAction->GetMappingLabel();
          const float mapButtonWidth = itemEndScreenX - ImGui::GetCursorScreenPos().x - circleTextWidth - style.ItemSpacing.x;
-         if (ImGui::Button((mappingLabel + "##" + item->m_label).c_str(), ImVec2(mapButtonWidth, 0)))
+         if (ImGui::Button(std::format("{}##Item{}", mappingLabel, i).c_str(), ImVec2(mapButtonWidth, 0)))
          {
             m_defineActionPopup = true;
             m_defineActionItem = item.get();
@@ -699,49 +782,26 @@ void InGameUIPage::Render(float elapsedS)
          break;
       }
 
-      case PhysicsSensorMapping:
-      {
-         ImGui::Text("%s", item->m_label.c_str());
-         if (!item->m_physicsSensor->IsMapped())
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x + closeButtonWidth + style.ItemSpacing.x);
-         else
-         {
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
-            if (ImGui::Button((ICON_FK_TIMES + "##"s + item->m_label).c_str(), ImVec2(closeButtonWidth, 0)))
-               item->m_physicsSensor->ClearMapping();
-            ImGui::SameLine();
-         }
-         const string mappingLabel = item->m_physicsSensor->GetMappingLabel();
-         const float mapButtonWidth = itemEndScreenX - ImGui::GetCursorScreenPos().x - closeButtonWidth;
-         if (ImGui::Button((mappingLabel + "##" + item->m_label).c_str(), ImVec2(mapButtonWidth, 0)))
-         {
-            m_selectedItem = i;
-            AdjustItem(1.f, true);
-         }
-         if (ImGui::CalcTextSize(mappingLabel.c_str()).x >= mapButtonWidth - style.ItemSpacing.x * 2.f)
-            ImGui::SetItemTooltip("%s", mappingLabel.c_str());
-         break;
-      }
-
       case Property:
          switch (item->m_property->m_type)
          {
          case VPX::Properties::PropertyDef::Type::Float:
          {
             auto prop = dynamic_cast<VPX::Properties::FloatPropertyDef*>(item->m_property.get());
-            ImGui::Text("%s", prop->m_label.c_str());
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            TextWithEllipsis(prop->m_label, labelMaxWidth);
+            if (!stackFields)
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
             float v = item->GetFloatValue() * item->m_floatValueDisplayScale;
             ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x);
-            ImGui::SliderFloat(("##" + prop->m_label).c_str(), &v, prop->m_min * item->m_floatValueDisplayScale, prop->m_max * item->m_floatValueDisplayScale, item->m_format.c_str(),
+            ImGui::SliderFloat(std::format("##Item{}", i).c_str(), &v, prop->m_min * item->m_floatValueDisplayScale,
+               prop->m_max * item->m_floatValueDisplayScale, item->m_format.c_str(),
                ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat);
             if (item->IsModified())
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_PENCIL);
             }
-            else if (auto id = Settings::GetRegistry().GetPropertyId(item->m_property->m_groupId, item->m_property->m_propId);
-               id.has_value() && g_pvp->m_settings.GetFloat(id.value()) != m_player->m_ptable->m_settings.GetFloat(id.value()))
+            else if (item->IsOverriden(g_settingsService.GetAppSettings(), g_settingsService.GetActiveSettings()))
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_DOT_CIRCLE_O);
@@ -753,18 +813,32 @@ void InGameUIPage::Render(float elapsedS)
          case VPX::Properties::PropertyDef::Type::Int:
          {
             auto prop = dynamic_cast<VPX::Properties::IntPropertyDef*>(item->m_property.get());
-            TextWithEllipsis(prop->m_label, maxLabelWidth);
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            TextWithEllipsis(prop->m_label, labelMaxWidth);
+            if (!stackFields)
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
             int v = item->GetIntValue();
-            ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x);
-            ImGui::SliderInt(("##" + prop->m_label).c_str(), &v, prop->m_min, prop->m_max, item->m_format.c_str(), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat);
+            const auto id = Settings::GetRegistry().GetPropertyId(item->m_property->m_groupId, item->m_property->m_propId);
+            if (id.has_value() && (((Settings::m_propPlayer_PlayfieldWidth.index == id.value().index) || (Settings::m_propPlayer_PlayfieldHeight.index == id.value().index)) && !m_player->m_liveUI->m_inGameUI.IsFlipperNav()))
+            {
+               // Special handling for editing main window size as mouse interaction would break (since the control is moved/resized while interacted)
+               const float butWidth = ImGui::CalcTextSize(ICON_FK_ARROWS_H, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+               ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x - ImGui::GetStyle().ItemSpacing.x - butWidth);
+               ImGui::InputInt(std::format("##Item{}", i).c_str(), &v, 1, 100, ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_CharsNoBlank);
+               ImGui::SameLine();
+               if (ImGui::Button((Settings::m_propPlayer_PlayfieldWidth.index == id.value().index) ? ICON_FK_ARROWS_H : ICON_FK_ARROWS_V))
+                  v = prop->m_max;
+            }
+            else
+            {
+               ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x);
+               ImGui::SliderInt(std::format("##Item{}", i).c_str(), &v, prop->m_min, prop->m_max, item->m_format.c_str(), ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat);
+            }
             if (item->IsModified())
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_PENCIL);
             }
-            else if (auto id = Settings::GetRegistry().GetPropertyId(item->m_property->m_groupId, item->m_property->m_propId);
-               id.has_value() && g_pvp->m_settings.GetInt(id.value()) != m_player->m_ptable->m_settings.GetInt(id.value()))
+            else if (item->IsOverriden(g_settingsService.GetAppSettings(), g_settingsService.GetActiveSettings()))
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_DOT_CIRCLE_O);
@@ -776,11 +850,12 @@ void InGameUIPage::Render(float elapsedS)
          case VPX::Properties::PropertyDef::Type::Enum:
          {
             auto prop = dynamic_cast<VPX::Properties::EnumPropertyDef*>(item->m_property.get());
-            TextWithEllipsis(prop->m_label, maxLabelWidth);
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            TextWithEllipsis(prop->m_label, labelMaxWidth);
+            if (!stackFields)
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
             int v = item->GetIntValue() - prop->m_min;
             ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x);
-            ImGui::Combo(("##" + prop->m_label).c_str(), &v,
+            ImGui::Combo(std::format("##Item{}", i).c_str(), &v,
                [](void* data, int idx)
                {
                   const auto* vec = static_cast<const vector<string>*>(data);
@@ -794,8 +869,7 @@ void InGameUIPage::Render(float elapsedS)
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_PENCIL);
             }
-            else if (auto id = Settings::GetRegistry().GetPropertyId(item->m_property->m_groupId, item->m_property->m_propId);
-               id.has_value() && g_pvp->m_settings.GetInt(id.value()) != m_player->m_ptable->m_settings.GetInt(id.value()))
+            else if (item->IsOverriden(g_settingsService.GetAppSettings(), g_settingsService.GetActiveSettings()))
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_DOT_CIRCLE_O);
@@ -807,17 +881,42 @@ void InGameUIPage::Render(float elapsedS)
          case VPX::Properties::PropertyDef::Type::Bool:
          {
             auto prop = dynamic_cast<VPX::Properties::BoolPropertyDef*>(item->m_property.get());
-            ImGui::Text("%s", prop->m_label.c_str());
-            ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            TextWithEllipsis(prop->m_label, stackFields ? itemEndScreenX - rowStartScreenX - ImGui::GetFrameHeight() * 1.75f - style.ItemSpacing.x : maxLabelWidth);
+            if (stackFields)
+               ImGui::SameLine();
+            else
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
             bool v = item->GetBoolValue();
-            RenderToggle(prop->m_label, ImVec2(itemEndScreenX - ImGui::GetCursorScreenPos().x, ImGui::GetFrameHeight()), v);
+            RenderToggle(std::format("{}##Item{}", prop->m_label, i), ImVec2(itemEndScreenX - ImGui::GetCursorScreenPos().x, ImGui::GetFrameHeight()), v);
             if (item->IsModified())
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_PENCIL);
             }
-            else if (auto id = Settings::GetRegistry().GetPropertyId(item->m_property->m_groupId, item->m_property->m_propId);
-               id.has_value() && g_pvp->m_settings.GetBool(id.value()) != m_player->m_ptable->m_settings.GetBool(id.value()))
+            else if (item->IsOverriden(g_settingsService.GetAppSettings(), g_settingsService.GetActiveSettings()))
+            {
+               ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
+               ImGui::Text(ICON_FK_DOT_CIRCLE_O);
+            }
+            item->SetValue(v);
+            break;
+         }
+
+         case VPX::Properties::PropertyDef::Type::String:
+         {
+            auto prop = dynamic_cast<VPX::Properties::StringPropertyDef*>(item->m_property.get());
+            TextWithEllipsis(prop->m_label, labelMaxWidth);
+            if (!stackFields)
+               ImGui::SameLine(labelEndScreenX - ImGui::GetCursorScreenPos().x);
+            string v = item->GetStringValue();
+            ImGui::SetNextItemWidth(itemEndScreenX - ImGui::GetCursorScreenPos().x);
+            ImGui::InputText(std::format("##Item{}", i).c_str(), &v);
+            if (item->IsModified())
+            {
+               ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
+               ImGui::Text(ICON_FK_PENCIL);
+            }
+            else if (item->IsOverriden(g_settingsService.GetAppSettings(), g_settingsService.GetActiveSettings()))
             {
                ImGui::SameLine(itemEndScreenX - ImGui::GetCursorScreenPos().x);
                ImGui::Text(ICON_FK_DOT_CIRCLE_O);
@@ -836,6 +935,8 @@ void InGameUIPage::Render(float elapsedS)
       if (hovered)
          ImGui::PopStyleColor();
    }
+   if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && m_isDraggingScroll)
+      m_isDraggingScroll = false;
    ImGui::Dummy(ImVec2(0, 0));
    ImGui::EndChild();
 
@@ -863,7 +964,6 @@ void InGameUIPage::Render(float elapsedS)
    m_windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
    ImGui::End();
-   ImGui::PopStyleVar();
 
    RenderInputActionPopup();
 }
@@ -872,7 +972,7 @@ void InGameUIPage::RenderInputActionPopup()
 {
    if (!m_defineActionPopup && m_defineActionItem)
    {
-      assert(false); // Not supposed to happen as the only way to close the popup is to actually define a mapping which deselect the item
+      assert(false); // Not supposed to happen as the only way to close the popup is to actually define a mapping which deselects the item
       if (m_defineActionItem->m_inputAction->IsNavigationAction() && !m_defineActionItem->m_inputAction->IsMapped())
          m_defineActionPopup = true;
       else

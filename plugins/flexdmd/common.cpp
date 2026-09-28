@@ -49,17 +49,14 @@ bool try_parse_int(const string& str, int& value)
 
 bool try_parse_color(const string& str, ColorRGBA32& value)
 {
-   string hexStr;
-   if (str[0] == '#')
-      hexStr = str.substr(1);
-   else
-      hexStr = str;
+   const size_t start = (!str.empty() && str[0] == '#') ? 1 : 0;
+   string hexStr(str, start);
 
    if (hexStr.size() == 6)
-      hexStr += "FF";
-
-   if (hexStr.size() != 8)
-      return false;
+      hexStr += "FF"sv;
+   else
+      if (hexStr.size() != 8)
+         return false;
 
    uint32_t rgba;
    std::stringstream ss;
@@ -106,45 +103,31 @@ string extension_from_path(const string& path)
    return pos != string::npos ? string_to_lower(path.substr(pos + 1)) : string();
 }
 
-string find_case_insensitive_file_path(const string& szPath)
+std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path& searchedFile)
 {
-   auto fn = [&](auto& self, const string& s) -> string {
-      string path = normalize_path_separators(s);
-      std::filesystem::path p = std::filesystem::path(path).lexically_normal();
+   auto fn = [](const auto& self, std::filesystem::path path)
+   {
       std::error_code ec;
+      path = path.lexically_normal();
+      if (std::filesystem::exists(path, ec))
+         return path;
 
-      if (std::filesystem::exists(p, ec))
-         return p.string();
+      const auto& parent = path.parent_path();
+      std::filesystem::path base = (parent.empty() || parent == path) ? std::filesystem::path(".") : self(self, parent);
+      if (base.empty())
+         return base;
 
-      auto parent = p.parent_path();
-      string base;
-      if (parent.empty() || parent == p) {
-         base = ".";
-      } else {
-         base = self(self, parent.string());
-         if (base.empty())
-            return string();
+      for (const auto& ent : std::filesystem::directory_iterator(base, ec))
+      {
+         if (!ec && StrCompareNoCase(ent.path().filename().string(), path.filename().string()))
+            return ent.path();
       }
 
-      for (auto& ent : std::filesystem::directory_iterator(base, ec)) {
-         if (!ec && StrCompareNoCase(ent.path().filename().string(), p.filename().string())) {
-            auto found = ent.path().string();
-            if (found != path) {
-               LOGI("case insensitive file match: requested \"%s\", actual \"%s\"", path.c_str(), found.c_str());
-            }
-            return found;
-         }
-      }
-
-      return string();
+      return std::filesystem::path();
    };
 
-   string result = fn(fn, szPath);
-   if (!result.empty()) {
-      std::filesystem::path p = std::filesystem::absolute(result);
-      return p.string();
-   }
-   return string();
+   const std::filesystem::path result = fn(fn, searchedFile);
+   return result.empty() ? result : std::filesystem::absolute(result);
 }
 
 #ifdef _WIN32
@@ -174,46 +157,30 @@ static T GetModulePath(HMODULE hModule)
 }
 #endif
 
-string GetPluginPath()
+std::filesystem::path GetPluginPath()
 {
 #ifdef _WIN32
-    HMODULE hm = nullptr;
-    if (GetModuleHandleEx(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            _T("FlexDMDPluginLoad"), &hm) == 0)
-        return string();
+   HMODULE hm = nullptr;
+   if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, _T("FlexDMDPluginLoad"), &hm) == 0)
+      return std::filesystem::path();
 
 #ifdef _UNICODE
-    const std::wstring buf = GetModulePath<std::wstring>(hm);
-    if (buf.empty())
-       return string();
-    const int size_needed = WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    string pathBuf(size_needed - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, pathBuf.data(), size_needed, nullptr, nullptr);
+   const std::wstring pathBuf = GetModulePath<std::wstring>(hm);
 #else
-    const string pathBuf = GetModulePath<string>(hm);
+   const string pathBuf = GetModulePath<string>(hm);
 #endif
 #else
-    Dl_info info{};
-    if (dladdr((void*)&GetPluginPath, &info) == 0 || !info.dli_fname)
-        return string();
+   Dl_info info {};
+   if (dladdr((void*)&GetPluginPath, &info) == 0 || !info.dli_fname)
+      return string();
 
-    char realBuf[PATH_MAX];
-    if (!realpath(info.dli_fname, realBuf))
-        return string();
-
-    const string pathBuf(realBuf);
+   char pathBuf[PATH_MAX];
+   if (!realpath(info.dli_fname, pathBuf))
+      return string();
 #endif
 
-    if (pathBuf.empty())
-        return string();
-
-    const size_t lastSep = pathBuf.find_last_of(PATH_SEPARATOR_CHAR);
-    if (lastSep == string::npos)
-        return string();
-
-    return pathBuf.substr(0, lastSep + 1);
+   std::filesystem::path path(pathBuf);
+   return path.empty() ? path : path.parent_path();
 }
 
 }

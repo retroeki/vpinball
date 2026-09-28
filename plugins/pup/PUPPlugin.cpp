@@ -50,13 +50,16 @@ static const MsgPluginAPI* msgApi = nullptr;
 static VPXPluginAPI* vpxApi = nullptr;
 static ScriptablePluginAPI* scriptApi = nullptr;
 static uint32_t endpointId;
-static unsigned int onPinMAMEGameStartId, onGameEndId;
+static unsigned int onControllersChangedId;
+static unsigned int getControllersId;
+static string currentGameId;
+static unsigned int onGameEndId;
 
 // The pup manager holds the overall state. It may be automatically created due to a PinMAME start event, or explicitely created
 // through script interface. The script interface gives access to this context even when it has been created due to PinMAME.
 static std::unique_ptr<PUPManager> pupManager;
 
-LPI_IMPLEMENT // Implement shared log support
+LPI_IMPLEMENT_CPP // Implement shared log support
 
 MSGPI_STRING_VAL_SETTING(pupPathProp, "PUPFolder", "PinUp Player Folder", "", true, "", 1024);
 
@@ -65,58 +68,58 @@ MSGPI_STRING_VAL_SETTING(pupPathProp, "PUPFolder", "PinUp Player Folder", "", tr
 // Script interface
 //
 
-PSC_CLASS_START(PUPPinDisplay)
-   PSC_FUNCTION2(PUPPinDisplay, void, Init, int, string)
-   PSC_FUNCTION4(PUPPinDisplay, void, playlistadd, int, string, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, playlistplay, int, string)
-   PSC_FUNCTION5(PUPPinDisplay, void, playlistplayex, int, string, string, int, int)
-   PSC_FUNCTION3(PUPPinDisplay, void, play, int, string, string)
-   PSC_FUNCTION2(PUPPinDisplay, void, setWidth, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, setHeight, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, setPosX, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, setPosY, int, int)
-   PSC_FUNCTION3(PUPPinDisplay, void, setAspect, int, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, setVolume, int, int)
-   PSC_FUNCTION1(PUPPinDisplay, void, playpause, int)
-   PSC_FUNCTION1(PUPPinDisplay, void, playresume, int)
-   PSC_FUNCTION1(PUPPinDisplay, void, playstop, int)
-   PSC_FUNCTION0(PUPPinDisplay, void, CloseApp)
-   PSC_PROP_RW_ARRAY1(PUPPinDisplay, bool, isPlaying, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, SetLength, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, SetLoop, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, SetBackGround, int, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, BlockPlay, int, int)
-   PSC_FUNCTION1(PUPPinDisplay, void, SetScreen, int)
-   PSC_FUNCTION6(PUPPinDisplay, void, SetScreenEx, int, int, int, int, int, int)
-   PSC_PROP_RW(PUPPinDisplay, int, SN)
-   PSC_FUNCTION2(PUPPinDisplay, void, B2SData, string, int)
-   PSC_PROP_RW(PUPPinDisplay, string, B2SFilter)
-   PSC_FUNCTION1(PUPPinDisplay, void, Show, int)
-   PSC_FUNCTION1(PUPPinDisplay, void, Hide, int)
-   PSC_FUNCTION2(PUPPinDisplay, void, B2SInit, string, string)
-   PSC_FUNCTION1(PUPPinDisplay, void, SendMSG, string)
-   PSC_FUNCTION1(PUPPinDisplay, void, Show, int)
-   PSC_FUNCTION12(PUPPinDisplay, void, LabelNew, int, string, string, int, int, int, int, int, int, int, int, bool)
-   PSC_FUNCTION5(PUPPinDisplay, void, LabelSet, int, string, string, bool, string)
-   PSC_FUNCTION0(PUPPinDisplay, void, LabelSetEx)
-   PSC_FUNCTION4(PUPPinDisplay, void, LabelShowPage, int, int, int, string)
-   PSC_FUNCTION1(PUPPinDisplay, void, LabelInit, int)
-   PSC_PROP_RW(PUPPinDisplay, string, GetGame)
-   PSC_PROP_RW(PUPPinDisplay, string, GetRoot)
-   PSC_FUNCTION6(PUPPinDisplay, void, SoundAdd, string, string, int, double, double, string)
-   PSC_FUNCTION1(PUPPinDisplay, void, SoundPlay, string)
-   PSC_FUNCTION6(PUPPinDisplay, void, PuPSound, string, int, int, int, int, string)
-   PSC_FUNCTION1(PUPPinDisplay, void, InitPuPMenu, int)
-   PSC_PROP_R(PUPPinDisplay, string, B2SDisplays)
-   PSC_FUNCTION2(PUPPinDisplay, void, setVolumeCurrent, int, int)
-   //PSC_PROP_R_ARRAY4(PUPPinDisplay, int, GameUpdate, string, int, int, string)
+PSC_CLASS_START(PUP_PinDisplay, PUPPinDisplay)
+   PSC_FUNCTION2(void, Init, int, string)
+   PSC_FUNCTION4(void, playlistadd, int, string, int, int)
+   PSC_FUNCTION2(void, playlistplay, int, string)
+   PSC_FUNCTION5(void, playlistplayex, int, string, string, int, int)
+   PSC_FUNCTION3(void, play, int, string, string)
+   PSC_FUNCTION2(void, setWidth, int, int)
+   PSC_FUNCTION2(void, setHeight, int, int)
+   PSC_FUNCTION2(void, setPosX, int, int)
+   PSC_FUNCTION2(void, setPosY, int, int)
+   PSC_FUNCTION3(void, setAspect, int, int, int)
+   PSC_FUNCTION2(void, setVolume, int, int)
+   PSC_FUNCTION1(void, playpause, int)
+   PSC_FUNCTION1(void, playresume, int)
+   PSC_FUNCTION1(void, playstop, int)
+   PSC_FUNCTION0(void, CloseApp)
+   PSC_PROP_RW_ARRAY1(bool, isPlaying, int)
+   PSC_FUNCTION2(void, SetLength, int, int)
+   PSC_FUNCTION2(void, SetLoop, int, int)
+   PSC_FUNCTION2(void, SetBackGround, int, int)
+   PSC_FUNCTION2(void, BlockPlay, int, int)
+   PSC_FUNCTION1(void, SetScreen, int)
+   PSC_FUNCTION6(void, SetScreenEx, int, int, int, int, int, int)
+   PSC_PROP_RW(int, SN)
+   PSC_FUNCTION2(void, B2SData, string, int)
+   PSC_PROP_RW(string, B2SFilter)
+   PSC_FUNCTION1(void, Show, int)
+   PSC_FUNCTION1(void, Hide, int)
+   PSC_FUNCTION2(void, B2SInit, string, string)
+   PSC_FUNCTION1(void, SendMSG, string)
+   PSC_FUNCTION1(void, Show, int)
+   PSC_FUNCTION12(void, LabelNew, int, string, string, int, int, int, int, int, int, int, int, bool)
+   PSC_FUNCTION5(void, LabelSet, int, string, string, bool, string)
+   PSC_FUNCTION0(void, LabelSetEx)
+   PSC_FUNCTION4(void, LabelShowPage, int, int, int, string)
+   PSC_FUNCTION1(void, LabelInit, int)
+   PSC_PROP_RW(string, GetGame)
+   PSC_PROP_RW(string, GetRoot)
+   PSC_FUNCTION6(void, SoundAdd, string, string, int, double, double, string)
+   PSC_FUNCTION1(void, SoundPlay, string)
+   PSC_FUNCTION6(void, PuPSound, string, int, int, int, int, string)
+   PSC_FUNCTION1(void, InitPuPMenu, int)
+   PSC_PROP_R(string, B2SDisplays)
+   PSC_FUNCTION2(void, setVolumeCurrent, int, int)
+   PSC_FUNCTION4(int, GameUpdate, string, int, int, string)
    // STDMETHOD(GrabDC)(LONG pWidth, LONG pHeight, BSTR wintitle, VARIANT *pixels);
-   PSC_FUNCTION0(PUPPinDisplay, string, GetVersion)
+   PSC_FUNCTION0(string, GetVersion)
    // STDMETHOD(GrabDC2)(LONG pWidth, LONG pHeight, BSTR wintitle, SAFEARRAY **pixels);
-   PSC_FUNCTION8(PUPPinDisplay, void, playevent, int, string, string, int, int, int, int, string)
-   PSC_FUNCTION5(PUPPinDisplay, void, SetPosVideo, int, int, int, int, string)
-   PSC_FUNCTION0(PUPPinDisplay, void, PuPClose)
-PSC_CLASS_END(PUPPinDisplay)
+   PSC_FUNCTION8(void, playevent, int, string, string, int, int, int, int, string)
+   PSC_FUNCTION5(void, SetPosVideo, int, int, int, int, string)
+   PSC_FUNCTION0(void, PuPClose)
+PSC_CLASS_END()
 
 
 
@@ -159,58 +162,44 @@ void DeleteTexture(VPXTexture texture)
 //
 
 static unsigned int onAudioUpdateId;
-static vector<uint32_t> freeAudioStreamId;
-uint32_t nextAudioStreamId = 1;
 
-CtlResId UpdateAudioStream(AudioUpdateMsg* msg)
+void UpdateAudioStream(AudioUpdateMsg* msg)
 {
    if (msg->volume == 0.0f)
    {
-      StopAudioStream(msg->id);
-      return {};
-   }
-   CtlResId id = msg->id;
-   if (id.id == 0)
-   {
-      id.endpointId = endpointId;
-      if (freeAudioStreamId.empty())
-      {
-         id.resId = nextAudioStreamId;
-         nextAudioStreamId++;
-      }
-      else
-      {
-         id.resId = freeAudioStreamId.back();
-         freeAudioStreamId.pop_back();
-      }
-      msg->id = id;
-   }
-   msgApi->RunOnMainThread(0, [](void* userData) {
-      AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
-      msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
+      StopAudioStream(msg->streamId.resId);
       if (LibAV::LibAV::GetInstance().isLoaded)
          LibAV::LibAV::GetInstance()._av_free(msg->buffer);
-      delete msg;
-   }, msg);
-   return id;
+   }
+   else
+   {
+      msg->sourceId = { endpointId, 0 };
+      msg->streamId.endpointId = endpointId;
+      msgApi->RunOnMainThread(
+         endpointId, 0,
+         [](void* userData)
+         {
+            AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
+            msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
+            if (LibAV::LibAV::GetInstance().isLoaded)
+               LibAV::LibAV::GetInstance()._av_free(msg->buffer);
+            delete msg;
+         },
+         msg);
+   }
 }
 
-void StopAudioStream(const CtlResId& id)
+void StopAudioStream(uint32_t streamId)
 {
-   if (id.id != 0)
-   {
-      // Recycle stream id
-      freeAudioStreamId.push_back(id.resId);
-      // Send an end of stream message
-      AudioUpdateMsg* pendingAudioUpdate = new AudioUpdateMsg();
-      memset(pendingAudioUpdate, 0, sizeof(AudioUpdateMsg));
-      pendingAudioUpdate->id.id = id.id;
-      msgApi->RunOnMainThread(0,[](void* userData) {
-         AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
-         msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
-         delete msg;
-      }, pendingAudioUpdate);
-   }
+   AudioUpdateMsg* pendingAudioUpdate = new AudioUpdateMsg();
+   pendingAudioUpdate->sourceId = { endpointId, 0 };
+   pendingAudioUpdate->streamId = { endpointId, streamId };
+   pendingAudioUpdate->buffer = nullptr;
+   msgApi->RunOnMainThread(endpointId, 0, [](void* userData) {
+      AudioUpdateMsg* msg = static_cast<AudioUpdateMsg*>(userData);
+      msgApi->BroadcastMsg(endpointId, onAudioUpdateId, msg);
+      delete msg;
+   }, pendingAudioUpdate);
 }
 
 
@@ -218,11 +207,43 @@ void StopAudioStream(const CtlResId& id)
 // Game lifecycle
 //
 
-void OnPinMAMEGameStart(const unsigned int eventId, void* userData, void* eventData)
+static void OnControllersChanged(const unsigned int eventId, void* userData, void* msgData)
 {
-   const CtlOnGameStartMsg* msg = static_cast<const CtlOnGameStartMsg*>(eventData);
-   assert(msg != nullptr && msg->gameId != nullptr);
-   pupManager->LoadConfig(msg->gameId);
+   // Select the controller for which we actually have a pupvideos folder, a
+   // pinmame:: one winning over other namespaces when several match the same
+   // game key (selection order is otherwise undefined).
+   ControllerDef selected {};
+   string selectedGameId;
+   for (const auto& controller : PinballPlugin::Controller::GetCtrlItems<ControllerDef>(msgApi, endpointId, getControllersId))
+   {
+      const std::string_view gameNs = PinballPlugin::Controller::CtrlGetGameNamespace(controller.gameId);
+      const std::string_view gameId = PinballPlugin::Controller::CtrlGetGameKey(controller.gameId);
+      if (gameId.empty() || pupManager->FindGameDir(gameNs, gameId).empty())
+         continue;
+      if (gameNs == "pinmame"sv || selected.endpointId == 0)
+      {
+         selected = controller;
+         selectedGameId = controller.gameId;
+         if (gameNs == "pinmame"sv)
+            break;
+      }
+   }
+
+   if (currentGameId == selectedGameId)
+      return;
+   
+   currentGameId = selectedGameId;
+   if (!currentGameId.empty())
+   {
+      if (pupManager->IsRunning())
+      {
+         LOGW("PinUpPlayer was instantiated and initialized from the table script before table init; skipping automated PuP loading. Initialize PuP during table init to avoid relying on uninitialized table state."s);
+         return;
+      }
+
+      selected.gameId = selectedGameId.c_str();
+      pupManager->LoadConfig(selected);
+   }
 }
 
 void OnGameEnd(const unsigned int eventId, void* userData, void* eventData)
@@ -252,7 +273,6 @@ MSGPI_EXPORT void MSGPIAPI PUPPluginLoad(const uint32_t sessionId, const MsgPlug
    msgApi->BroadcastMsg(endpointId, getVpxApiId, &vpxApi);
    msgApi->ReleaseMsgID(getVpxApiId);
 
-   msgApi->SubscribeMsg(endpointId, onPinMAMEGameStartId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_EVT_ON_GAME_START), OnPinMAMEGameStart, nullptr);
    msgApi->SubscribeMsg(endpointId, onGameEndId = msgApi->GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_GAME_END), OnGameEnd, nullptr);
 
    onAudioUpdateId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_AUDIO_ON_UPDATE_MSG);
@@ -260,44 +280,52 @@ MSGPI_EXPORT void MSGPIAPI PUPPluginLoad(const uint32_t sessionId, const MsgPlug
    const unsigned int getScriptApiId = msgApi->GetMsgID(SCRIPTPI_NAMESPACE, SCRIPTPI_MSG_GET_API);
    msgApi->BroadcastMsg(endpointId, getScriptApiId, &scriptApi);
    msgApi->ReleaseMsgID(getScriptApiId);
-   auto regLambda = [&](ScriptClassDef* scd) { scriptApi->RegisterScriptClass(scd); };
-   RegisterPUPPinDisplaySCD(regLambda);
-   PUPPinDisplay_SCD->CreateObject = []()
+   RegisterPUP_PinDisplay([](ScriptClassDef* scd) { scriptApi->RegisterScriptClass(scd); });
+   PUP_PinDisplay_SCD->CreateObject = []()
    {
       PUPPinDisplay* pinDisplay = new PUPPinDisplay(*pupManager.get());
       return static_cast<void*>(pinDisplay);
    };
-   scriptApi->SubmitTypeLibrary();
-   scriptApi->SetCOMObjectOverride("PinUpPlayer.PinDisplay", PUPPinDisplay_SCD);
+   scriptApi->SubmitTypeLibrary(endpointId);
+   scriptApi->SetCOMObjectOverride("PinUpPlayer.PinDisplay", PUP_PinDisplay_SCD);
 
    msgApi->RegisterSetting(endpointId, &pupPathProp);
-   string pupFolder = pupPathProp_Get();
-   string rootPath = normalize_path_separators(pupFolder);
-   if (!rootPath.ends_with(PATH_SEPARATOR_CHAR))
-      rootPath += PATH_SEPARATOR_CHAR;
-   rootPath = find_case_insensitive_directory_path(rootPath + "pupvideos");
+   std::filesystem::path pupFolder = pupPathProp_Get();
+   std::filesystem::path rootPath = find_case_insensitive_directory_path(pupFolder / "pupvideos"sv);
    if (rootPath.empty())
    {
-      LOGW("PUP folder was not found (settings is '%s')", pupFolder.c_str());
+      if (pupFolder.empty())
+         // No global folder configured: the per-table 'pupvideos' folder (next to each table) is the primary source.
+         LOGI("No global PUP folder configured; per-table 'pupvideos' used when present");
+      else
+         LOGW("PUP folder was not found (settings is '" + pupFolder.string() + "')");
    }
    pupManager = std::make_unique<PUPManager>(msgApi, endpointId, rootPath);
+
+   onControllersChangedId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_ON_CHG_MSG);
+   getControllersId = msgApi->GetMsgID(CTLPI_NAMESPACE, CTLPI_CONTROLLERS_GET_MSG);
+   msgApi->SubscribeMsg(endpointId, onControllersChangedId, OnControllersChanged, nullptr);
+   OnControllersChanged(onControllersChangedId, nullptr, nullptr);
 }
 
 MSGPI_EXPORT void MSGPIAPI PUPPluginUnload()
 {
    pupManager = nullptr;
    
+   scriptApi->SetCOMObjectOverride("PinUpPlayer.PinDisplay", nullptr);
+   UnregisterPUP_PinDisplay([](ScriptClassDef* scd) { scriptApi->UnregisterScriptClass(scd); });
+
    msgApi->ReleaseMsgID(onAudioUpdateId);
 
-   msgApi->UnsubscribeMsg(onPinMAMEGameStartId, OnPinMAMEGameStart);
-   msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd);
-   msgApi->ReleaseMsgID(onPinMAMEGameStartId);
+   msgApi->UnsubscribeMsg(onGameEndId, OnGameEnd, nullptr);
    msgApi->ReleaseMsgID(onGameEndId);
+   msgApi->UnsubscribeMsg(onControllersChangedId, OnControllersChanged, nullptr);
+   msgApi->ReleaseMsgID(onControllersChangedId);
+   msgApi->ReleaseMsgID(getControllersId);
 
-   // TODO we should unregister the script API contribution
-   scriptApi->SetCOMObjectOverride("PinUpPlayer.PinDisplay", nullptr);
-   
    scriptApi = nullptr;
    vpxApi = nullptr;
    msgApi = nullptr;
+
+   TTF_Quit();
 }

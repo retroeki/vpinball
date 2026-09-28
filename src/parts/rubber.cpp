@@ -1,43 +1,33 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-//#include "forsyth.h"
-#include "utils/objloader.h"
-#include "renderer/Shader.h"
+#include "rubber.h"
 
-Rubber::Rubber()
-{
-   m_menuid = IDR_SURFACEMENU;
-   m_d.m_collidable = true;
-   m_d.m_visible = true;
-   m_propPosition = nullptr;
-   m_propVisual = nullptr;
-   m_ptable = nullptr;
-   m_d.m_tdr.m_TimerEnabled = false;
-   m_d.m_tdr.m_TimerInterval = 0;
-}
+//#include "forsyth.h"
+#include "core/VPApp.h"
+#include "math/matrix.h"
+#include "parts/Collection.h"
+#include "renderer/MeshBuffer.h"
+#include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/Shader.h"
+#include "renderer/trace.h"
+#include "utils/objloader.h"
+
 
 Rubber::~Rubber()
 {
-   assert(m_rd == nullptr);
+   assert(m_renderer == nullptr);
 }
 
-Rubber *Rubber::CopyForPlay(PinTable *live_table) const
+Rubber *Rubber::CopyForPlay() const
 {
-   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Rubber, live_table, m_vdpoint)
+   STANDARD_EDITABLE_WITH_DRAGPOINT_COPY_FOR_PLAY_IMPL(Rubber, m_curve)
    return dst;
 }
 
-void Rubber::UpdateStatusBarInfo()
+HRESULT Rubber::Init(const float x, const float y, const bool fromMouseClick, const bool forPlay)
 {
-   char tbuf[128];
-   sprintf_s(tbuf, sizeof(tbuf), "Height: %.3f | Thickness: %.3f", m_vpinball->ConvertToUnit(m_d.m_height), m_vpinball->ConvertToUnit((float)m_d.m_thickness));
-   m_vpinball->SetStatusBarUnitInfo(tbuf, true);
-}
-
-HRESULT Rubber::Init(PinTable *const ptable, const float x, const float y, const bool fromMouseClick, const bool forPlay)
-{
-   m_ptable = ptable;
    SetDefaults(fromMouseClick);
    m_d.m_visible = true;
 
@@ -46,20 +36,13 @@ HRESULT Rubber::Init(PinTable *const ptable, const float x, const float y, const
       const float angle = (float)(M_PI*2.0 / 8.0)*(float)i;
       const float xx = x + sinf(angle)*50.0f;
       const float yy = y - cosf(angle)*50.0f;
-      CComObject<DragPoint> *pdp;
-      CComObject<DragPoint>::CreateInstance(&pdp);
-      if (pdp)
-      {
-         pdp->AddRef();
-         pdp->Init(this, xx, yy, 0.f, true);
-         m_vdpoint.push_back(pdp);
-      }
+      m_curve.PushPoint(std::make_unique<DragPoint>(&m_curve, xx, yy, 0.f, true));
    }
 
-   return forPlay ? S_OK : InitVBA(true, nullptr);
+   return S_OK;
 }
 
-#define LinkProp(field, prop) field = fromMouseClick ? g_pvp->m_settings.GetDefaultPropsRubber_##prop() : Settings::GetDefaultPropsRubber_##prop##_Default()
+#define LinkProp(field, prop) field = fromMouseClick ? g_settingsService.GetAppSettings().GetDefaultPropsRubber_##prop() : Settings::GetDefaultPropsRubber_##prop##_Default()
 void Rubber::SetDefaults(const bool fromMouseClick)
 {
    LinkProp(m_d.m_height, Height);
@@ -74,8 +57,8 @@ void Rubber::SetDefaults(const bool fromMouseClick)
    LinkProp(m_d.m_rotY, RotY);
    LinkProp(m_d.m_rotZ, RotZ);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
    SetDefaultPhysics(fromMouseClick);
 }
 
@@ -91,7 +74,7 @@ void Rubber::SetDefaultPhysics(const bool fromMouseClick)
 
 void Rubber::WriteRegDefaults()
 {
-#define LinkProp(field, prop) g_pvp->m_settings.SetDefaultPropsRubber_##prop(field, false)
+#define LinkProp(field, prop) g_settingsService.GetAppSettings().SetDefaultPropsRubber_##prop(field, false)
    LinkProp(m_d.m_elasticity, Elasticity);
    LinkProp(m_d.m_elasticityFalloff, ElasticityFalloff);
    LinkProp(m_d.m_friction, Friction);
@@ -109,15 +92,13 @@ void Rubber::WriteRegDefaults()
    LinkProp(m_d.m_rotY, RotY);
    LinkProp(m_d.m_rotZ, RotZ);
    LinkProp(m_d.m_reflectionEnabled, ReflectionEnabled);
-   LinkProp(m_d.m_tdr.m_TimerEnabled, TimerEnabled);
-   LinkProp(m_d.m_tdr.m_TimerInterval, TimerInterval);
+   LinkProp(m_timerEnabled, TimerEnabled);
+   LinkProp(m_timerInterval, TimerInterval);
 #undef LinkProp
 }
 
-void Rubber::DrawRubberMesh(Sur * const psur)
+void Rubber::GetEditorWireframe(vector<Vertex2D> &edges)
 {
-   vector<Vertex2D> drawVertices;
-
    GenerateMesh(6);
    UpdateRubber(false, m_d.m_height);
 
@@ -128,135 +109,19 @@ void Rubber::DrawRubberMesh(Sur * const psur)
       const Vertex3Ds C = Vertex3Ds(m_vertices[m_ringIndices[i + 2]].x, m_vertices[m_ringIndices[i + 2]].y, m_vertices[m_ringIndices[i + 2]].z);
       if (fabsf(m_vertices[m_ringIndices[i]].nz + m_vertices[m_ringIndices[i + 1]].nz) < 1.f)
       {
-         drawVertices.emplace_back(A.x, A.y);
-         drawVertices.emplace_back(B.x, B.y);
+         edges.emplace_back(A.x, A.y);
+         edges.emplace_back(B.x, B.y);
       }
       if (fabsf(m_vertices[m_ringIndices[i + 1]].nz + m_vertices[m_ringIndices[i + 2]].nz) < 1.f)
       {
-         drawVertices.emplace_back(B.x, B.y);
-         drawVertices.emplace_back(C.x, C.y);
+         edges.emplace_back(B.x, B.y);
+         edges.emplace_back(C.x, C.y);
       }
       if (fabsf(m_vertices[m_ringIndices[i + 2]].nz + m_vertices[m_ringIndices[i]].nz) < 1.f)
       {
-         drawVertices.emplace_back(C.x, C.y);
-         drawVertices.emplace_back(A.x, A.y);
+         edges.emplace_back(C.x, C.y);
+         edges.emplace_back(A.x, A.y);
       }
-   }
-   if (!drawVertices.empty())
-      psur->Lines(drawVertices.data(), (int)(drawVertices.size() / 2));
-}
-
-void Rubber::UIRenderPass1(Sur * const psur)
-{
-   psur->SetLineColor( RGB( 0, 0, 0 ), false, 0 );
-   if (m_ptable->RenderSolid())
-      psur->SetFillColor(RGB(192, 192, 192));
-   else
-      psur->SetFillColor(-1);
-   psur->SetBorderColor(-1, false, 0);
-   psur->SetObject(this);
-
-   if (!m_d.m_showInEditor)
-   {
-      int cvertex;
-      const Vertex2D * const rgvLocal = GetSplineVertex(cvertex, nullptr, nullptr, 4.0f*powf(10.0f, (10.0f - HIT_SHAPE_DETAIL_LEVEL)*(float)(1.0 / 1.5)));
-      psur->Polygon(rgvLocal, cvertex* 2);
-      delete[] rgvLocal;
-   }
-   else
-   {
-      DrawRubberMesh(psur);
-   }
-}
-
-void Rubber::UIRenderPass2(Sur * const psur)
-{
-   psur->SetFillColor(-1);
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetLineColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this);
-   psur->SetObject(nullptr); // nullptr so this won't be hit-tested
-
-   if (!m_d.m_showInEditor)
-   {
-      int cvertex;
-      bool *pfCross;
-      const Vertex2D * const rgvLocal = GetSplineVertex(cvertex, &pfCross, nullptr, 4.0f*powf(10.0f, (10.0f - HIT_SHAPE_DETAIL_LEVEL)*(float)(1.0 / 1.5)));
-
-      psur->Polygon(rgvLocal, cvertex* 2);
-      for (int i = 0; i < cvertex; i++)
-         if (pfCross[i])
-            psur->Line(rgvLocal[i].x, rgvLocal[i].y, rgvLocal[cvertex * 2 - i - 1].x, rgvLocal[cvertex * 2 - i - 1].y);
-
-      delete[] rgvLocal;
-      delete[] pfCross;
-   }
-   else
-   {
-      DrawRubberMesh(psur);
-
-      // if rotation is used don't show dragpoints
-      return;
-   }
-
-
-   bool drawDragpoints = ((m_selectstate != eNotSelected) || (m_vpinball->m_alwaysDrawDragPoints));
-
-   // if the item is selected then draw the dragpoints (or if we are always to draw dragpoints)
-   if (!drawDragpoints)
-   {
-      // if any of the dragpoints of this object are selected then draw all the dragpoints
-      for (size_t i = 0; i < m_vdpoint.size(); i++)
-      {
-         const CComObject<DragPoint> * const pdp = m_vdpoint[i];
-         if (pdp->m_selectstate != eNotSelected)
-         {
-            drawDragpoints = true;
-            break;
-         }
-      }
-   }
-
-   if (drawDragpoints)
-   {
-      for (size_t i = 0; i < m_vdpoint.size(); i++)
-      {
-         CComObject<DragPoint> * const pdp = m_vdpoint[i];
-         psur->SetFillColor(-1);
-         psur->SetBorderColor(pdp->m_dragging ? RGB(0, 255, 0) : RGB(255, 0, 0), false, 0);
-         psur->SetObject(pdp);
-
-         psur->Ellipse2(pdp->m_v.x, pdp->m_v.y, 8);
-      }
-   }
-}
-
-void Rubber::RenderBlueprint(Sur *psur, const bool solid)
-{
-   psur->SetFillColor(solid ? BLUEPRINT_SOLID_COLOR : -1);
-
-   psur->SetBorderColor(RGB(0, 0, 0), false, 0);
-   psur->SetLineColor(RGB(0, 0, 0), false, 0);
-   psur->SetObject(this);
-   psur->SetObject(nullptr); // nullptr so this won't be hit-tested
-
-   if (!m_d.m_showInEditor)
-   {
-      int cvertex;
-      bool *pfCross;
-      const Vertex2D * const rgvLocal = GetSplineVertex(cvertex, &pfCross, nullptr, 4.0f*powf(10.0f, (10.0f - HIT_SHAPE_DETAIL_LEVEL)*(float)(1.0 / 1.5)));
-
-      psur->Polygon(rgvLocal, cvertex* 2);
-      for (int i = 0; i < cvertex; i++)
-         if (pfCross[i])
-            psur->Line(rgvLocal[i].x, rgvLocal[i].y, rgvLocal[cvertex * 2 - i - 1].x, rgvLocal[cvertex * 2 - i - 1].y);
-
-      delete[] rgvLocal;
-      delete[] pfCross;
-   }
-   else
-   {
-      DrawRubberMesh(psur);
    }
 }
 
@@ -453,6 +318,20 @@ Vertex2D *Rubber::GetSplineVertex(int &pcvertex, bool ** const ppfCross, Vertex2
    return rgvLocal;
 }
 
+void Rubber::GetEditorOutline(vector<Vertex2D> &outline, vector<bool> *crossFlags, const float accuracy) const
+{
+   int cvertex;
+   bool *pfCross = nullptr;
+   Vertex2D *const rgvLocal = GetSplineVertex(cvertex, crossFlags ? &pfCross : nullptr, nullptr, accuracy);
+   if (rgvLocal == nullptr)
+      return;
+   outline.assign(rgvLocal, rgvLocal + cvertex * 2);
+   if (crossFlags && pfCross)
+      crossFlags->assign(pfCross, pfCross + cvertex);
+   delete[] rgvLocal;
+   delete[] pfCross;
+}
+
 // Get an approximation of the curve described by the control points of this ramp.
 void Rubber::GetCentralCurve(vector<RenderVertex> &vv, const float _accuracy) const
 {
@@ -471,7 +350,7 @@ void Rubber::GetCentralCurve(vector<RenderVertex> &vv, const float _accuracy) co
       accuracy = 4.0f*powf(10.0f, (10.0f - accuracy)*(float)(1.0 / 1.5)); // min = 4 (highest accuracy/detail level), max = 4 * 10^(10/1.5) = ~18.000.000 (lowest accuracy/detail level)
    }
 
-   IHaveDragPoints::GetRgVertex(vv, true, accuracy);
+   m_curve.GetRgVertex(vv, true, accuracy);
 }
 
 #if 0
@@ -621,41 +500,31 @@ void Rubber::SetupHitObject(PhysicsEngine* physics, HitObject *obj, const bool i
 
 // Ported at: VisualPinball.Engine/VPT/Mesh.cs
 
-void Rubber::AddPoint(int x, int y, const bool smooth)
+void Rubber::AddPoint(const Vertex2D &v, const bool smooth)
 {
-    vector<RenderVertex> vvertex;
-    GetCentralCurve(vvertex);
-    const Vertex2D v = m_ptable->TransformPoint(x, y);
-    Vertex2D vOut;
-    int iSeg = -1;
+   vector<RenderVertex> vvertex;
+   GetCentralCurve(vvertex);
+   Vertex2D vOut;
+   int iSeg = -1;
 
-    ClosestPointOnPolygon(vvertex, v, vOut, iSeg, true);
+   ClosestPointOnPolygon(vvertex, v, vOut, iSeg, true);
 
-    // Go through vertices (including iSeg itself) counting control points until iSeg
-    int icp = 0;
-    for (int i = 0; i < (iSeg + 1); i++)
-        if (vvertex[i].controlPoint)
-            icp++;
+   // ClosestPointOnPolygon() couldn't find a point -> don't try to add a new point
+   // because that would lead to strange behavior
+   if (iSeg == -1)
+      return;
 
-    // ClosestPointOnPolygon() couldn't find a point -> don't try to add a new point 
-    // because that would lead to strange behavior
-    if (iSeg == -1)
-        return;
+   // Go through vertices (including iSeg itself) counting control points until iSeg
+   int icp = 0;
+   for (int i = 0; i < (iSeg + 1); i++)
+      if (vvertex[i].controlPoint)
+         icp++;
 
-    //if (icp == 0) // need to add point after the last point
-    //icp = m_vdpoint.size();
-    STARTUNDO
+   //if (icp == 0) // need to add point after the last point
+   //icp = m_curve.GetPoints().size();
 
-    CComObject<DragPoint> *pdp;
-    CComObject<DragPoint>::CreateInstance(&pdp);
-    if (pdp)
-    {
-        pdp->AddRef();
-        pdp->Init(this, vOut.x, vOut.y, 0.f, smooth); // Rubbers are usually always smooth
-        m_vdpoint.insert(m_vdpoint.begin() + icp, pdp); // push the second point forward, and replace it with this one.  Should work when index2 wraps.
-    }
-
-    STOPUNDO
+   // Rubbers are usually always smooth; push the second point forward, and replace it with this one. Should work when index2 wraps.
+   m_curve.InsertPoint(icp, std::make_unique<DragPoint>(&m_curve, vOut.x, vOut.y, 0.f, smooth));
 }
 
 
@@ -667,27 +536,27 @@ float Rubber::GetDepth(const Vertex3Ds& viewDir) const
    return viewDir.x * center2D.x + viewDir.y * center2D.y + viewDir.z * m_d.m_height;
 }
 
-void Rubber::RenderSetup(RenderDevice *device)
+void Rubber::RenderSetup(Renderer *renderer)
 {
-   assert(m_rd == nullptr);
-   m_rd = device;
+   assert(m_renderer == nullptr);
+   m_renderer = renderer;
    m_bboxDirty = true;
 
    GenerateMesh();
 
-   std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_rd, m_numVertices, (float *)m_vertices.data(), !m_d.m_staticRendering);
-   std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_rd, m_ringIndices);
+   std::shared_ptr<VertexBuffer> dynamicVertexBuffer = std::make_shared<VertexBuffer>(m_renderer->m_renderDevice, m_numVertices, (float *)m_vertices.data(), !m_d.m_staticRendering);
+   std::shared_ptr<IndexBuffer> dynamicIndexBuffer = std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, m_ringIndices);
    m_meshBuffer = std::make_shared<MeshBuffer>(GetName(), dynamicVertexBuffer, dynamicIndexBuffer, true);
    UpdateRubber(true, m_d.m_height);
 
-   const Vertex2D center2D = GetPointCenter();
+   const Vertex2D& center2D = m_curve.GetCenter();
    m_boundingSphereCenter.Set(center2D.x, center2D.y, m_d.m_height);
 }
 
 void Rubber::RenderRelease()
 {
-   assert(m_rd != nullptr);
-   m_rd = nullptr;
+   assert(m_renderer != nullptr);
+   m_renderer = nullptr;
    m_meshBuffer = nullptr;
    m_meshEdgeBuffer = nullptr;
    m_dynamicVertexBufferRegenerate = true;
@@ -699,8 +568,8 @@ void Rubber::UpdateAnimation(const float diff_time_msec)
 
 void Rubber::Render(const unsigned int renderMask)
 {
-   assert(m_rd != nullptr);
-   assert(!m_backglass);
+   assert(m_renderer != nullptr);
+   assert(!m_desktopBackdrop);
    const bool isStaticOnly = renderMask & Renderer::STATIC_ONLY;
    const bool isDynamicOnly = renderMask & Renderer::DYNAMIC_ONLY;
    const bool isReflectionPass = renderMask & Renderer::REFLECTION_PASS;
@@ -720,7 +589,7 @@ void Rubber::Render(const unsigned int renderMask)
    if (isUIPass)
    {
       if (renderMask & Renderer::UI_FILL)
-         m_rd->DrawMesh(m_rd->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, true, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
       if (renderMask & Renderer::UI_EDGES && m_meshEdgeBuffer == nullptr)
       {
          vector<WORD> indices(8 * m_numVertices);
@@ -735,201 +604,109 @@ void Rubber::Render(const unsigned int renderMask)
             indices[i * 8 + 6] = m_ringIndices[i * 6 + 2];
             indices[i * 8 + 7] = m_ringIndices[i * 6 + 0];
          }
-         m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_rd, indices), true);
+         m_meshEdgeBuffer = std::make_shared<MeshBuffer>(m_meshBuffer->m_vb, std::make_shared<IndexBuffer>(m_renderer->m_renderDevice, indices), true);
       }
       if (renderMask & Renderer::UI_EDGES)
-         m_rd->DrawMesh(m_rd->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, 8 * m_numVertices);
+         m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshEdgeBuffer, RenderDevice::LINELIST, 0, 8 * m_numVertices);
    }
    else
    {
-      m_rd->ResetRenderState();
-      m_rd->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
-      m_rd->DrawMesh(m_rd->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
+      m_renderer->m_renderDevice->ResetRenderState();
+      m_renderer->m_renderDevice->m_basicShader->SetBasic(m_ptable->GetMaterial(m_d.m_szMaterial), m_ptable->GetImage(m_d.m_szImage));
+      m_renderer->m_renderDevice->DrawMesh(m_renderer->m_renderDevice->m_basicShader, false, m_boundingSphereCenter, 0.f, m_meshBuffer, RenderDevice::TRIANGLELIST, 0, m_numIndices);
    }
 }
 
 #pragma endregion
 
 
-void Rubber::SetObjectPos()
+void Rubber::ClearForOverwrite() { m_curve.ClearPoints(); }
+
+void Rubber::Save(IObjectWriter& writer, const bool saveForUndo)
 {
-   m_vpinball->SetObjectPosCur(0, 0);
+   writer.WriteFloat(FID(HTTP), m_d.m_height);
+   writer.WriteFloat(FID(HTHI), m_d.m_hitHeight);
+   writer.WriteInt(FID(WDTP), m_d.m_thickness);
+   writer.WriteBool(FID(HTEV), m_d.m_hitEvent);
+   writer.WriteString(FID(MATR), m_d.m_szMaterial);
+   writer.WriteBool(FID(TMON), m_timerEnabled);
+   writer.WriteInt(FID(TMIN), m_timerInterval);
+   writer.WriteWideString(FID(NAME), m_wzName);
+   writer.WriteString(FID(IMAG), m_d.m_szImage);
+   writer.WriteFloat(FID(ELAS), m_d.m_elasticity);
+   writer.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
+   writer.WriteFloat(FID(RFCT), m_d.m_friction);
+   writer.WriteFloat(FID(RSCT), m_d.m_scatter);
+   writer.WriteBool(FID(CLDR), m_d.m_collidable);
+   writer.WriteBool(FID(RVIS), m_d.m_visible);
+   writer.WriteBool(FID(ESTR), m_d.m_staticRendering);
+   writer.WriteBool(FID(ESIE), m_d.m_showInEditor);
+   writer.WriteFloat(FID(ROTX), m_d.m_rotX);
+   writer.WriteFloat(FID(ROTY), m_d.m_rotY);
+   writer.WriteFloat(FID(ROTZ), m_d.m_rotZ);
+   writer.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
+   writer.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
+   writer.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
+   SaveSharedEditableFields(writer);
+   m_curve.SavePoints(writer);
+   writer.EndObject();
 }
 
-void Rubber::MoveOffset(const float dx, const float dy)
-{
-   for (size_t i = 0; i < m_vdpoint.size(); i++)
-   {
-      CComObject<DragPoint> * const pdp = m_vdpoint[i];
-
-      pdp->m_v.x += dx;
-      pdp->m_v.y += dy;
-   }
-}
-
-void Rubber::ClearForOverwrite()
-{
-   ClearPointsForOverwrite();
-}
-
-HRESULT Rubber::SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo)
-{
-   BiffWriter bw(pstm, hcrypthash);
-
-   bw.WriteFloat(FID(HTTP), m_d.m_height);
-   bw.WriteFloat(FID(HTHI), m_d.m_hitHeight);
-   bw.WriteInt(FID(WDTP), m_d.m_thickness);
-   bw.WriteBool(FID(HTEV), m_d.m_hitEvent);
-   bw.WriteString(FID(MATR), m_d.m_szMaterial);
-   bw.WriteBool(FID(TMON), m_d.m_tdr.m_TimerEnabled);
-   bw.WriteInt(FID(TMIN), m_d.m_tdr.m_TimerInterval);
-   bw.WriteWideString(FID(NAME), m_wzName);
-   bw.WriteString(FID(IMAG), m_d.m_szImage);
-   bw.WriteFloat(FID(ELAS), m_d.m_elasticity);
-   bw.WriteFloat(FID(ELFO), m_d.m_elasticityFalloff);
-   bw.WriteFloat(FID(RFCT), m_d.m_friction);
-   bw.WriteFloat(FID(RSCT), m_d.m_scatter);
-   bw.WriteBool(FID(CLDR), m_d.m_collidable);
-   bw.WriteBool(FID(RVIS), m_d.m_visible);
-   bw.WriteBool(FID(ESTR), m_d.m_staticRendering);
-   bw.WriteBool(FID(ESIE), m_d.m_showInEditor);
-   bw.WriteFloat(FID(ROTX), m_d.m_rotX);
-   bw.WriteFloat(FID(ROTY), m_d.m_rotY);
-   bw.WriteFloat(FID(ROTZ), m_d.m_rotZ);
-   bw.WriteBool(FID(REEN), m_d.m_reflectionEnabled);
-   bw.WriteString(FID(MAPH), m_d.m_szPhysicsMaterial);
-   bw.WriteBool(FID(OVPH), m_d.m_overwritePhysics);
-
-   ISelect::SaveData(pstm, hcrypthash);
-
-   bw.WriteTag(FID(PNTS));
-   HRESULT hr;
-   if (FAILED(hr = SavePointData(pstm, hcrypthash)))
-      return hr;
-
-   bw.WriteTag(FID(ENDB));
-
-   return S_OK;
-}
-
-HRESULT Rubber::InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey)
+void Rubber::Load(IObjectReader& reader)
 {
    SetDefaults(false);
    m_d.m_hitHeight = -1.0f;
-
-   BiffReader br(pstm, this, version, hcrypthash, hcryptkey);
-
-   m_ptable = ptable;
-
-   br.Load();
-   return S_OK;
-}
-
-bool Rubber::LoadToken(const int id, BiffReader * const pbr)
-{
-   switch(id)
-   {
-   case FID(PIID): { int pid; pbr->GetInt(&pid); } break;
-   case FID(HTTP): pbr->GetFloat(m_d.m_height); break;
-   case FID(HTHI): pbr->GetFloat(m_d.m_hitHeight); break;
-   case FID(WDTP): pbr->GetInt(m_d.m_thickness); break;
-   case FID(HTEV): pbr->GetBool(m_d.m_hitEvent); break;
-   case FID(MATR): pbr->GetString(m_d.m_szMaterial); break;
-   case FID(TMON): pbr->GetBool(m_d.m_tdr.m_TimerEnabled); break;
-   case FID(TMIN): pbr->GetInt(m_d.m_tdr.m_TimerInterval); break;
-   case FID(IMAG): pbr->GetString(m_d.m_szImage); break;
-   case FID(NAME): pbr->GetWideString(m_wzName, std::size(m_wzName)); break;
-   case FID(ELAS): pbr->GetFloat(m_d.m_elasticity); break;
-   case FID(ELFO): pbr->GetFloat(m_d.m_elasticityFalloff); break;
-   case FID(RFCT): pbr->GetFloat(m_d.m_friction); break;
-   case FID(RSCT): pbr->GetFloat(m_d.m_scatter); break;
-   case FID(CLDR): pbr->GetBool(m_d.m_collidable); break;
-   case FID(RVIS): pbr->GetBool(m_d.m_visible); break;
-   case FID(REEN): pbr->GetBool(m_d.m_reflectionEnabled); break;
-   case FID(ESTR): pbr->GetBool(m_d.m_staticRendering); break;
-   case FID(ESIE): pbr->GetBool(m_d.m_showInEditor); break;
-   case FID(ROTX): pbr->GetFloat(m_d.m_rotX); break;
-   case FID(ROTY): pbr->GetFloat(m_d.m_rotY); break;
-   case FID(ROTZ): pbr->GetFloat(m_d.m_rotZ); break;
-   case FID(MAPH): pbr->GetString(m_d.m_szPhysicsMaterial); break;
-   case FID(OVPH): pbr->GetBool(m_d.m_overwritePhysics); break;
-   default:
-   {
-      if (id == FID(DPNT))
-         LoadPointToken(pbr);
-      ISelect::LoadToken(id, pbr);
-      break;
-   }
-   }
-   return true;
-}
-
-HRESULT Rubber::InitPostLoad()
-{
+   reader.AsObject(
+      [this](int tag, IObjectReader& reader)
+      {
+         switch (tag)
+         {
+         case FID(PIID): reader.AsInt(); break;
+         case FID(HTTP): m_d.m_height = reader.AsFloat(); break;
+         case FID(HTHI): m_d.m_hitHeight = reader.AsFloat(); break;
+         case FID(WDTP): m_d.m_thickness = reader.AsInt(); break;
+         case FID(HTEV): m_d.m_hitEvent = reader.AsBool(); break;
+         case FID(MATR): m_d.m_szMaterial = reader.AsString(); break;
+         case FID(TMON): m_timerEnabled = reader.AsBool(); break;
+         case FID(TMIN): m_timerInterval = reader.AsInt(); break;
+         case FID(IMAG): m_d.m_szImage = reader.AsString(); break;
+         case FID(NAME): m_wzName = reader.AsWideString(); break;
+         case FID(ELAS): m_d.m_elasticity = reader.AsFloat(); break;
+         case FID(ELFO): m_d.m_elasticityFalloff = reader.AsFloat(); break;
+         case FID(RFCT): m_d.m_friction = reader.AsFloat(); break;
+         case FID(RSCT): m_d.m_scatter = reader.AsFloat(); break;
+         case FID(CLDR): m_d.m_collidable = reader.AsBool(); break;
+         case FID(RVIS): m_d.m_visible = reader.AsBool(); break;
+         case FID(REEN): m_d.m_reflectionEnabled = reader.AsBool(); break;
+         case FID(ESTR): m_d.m_staticRendering = reader.AsBool(); break;
+         case FID(ESIE): m_d.m_showInEditor = reader.AsBool(); break;
+         case FID(ROTX): m_d.m_rotX = reader.AsFloat(); break;
+         case FID(ROTY): m_d.m_rotY = reader.AsFloat(); break;
+         case FID(ROTZ): m_d.m_rotZ = reader.AsFloat(); break;
+         case FID(MAPH): m_d.m_szPhysicsMaterial = reader.AsString(); break;
+         case FID(OVPH): m_d.m_overwritePhysics = reader.AsBool(); break;
+         case FID(PNTS): break; // Empty tag placed before drag point data (unused)
+         case FID(DPNT): m_curve.LoadPointToken(reader); break;
+         default: LoadSharedEditableField(tag, reader); break;
+         }
+         return true;
+      });
    if (m_d.m_hitHeight == -1.0f)
       m_d.m_hitHeight = m_d.m_height;
-
-   return S_OK;
 }
 
-void Rubber::DoCommand(int icmd, int x, int y)
+void Rubber::FlipY(const Vertex2D &pvCenter) { m_curve.FlipPointY(pvCenter); }
+
+void Rubber::FlipX(const Vertex2D &pvCenter) { m_curve.FlipPointX(pvCenter); }
+
+void Rubber::Rotate(const float ang, const Vertex2D &center, const bool useElementCenter) { m_curve.RotatePoints(ang, useElementCenter ? GetCenter() : center); }
+
+void Rubber::Scale(const float scalex, const float scaley, const Vertex2D &center, const bool useElementCenter)
 {
-   ISelect::DoCommand(icmd, x, y);
-
-   switch (icmd)
-   {
-   case ID_WALLMENU_FLIP:
-      FlipPointY(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_MIRROR:
-      FlipPointX(GetPointCenter());
-      break;
-
-   case ID_WALLMENU_ROTATE:
-      RotateDialog();
-      break;
-
-   case ID_WALLMENU_SCALE:
-      ScaleDialog();
-      break;
-
-   case ID_WALLMENU_TRANSLATE:
-      TranslateDialog();
-      break;
-
-   case ID_WALLMENU_ADDPOINT:
-   {
-      AddPoint(x, y, true);
-   }
-   break;
-   }
+   m_curve.ScalePoints(scalex, scaley, useElementCenter ? GetCenter() : center);
 }
 
-void Rubber::FlipY(const Vertex2D& pvCenter)
-{
-   IHaveDragPoints::FlipPointY(pvCenter);
-}
-
-void Rubber::FlipX(const Vertex2D& pvCenter)
-{
-   IHaveDragPoints::FlipPointX(pvCenter);
-}
-
-void Rubber::Rotate(const float ang, const Vertex2D& pvCenter, const bool useElementCenter)
-{
-   IHaveDragPoints::RotatePoints(ang, pvCenter, useElementCenter);
-}
-
-void Rubber::Scale(const float scalex, const float scaley, const Vertex2D& pvCenter, const bool useElementCenter)
-{
-   IHaveDragPoints::ScalePoints(scalex, scaley, pvCenter, useElementCenter);
-}
-
-void Rubber::Translate(const Vertex2D &pvOffset)
-{
-   IHaveDragPoints::TranslatePoints(pvOffset);
-}
+void Rubber::Translate(const Vertex2D &offset) { m_curve.TranslatePoints(offset); }
 
 STDMETHODIMP Rubber::InterfaceSupportsErrorInfo(REFIID riid)
 {
@@ -1075,7 +852,7 @@ STDMETHODIMP Rubber::get_Friction(float *pVal)
 
 STDMETHODIMP Rubber::put_Friction(float newVal)
 {
-   newVal = clamp(newVal, 0.f, 1.f);
+   newVal = saturate(newVal);
    m_d.m_friction = newVal;
 
    return S_OK;
@@ -1095,21 +872,18 @@ STDMETHODIMP Rubber::put_Scatter(float newVal)
 
 STDMETHODIMP Rubber::get_Collidable(VARIANT_BOOL *pVal)
 {
-   *pVal = FTOVB((!g_pplayer) ? m_d.m_collidable : m_vhoCollidable[0]->m_enabled);
+   *pVal = FTOVB(m_vhoCollidable.empty() ? m_d.m_collidable : m_vhoCollidable[0]->m_enabled);
    return S_OK;
 }
 
 STDMETHODIMP Rubber::put_Collidable(VARIANT_BOOL newVal)
 {
    const bool val = VBTOb(newVal);
-   if (!g_pplayer)
+   if (m_vhoCollidable.empty())
       m_d.m_collidable = val;
-   else
-   {
-       if (!m_vhoCollidable.empty() && m_vhoCollidable[0]->m_enabled != val)
-           for (size_t i = 0; i < m_vhoCollidable.size(); i++) //!! costly
-               m_vhoCollidable[i]->m_enabled = val; //copy to hit checking on entities composing the object
-   }
+   else if (m_vhoCollidable[0]->m_enabled != val)
+      for (size_t i = 0; i < m_vhoCollidable.size(); i++) //!! costly
+         m_vhoCollidable[i]->m_enabled = val; //copy to hit checking on entities composing the object
 
    return S_OK;
 }
@@ -1122,7 +896,7 @@ STDMETHODIMP Rubber::get_Visible(VARIANT_BOOL *pVal)
 
 STDMETHODIMP Rubber::put_Visible(VARIANT_BOOL newVal)
 {
-   if (g_pplayer && m_d.m_staticRendering)
+   if (m_d.m_staticRendering && !m_vhoCollidable.empty())
       ShowError("Rubber is static! Visible property not supported!");
    m_d.m_visible = VBTOb(newVal);
 
@@ -1270,11 +1044,11 @@ void Rubber::GenerateMesh(const int _accuracy, const bool createHitShape) //!! h
    else if (accuracy < 8)
       accuracy = 8;
    else
-      accuracy = (int)((float)accuracy * 1.3f); // see also below
+      accuracy = (int)((float)accuracy * 1.30000007152557373046875f); // see also below
 
    // as solid rubbers are rendered into the static buffer, always use maximum precision
    if (m_d.m_staticRendering)
-      accuracy = (int)(10.f*1.3f); // see also above
+      accuracy = (int)(10.f * 1.30000007152557373046875f); // see also above
 
    if (_accuracy != -1) // hit shapes and UI display have the same, static, precision
       accuracy = _accuracy;

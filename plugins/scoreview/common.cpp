@@ -23,6 +23,19 @@ static inline bool StrCompareNoCase(const string& strA, const string& strB)
          [](char a, char b) { return cLower(a) == cLower(b); });
 }
 
+inline void StrToLower(std::filesystem::path& path)
+{
+   std::string str = path.string();
+   std::ranges::transform(str.begin(), str.end(), str.begin(), cLower);
+   path = str;
+}
+
+std::filesystem::path lowerCase(std::filesystem::path input)
+{
+   StrToLower(input);
+   return input;
+}
+
 static inline string trim_string(const string& str)
 {
    size_t start = 0;
@@ -32,23 +45,6 @@ static inline string trim_string(const string& str)
    while (end > start && (str[end - 1] == ' ' || str[end - 1] == '\t' || str[end - 1] == '\r' || str[end - 1] == '\n'))
       --end;
    return str.substr(start, end - start);
-}
-
-static inline string normalize_path_separators(const string& szPath)
-{
-   string szResult = szPath;
-
-   #if '/' == PATH_SEPARATOR_CHAR
-      std::ranges::replace(szResult.begin(), szResult.end(), '\\', PATH_SEPARATOR_CHAR);
-   #else
-      std::ranges::replace(szResult.begin(), szResult.end(), '/', PATH_SEPARATOR_CHAR);
-   #endif
-
-   auto end = std::unique(szResult.begin(), szResult.end(),
-      [](char a, char b) { return a == b && a == PATH_SEPARATOR_CHAR; });
-   szResult.erase(end, szResult.end());
-
-   return szResult;
 }
 
 string TrimLeading(const string& str, const string& whitespace)
@@ -92,53 +88,6 @@ bool try_parse_int(const string& str, int& value)
    return (std::from_chars(tmp.c_str(), tmp.c_str() + tmp.length(), value).ec == std::errc{});
 }
 
-string find_case_insensitive_file_path(const string& szPath)
-{
-   auto fn = [&](auto& self, const string& s) -> string {
-      string path = normalize_path_separators(s);
-      std::filesystem::path p = std::filesystem::path(path).lexically_normal();
-      std::error_code ec;
-
-      if (std::filesystem::exists(p, ec))
-         return p.string();
-
-      auto parent = p.parent_path();
-      string base;
-      if (parent.empty() || parent == p) {
-         base = ".";
-      } else {
-         base = self(self, parent.string());
-         if (base.empty())
-            return string();
-      }
-
-      for (auto& ent : std::filesystem::directory_iterator(base, ec)) {
-         if (!ec && StrCompareNoCase(ent.path().filename().string(), p.filename().string())) {
-            auto found = ent.path().string();
-            if (found != path) {
-               LOGI("case insensitive file match: requested \"%s\", actual \"%s\"", path.c_str(), found.c_str());
-            }
-            return found;
-         }
-      }
-
-      return string();
-   };
-
-   string result = fn(fn, szPath);
-   if (!result.empty()) {
-      std::filesystem::path p = std::filesystem::absolute(result);
-      return p.string();
-   }
-   return string();
-}
-
-string PathFromFilename(const string &filename)
-{
-   const size_t pos = filename.find_last_of(PATH_SEPARATOR_CHAR);
-   return (pos == string::npos) ? string() : filename.substr(0, pos + 1); // previously returned filename if no separator found, but i guess that just worked because filename was then also constantly ""
-}
-
 #ifdef _WIN32
 template <class T>
 static T GetModulePath(HMODULE hModule)
@@ -166,46 +115,30 @@ static T GetModulePath(HMODULE hModule)
 }
 #endif
 
-string GetPluginPath()
+std::filesystem::path GetPluginPath()
 {
 #ifdef _WIN32
-    HMODULE hm = nullptr;
-    if (GetModuleHandleEx(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            _T("ScoreViewPluginLoad"), &hm) == 0)
-        return string();
+   HMODULE hm = nullptr;
+   if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, _T("ScoreViewPluginLoad"), &hm) == 0)
+      return std::filesystem::path();
 
 #ifdef _UNICODE
-    const std::wstring buf = GetModulePath<std::wstring>(hm);
-    if (buf.empty())
-       return string();
-    const int size_needed = WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    string pathBuf(size_needed - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, buf.c_str(), -1, pathBuf.data(), size_needed, nullptr, nullptr);
+   const std::wstring pathBuf = GetModulePath<std::wstring>(hm);
 #else
-    const string pathBuf = GetModulePath<string>(hm);
+   const string pathBuf = GetModulePath<string>(hm);
 #endif
 #else
-    Dl_info info{};
-    if (dladdr((void*)&GetPluginPath, &info) == 0 || !info.dli_fname)
-        return string();
+   Dl_info info {};
+   if (dladdr((void*)&GetPluginPath, &info) == 0 || !info.dli_fname)
+      return string();
 
-    char realBuf[PATH_MAX];
-    if (!realpath(info.dli_fname, realBuf))
-        return string();
-
-    const string pathBuf(realBuf);
+   char pathBuf[PATH_MAX];
+   if (!realpath(info.dli_fname, pathBuf))
+      return string();
 #endif
 
-    if (pathBuf.empty())
-        return string();
-
-    const size_t lastSep = pathBuf.find_last_of(PATH_SEPARATOR_CHAR);
-    if (lastSep == string::npos)
-        return string();
-
-    return pathBuf.substr(0, lastSep + 1);
+   std::filesystem::path path(pathBuf);
+   return path.empty() ? path : path.parent_path();
 }
 
 }

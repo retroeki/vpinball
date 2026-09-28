@@ -1,4 +1,31 @@
 #include "ScoreBoard.h"
+#include <locale>
+#include <sstream>
+
+namespace {
+#ifdef __MINGW32__
+#include <winnls.h>
+static const char point = []() -> char {
+   char buf[4];
+   if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_STHOUSAND, buf, sizeof(buf)) > 0)
+      return ((unsigned char)buf[0] == 0xA0u) ? ' ' : buf[0]; // NBSP grouping separator -> space
+   return ',';
+}();
+#else
+static const char point = ((unsigned char)std::use_facet<std::numpunct<char>>(std::locale("")).thousands_sep() == 0xA0u/*NBSP grouping separator*/) ? ' ' : std::use_facet<std::numpunct<char>>(std::locale("")).thousands_sep(); // gets the OS locale thousands separator (e.g. ',' or '.' or ''' or ' ')
+#endif
+
+string FormatScore(const int value)
+{
+   string s = std::to_string(abs(value));
+   for (int i = static_cast<int>(s.length()) - 3; i > 0; i -= 3) // or should we rather respect locale grouping sizes? (e.g. in India, the first grouping is 3 digits, but then it groups by 2 digits, e.g. 1,00,000 for one hundred thousand instead of 100,000)
+      s.insert(i, 1, point);
+   if (value < 0)
+      s.insert(0, 1, '-');
+   return s;
+}
+}
+
 
 namespace Flex {
 
@@ -87,10 +114,10 @@ void ScoreBoard::SetHighlightedPlayer(int player)
 
 void ScoreBoard::SetScore(int score1, int score2, int score3, int score4)
 {
-   m_pScores[0]->SetText(std::to_string(score1));
-   m_pScores[1]->SetText(std::to_string(score2));
-   m_pScores[2]->SetText(std::to_string(score3));
-   m_pScores[3]->SetText(std::to_string(score4));
+   m_pScores[0]->SetText(FormatScore(score1));
+   m_pScores[1]->SetText(FormatScore(score2));
+   m_pScores[2]->SetText(FormatScore(score3));
+   m_pScores[3]->SetText(FormatScore(score4));
 }
 
 void ScoreBoard::Update(float delta)

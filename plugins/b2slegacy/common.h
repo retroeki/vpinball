@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cassert>
+
 #include <string>
 #include <vector>
 #include <sstream>
@@ -13,19 +14,27 @@
 #include <cstdlib>
 #include <memory>
 #include <algorithm>
+#include <filesystem>
+#include <format>
 
+// Shared logging
 #include "plugins/LoggingPlugin.h"
+
+// Scriptable API
 #include "plugins/ScriptablePlugin.h"
+
+// VPX main API
 #include "plugins/VPXPlugin.h"
 
 #include <SDL3/SDL.h>
 
 using std::string;
 using namespace std::string_literals;
+using namespace std::string_view_literals;
 using std::vector;
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+#define M_PI 3.1415926535897932384626433832795
 #endif
 
 namespace B2SLegacy
@@ -72,11 +81,12 @@ typedef enum {
     eLEDTypes_Dream7 = 2
 } eLEDTypes;
 
-typedef enum {
-    B2SSettingsCheckedState_Unchecked = 0,
-    B2SSettingsCheckedState_Checked = 1,
-    B2SSettingsCheckedState_Indeterminate = 2
-} B2SSettingsCheckedState;
+// VB uses CheckedState_Indeterminate
+// typedef enum {
+//     B2SSettingsCheckedState_Unchecked = 0,
+//     B2SSettingsCheckedState_Checked = 1,
+//     B2SSettingsCheckedState_Indeterminate = 2
+// } B2SSettingsCheckedState;
 
 typedef enum {
     eType_Undefined = 0,
@@ -129,14 +139,14 @@ typedef enum {
 } eSnippitRotationStopBehaviour;
 
 typedef enum {
-    SegmentNumberType_7Seg = 0,
-    SegmentNumberType_10Seg = 1,
-    SegmentNumberType_14Seg = 2,
-    SegmentNumberType_16Seg = 3,
-    SegmentNumberType_SevenSegment = 0,
-    SegmentNumberType_TenSegment = 1,
-    SegmentNumberType_FourteenSegment = 2,
-    SegmentNumberType_SixteenSegment = 3
+    SegmentNumberType_7Seg = 7,
+    SegmentNumberType_10Seg = 10,
+    SegmentNumberType_14Seg = 14,
+    SegmentNumberType_16Seg = 16,
+    SegmentNumberType_SevenSegment = 7,
+    SegmentNumberType_TenSegment = 10,
+    SegmentNumberType_FourteenSegment = 14,
+    SegmentNumberType_SixteenSegment = 16
 } SegmentNumberType;
 
 typedef enum {
@@ -186,7 +196,7 @@ typedef enum {
 
 typedef enum {
     eAnimationStopBehaviour_Undefined = 0,
-    eAnimationStopBehaviour_StopImmediatelly = 1,
+    eAnimationStopBehaviour_StopImmediately = 1,
     eAnimationStopBehaviour_RunAnimationTillEnd = 2,
     eAnimationStopBehaviour_RunAnimationToFirstStep = 3
 } eAnimationStopBehaviour;
@@ -202,24 +212,18 @@ typedef enum {
     eSnippitRotationDirection_AntiClockwise = 1
 } eSnippitRotationDirection;
 
-LPI_USE();
-#define LOGD B2SLegacy::LPI_LOGD
-#define LOGI B2SLegacy::LPI_LOGI
-#define LOGW B2SLegacy::LPI_LOGW
-#define LOGE B2SLegacy::LPI_LOGE
+LPI_USE_CPP();
+#define LOGD B2SLegacy::LPI_LOGD_CPP
+#define LOGI B2SLegacy::LPI_LOGI_CPP
+#define LOGW B2SLegacy::LPI_LOGW_CPP
+#define LOGE B2SLegacy::LPI_LOGE_CPP
 
 PSC_USE_ERROR();
-
-#ifdef _MSC_VER
-#define PATH_SEPARATOR_CHAR '\\'
-#else
-#define PATH_SEPARATOR_CHAR '/'
-#endif
 
 #ifndef RGB
 #define RGB(r,g,b) ((uint32_t)(((uint8_t)(r)|((uint16_t)((uint8_t)(g))<<8))|(((uint32_t)(uint8_t)(b))<<16)))
 #define GetRValue(rgb) ((uint8_t)(rgb))
-#define GetGValue(rgb) ((uint8_t)(((uint16_t)(rgb)) >> 8))
+#define GetGValue(rgb) ((uint8_t)((rgb)>> 8))
 #define GetBValue(rgb) ((uint8_t)((rgb)>>16))
 #endif
 
@@ -230,50 +234,41 @@ constexpr inline char cLower(char c)
    return c;
 }
 
-string find_case_insensitive_file_path(const string &szPath);
-vector<unsigned char> base64_decode(const string &encoded_string);
+string trim_string(const string& str);
+string string_to_lower(string str);
+std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path& searchedFile);
+vector<uint8_t> base64_decode(const char * const __restrict value, const size_t size_bytes);
 bool string_starts_with_case_insensitive(const string& str, const string& prefix);
-// trims leading whitespace or similar, this is needed as e.g. B2S reels feature leading whitespace(s)
 int string_to_int(const string& str, int defaultValue);
-string title_and_path_from_filename(const string& filename);
-bool is_string_numeric(const string& str);
+bool is_string_numeric(const string& str, int* const __restrict result);
 
 }
 
 template <typename T> constexpr inline T clamp(const T x, const T mn, const T mx) { return std::max(std::min(x, mx), mn); }
 
-class vec2
+class vec3 final
 {
 public:
-   vec2() { }
-   vec2(float px, float py) : x(px), y(py) { }
-
-   float x = 0.f, y = 0.f;
-};
-
-class vec3
-{
-public:
-   vec3() { }
-   vec3(float px, float py, float pz) : x(px), y(py), z(pz) { }
+   constexpr vec3() { }
+   constexpr vec3(float px, float py, float pz) : x(px), y(py), z(pz) { }
 
    float x = 0.f, y = 0.f, z = 0.f;
 };
 
-class vec4
+class vec4 final
 {
 public:
-   vec4() { }
-   vec4(float px, float py, float pz, float pw) : x(px), y(py), z(pz), w(pw) { }
+   constexpr vec4() { }
+   constexpr vec4(float px, float py, float pz, float pw) : x(px), y(py), z(pz), w(pw) { }
 
    float x = 0.f, y = 0.f, z = 0.f, w = 0.f;
 };
 
-class ivec4
+class ivec4 final
 {
 public:
-   ivec4() { }
-   ivec4(int px, int py, int pz, int pw) : x(px), y(py), z(pz), w(pw) { }
+   constexpr ivec4() { }
+   constexpr ivec4(int px, int py, int pz, int pw) : x(px), y(py), z(pz), w(pw) { }
 
    int x = 0, y = 0, z = 0, w = 0;
 };

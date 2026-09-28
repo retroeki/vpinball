@@ -3,6 +3,11 @@
 #include "core/stdafx.h"
 #include "ViewSetup.h"
 
+#include "math/matrix.h"
+#include "parts/Collection.h"
+#include "parts/flipper.h"
+#include "renderer/Renderer.h"
+
 ViewSetup::ViewSetup()
 {
 }
@@ -13,10 +18,10 @@ ViewSetup::ViewSetup()
 void ViewSetup::SetWindowModeFromSettings(const PinTable* const table)
 {
    assert(mMode == VLM_WINDOW);
-   vec3 playerPos(table->m_settings.GetPlayer_ScreenPlayerX(),
-                  table->m_settings.GetPlayer_ScreenPlayerY(),
-                  table->m_settings.GetPlayer_ScreenPlayerZ());
-   float screenInclination = table->m_settings.GetPlayer_ScreenInclination();
+   vec3 playerPos(table->GetSettings().GetPlayer_ScreenPlayerX(),
+                  table->GetSettings().GetPlayer_ScreenPlayerY(),
+                  table->GetSettings().GetPlayer_ScreenPlayerZ());
+   float screenInclination = table->GetSettings().GetPlayer_ScreenInclination();
    SetViewPosFromPlayerPosition(table, playerPos, screenInclination);
 }
 
@@ -24,14 +29,130 @@ void ViewSetup::SetViewPosFromPlayerPosition(const PinTable* const table, const 
 {
    assert(mMode == VLM_WINDOW);
    const float realToVirtual = GetRealToVirtualScale(table);
-   const float screenBotZ = GetWindowBottomZOffset(table);
-   const float screenTopZ = GetWindowTopZOffset(table);
    // Rotate by the angle between playfield and real world horizontal (scale on Y and Z axis are equal and can be ignored)
-   const Matrix3D rotx = Matrix3D::MatrixRotateX(atan2f(screenTopZ - screenBotZ, table->m_bottom) - ANGTORAD(screenInclination));
+   const Matrix3D rotx = Matrix3D::MatrixRotateX(atan2f(mWindowTopZOfs - mWindowBottomZOfs, table->m_bottom) - ANGTORAD(screenInclination));
    const vec3 pos = rotx.MultiplyVectorNoPerspective(CMTOVPU(playerPos));
    mViewX = pos.x;
    mViewY = pos.y;
-   mViewZ = pos.z + screenBotZ * mSceneScaleY / realToVirtual;
+   mViewZ = pos.z + mWindowBottomZOfs * mSceneScaleY / realToVirtual;
+}
+
+vec3 ViewSetup::GetPlayerPositionFromViewPos(const PinTable* const table, const float screenInclination)
+{
+   assert(mMode == VLM_WINDOW);
+   const float realToVirtual = GetRealToVirtualScale(table);
+   // Rotate by the angle between playfield and real world horizontal (scale on Y and Z axis are equal and can be ignored)
+   const Matrix3D rotx = Matrix3D::MatrixRotateX(-(atan2f(mWindowTopZOfs - mWindowBottomZOfs, table->m_bottom) - ANGTORAD(screenInclination)));
+   const vec3 view(mViewX, mViewY, mViewZ - mWindowBottomZOfs * mSceneScaleY / realToVirtual);
+   return VPUTOCM(rotx.MultiplyVectorNoPerspective(view));
+}
+
+void ViewSetup::SetWindowAutofit(const PinTable* const table, const vec3& playerPos, const float aspect, const float flipperPos, const bool allowNonUniformStretch, const std::function<void(string)>& glassNotification)
+{
+   const Settings& settings = table->GetSettings(); 
+   const float screenWidth = settings.GetPlayer_ScreenWidth();
+   const float screenHeight = settings.GetPlayer_ScreenHeight();
+   if (screenWidth <= 1.f || screenHeight <= 1.f)
+   {
+      PLOGE << "Screen dimensions must be defined before using automatic point of view";
+      return;
+   }
+
+   // Evaluate glass heights by analyzing table elements bounds, eventually reporting discrepancies
+   Vertex2D glass = table->EvaluateGlassHeight();
+   float bottomHeight = glass.x;
+   float topHeight = glass.y;
+   if (table->m_glassTopHeight != table->m_glassBottomHeight)
+   {
+      // If table already define a glass height, use it  (detected by the glass not being horizontal which was the default in previous version),
+      // We compare and propose the value to the user if there is a large enough difference
+      if (VPUTOINCHES(fabs(topHeight - table->m_glassTopHeight)) > 1.f || VPUTOINCHES(fabs(bottomHeight - table->m_glassBottomHeight)) > 1.f)
+      {
+         glassNotification(std::format("Glass height was evaluated to {:.2f}cm / {:.2f}cm\nIt differs from the defined glass position {:.2f}cm / {:.2f}cm", VPUTOCM(bottomHeight),
+            VPUTOCM(topHeight), VPUTOCM(table->m_glassBottomHeight), VPUTOCM(table->m_glassTopHeight)));
+      }
+      topHeight = table->m_glassTopHeight;
+      bottomHeight = table->m_glassBottomHeight;
+   }
+   else
+   {
+      glassNotification(std::format("Missing glass position guessed to be {:.2f}cm / {:.2f}cm", VPUTOCM(bottomHeight), VPUTOCM(topHeight)));
+   }
+
+   mMode = VLM_WINDOW;
+   mViewHOfs = 0.f;
+   mViewportRotation = 0.f;
+   mSceneScaleX = (screenHeight / table->GetTableWidth()) * (table->GetHeight() / screenWidth);
+   mSceneScaleY = allowNonUniformStretch ? 1.f : mSceneScaleX;
+   mWindowBottomZOfs = bottomHeight;
+   mWindowTopZOfs = topHeight;
+
+   SetViewPosFromPlayerPosition(table, playerPos, table->GetSettings().GetPlayer_ScreenInclination());
+
+   if (allowNonUniformStretch)
+   {
+      // Vertical stretch (non uniform scale) to fit the table on screen, without any vertical offset
+      mViewVOfs = 0.f;
+   }
+   else
+   {
+      // Uniform scale fitted on table width (to avoid stretching the table) leading to hiding part of the apron and/or the top of the table
+      // Compute default vertical offset to always get the rest flipper position at the same point on screen, eventually moving up if it
+      // would lead to a gap at the top
+
+      // Find flipper rest position
+      constexpr float margin = INCHESTOVPU(4.f); // margin to exclude invisible flippers used for other purposes like animating diverters
+      float bottomY = table->m_bottom - INCHESTOVPU(10.f);
+      for (IEditable* edit : table->GetParts())
+      {
+         if (edit->GetItemType() != eItemFlipper)
+            continue;
+         const Flipper* const flipper = static_cast<Flipper*>(edit);
+         float flipperBottomY = flipper->m_d.m_Center.y;
+         const float bottomDY = -min(sinf(ANGTORAD(90.f - flipper->m_d.m_StartAngle)), sinf(ANGTORAD(90.f - flipper->m_d.m_EndAngle)));
+         flipperBottomY += bottomDY * max(flipper->m_d.m_FlipperRadiusMin, flipper->m_d.m_FlipperRadiusMax);
+         flipperBottomY += flipper->m_d.m_EndRadius;
+         if ((flipper->m_d.m_Center.x > table->m_left + margin) && (flipper->m_d.m_Center.x < table->m_right - margin)
+            && (flipperBottomY < table->m_bottom - margin))
+            bottomY = max(bottomY, flipperBottomY);
+      }
+
+      // Compute the right vertical offset by doing a simple dichotomy search
+      ModelViewProj mvp;
+      float posMin = -100.f;
+      float posMax = +100.f;
+      const float targetPos = -1.f + 2.f * flipperPos; // target position of the bottom of the flipper bat in clip space coordinate (-1 at bottom of screen, 1 at top of screen)
+      for (int i = 0; i < 20; i++)
+      {
+         mViewVOfs = 0.5f * (posMin + posMax);
+         ComputeMVP(table, aspect, false, mvp);
+         Vertex3Ds bottomFlipper(table->m_right * 0.5f, bottomY, 0.f);
+         mvp.GetModelViewProj(0).MultiplyVector(bottomFlipper);
+         Vertex3Ds backTop(table->m_right * 0.5f, table->m_top, mWindowTopZOfs);
+         mvp.GetModelViewProj(0).MultiplyVector(backTop);
+         Vertex3Ds bottomDown(table->m_right * 0.5f, table->m_bottom, mWindowBottomZOfs);
+         mvp.GetModelViewProj(0).MultiplyVector(bottomDown);
+         const float bottomFlipperY = aspect < 1.f ? bottomFlipper.y : - bottomFlipper.x;
+         const float bottomDownY = aspect < 1.f ? bottomDown.y : -bottomDown.x;
+         const float backTopY = aspect < 1.f ? backTop.y : -backTop.x;
+         const float delta = bottomFlipperY - targetPos;
+         //PLOGD << std::format("Vertical offset fitting: [{:6.3f} - {:6.3f}] {:6.3f} => Flipper: {:6.3f} / {:6.3f}, BackTop: {:6.3f}, BottomDown: {:6.3f}", posMin, posMax, mViewVOfs,
+         //   bottomFlipperY, targetPos, backTopY, bottomDownY).c_str();
+         // Rule 1: limit the bottom gap to 5% of screen height
+         if (bottomDownY > -1.0f + 0.05f / 2.f)
+            posMin = mViewVOfs;
+         // Rule 2: don't create a gap at the top
+         else if (backTopY < 1.0f)
+            posMax = mViewVOfs;
+         // Rule 3: place flipper bat bottom at the user selected relative height position
+         else if (fabs(delta) < 0.001f)
+            break;
+         else if (delta > 0.f)
+            posMin = mViewVOfs;
+         else
+            posMax = mViewVOfs;
+      }
+   }
 }
 
 void ViewSetup::ApplyTableOverrideSettings(const Settings& settings, const ViewSetupID id)
@@ -129,21 +250,15 @@ void ViewSetup::SaveToTableOverrideSettings(Settings& settings, const ViewSetupI
       setFloat(mLayback, Settings::m_propTableOverride_ViewDTLayback, Settings::m_propTableOverride_ViewFSSLayback, Settings::m_propTableOverride_ViewCabLayback);
 }
 
-float ViewSetup::GetWindowTopZOffset(const PinTable* const table) const
+float ViewSetup::GetWindowTopZOffset() const
 {
-   if (mMode == VLM_WINDOW)
-      return mWindowTopZOfs;
-   else
-      return 0.f;
+   return mMode == VLM_WINDOW ? mWindowTopZOfs : 0.f;
 }
 
-float ViewSetup::GetWindowBottomZOffset(const PinTable* const table) const
+float ViewSetup::GetWindowBottomZOffset() const
 {
    // result is in the table coordinate system (so, usually between 0 and table->bottomglassheight)
-   if (mMode == VLM_WINDOW)
-      return mWindowBottomZOfs;
-   else
-      return 0.f;
+   return mMode == VLM_WINDOW ? mWindowBottomZOfs : 0.f;
 }
 
 int2 ViewSetup::GetUnsquashedViewport(const StereoMode mode, const int viewportWidth, const int viewportHeight)
@@ -204,11 +319,11 @@ float ViewSetup::GetRealToVirtualScale(const PinTable* const table) const
 {
    if (mMode == VLM_WINDOW)
    {
-      const float windowBotZ = GetWindowBottomZOffset(table), windowTopZ = GetWindowTopZOffset(table);
-      const float screenHeight = table->m_settings.GetPlayer_ScreenWidth(); // Physical width (always measured in landscape orientation) is the height in window mode
+      const float windowBotZ = GetWindowBottomZOffset(), windowTopZ = GetWindowTopZOffset();
+      const float screenHeight = table->GetSettings().GetPlayer_ScreenWidth(); // Physical width (always measured in landscape orientation) is the height in window mode
       // const float inc = atan2f(mSceneScaleZ * (windowTopZ - windowBotZ), mSceneScaleY * table->m_bottom);
-      const float inc = atan2f(windowTopZ - windowBotZ, table->m_bottom);
-      return screenHeight <= 1.f ? 1.f : (VPUTOCM(table->m_bottom) / cosf(inc)) / screenHeight; // Ratio between screen height in virtual world to real world screen height
+      const float inc = atan2f(windowTopZ - windowBotZ, table->m_bottom - table->m_top);
+      return screenHeight <= 1.f ? 1.f : (VPUTOCM(table->m_bottom - table->m_top) / cosf(inc)) / screenHeight; // Ratio between screen height in virtual world to real world screen height
    }
    else
       return 1.f;
@@ -220,7 +335,7 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
    const bool isLegacy = mMode == VLM_LEGACY;
    const bool isWindow = mMode == VLM_WINDOW;
    float camx = cam.x, camy = cam.y, camz = cam.z;
-   const float windowBotZ = GetWindowBottomZOffset(table), windowTopZ = GetWindowTopZOffset(table);
+   const float windowBotZ = GetWindowBottomZOffset(), windowTopZ = GetWindowTopZOffset();
 
    // Scale to convert a value expressed in the player 'real' world to our virtual world (where the geometry is defined)
    const float realToVirtual = GetRealToVirtualScale(table);
@@ -319,8 +434,8 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
    const Matrix3D rotz = Matrix3D::MatrixRotateZ(rotation); // Viewport rotation
 
    vector<Vertex3Ds> bounds, legacy_bounds;
-   bounds.reserve(table->m_vedit.size() * 8); // upper bound estimate
-   for (IEditable* editable : table->m_vedit)
+   bounds.reserve(table->GetParts().size() * 8); // upper bound estimate
+   for (IEditable* editable : table->GetParts())
       editable->GetBoundingVertices(bounds, nullptr); // Collect (visible) part bounds for the near/far plane computation
 
    if (isLegacy)
@@ -437,7 +552,7 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
       const Vertex3Ds bottom = fit * Vertex3Ds{centerAxis, table->m_bottom, windowBotZ};
       const float xmin = zNear * min(bottom.x, top.x), xmax = zNear * max(bottom.x, top.x);
       const float ymin = zNear * min(bottom.y, top.y), ymax = zNear * max(bottom.y, top.y);
-      const float screenHeight = table->m_settings.GetPlayer_ScreenWidth(); // Physical width (always measured in landscape orientation) is the height in window mode
+      const float screenHeight = table->GetSettings().GetPlayer_ScreenWidth(); // Physical width (always measured in landscape orientation) is the height in window mode
       float offsetScale;
       if ((quadrant & 1) == 0) // 0 & 180
       {
@@ -458,7 +573,11 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
    }
 
    // Define the view matrix. This matrix MUST be orthonormal (orthogonal axis with a unit length) or shading will be broken
-   mvp.SetView(lookat);
+   mvp.SetView(0, lookat);
+   // TODO this is wrong: each eye should have a different view for a lightly different shading
+   // VPX used to only support 1 view matrix so we have this hack. Clean it
+   if (mvp.m_nEyes > 1)
+      mvp.SetView(1, lookat);
 
    // Apply non uniform scene scaling after shading, in the projection matrix
    Matrix3D invLookAt(lookat);
@@ -473,7 +592,7 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
       // Since the table is scaled to 'real world units' (that is to say same scale as the user measures), we directly use the user settings for IPD,.. without any scaling
 
       // 63mm is the average distance between eyes (varies from 54 to 74mm between adults, 43 to 58mm for children)
-      const float eyeSeparation = MMTOVPU(table->m_settings.GetPlayer_Stereo3DEyeSeparation());
+      const float eyeSeparation = MMTOVPU(table->GetSettings().GetPlayer_Stereo3DEyeSeparation());
 
       // Z where the stereo separation is 0:
       // - for cabinet (window) mode, we use the orthogonal distance to the screen (window)
@@ -486,7 +605,7 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
       const float yOfs = ofs * sinf(rotation);
 
       // Compute the view orthonormal basis
-      const Matrix3D invView(mvp.GetView());
+      const Matrix3D invView(mvp.GetView(0)); // TODO apply eyeShift to view, not projection, as this is now supported by VPX
       const vec3 right = invView.GetOrthoNormalRight();
 
       // Left eye
@@ -510,12 +629,8 @@ void ViewSetup::ComputeMVP(const PinTable* const table, const float aspect, cons
    {
       // To be backward compatible while having a well behaving view matrix, we compute a view without the layback (which is meaningful with regards to what was used before).
       // We use it for rendering computation. It is reverted by the projection matrix which then apply the old transformation, including layback.
-      Matrix3D invView(mvp.GetView());
-      invView.Invert();
-      const Matrix3D tmp = invView * layback * mvp.GetView();
-      mvp.SetProj(0, tmp * mvp.GetProj(0));
-      if (stereo) // Real stereo is not really supported for legacy camera mode (it used to be only fake parallax stereo)
-         mvp.SetProj(1, tmp * mvp.GetProj(1));
+      for (unsigned int eye = 0; eye < mvp.m_nEyes; eye++)
+         mvp.SetProj(eye, Matrix3D::MatrixInverse(mvp.GetView(eye)) * layback * mvp.GetView(eye) * mvp.GetProj(eye));
    }
 
    if (!stereo && mvp.m_nEyes > 1)
@@ -577,4 +692,34 @@ vec3 ViewSetup::FitCameraToVertices(const vector<Vertex3Ds>& pvvertex3D, const f
    const float ydist = (maxyintercept - minyintercept) / (slopey * 2.0f);
    const float xdist = (maxxintercept - minxintercept) / (slopex * 2.0f);
    return vec3((maxxintercept + minxintercept) * 0.5f, (maxyintercept + minyintercept) * 0.5f, max(ydist, xdist) + xlatez);
+}
+
+void ViewSetup::DebugLog() const
+{
+   PLOGD << "ViewSetup debug log: " << reinterpret_cast<uintptr_t>(this);
+   PLOGD << ". mMode:             " << mMode;
+   PLOGD << ". mSceneScaleX:      " << mSceneScaleX;
+   PLOGD << ". mSceneScaleY:      " << mSceneScaleY;
+   if (mMode == VLM_LEGACY || mMode == VLM_CAMERA) {
+      PLOGD << ". mSceneScaleZ:      " << mSceneScaleZ;
+      PLOGD << ". mViewX:            " << mViewX;
+      PLOGD << ". mViewY:            " << mViewY;
+      PLOGD << ". mViewZ:            " << mViewZ;
+      PLOGD << ". mLookAt:           " << mLookAt;
+   }
+   PLOGD << ". mViewportRotation: " << mViewportRotation;
+   if (mMode == VLM_LEGACY || mMode == VLM_CAMERA) {
+      PLOGD << ". mFOV:              " << mFOV;
+   }
+   if (mMode == VLM_LEGACY) {
+      PLOGD << ". mLayback:          " << mLayback;
+   }
+   if (mMode == VLM_CAMERA || mMode == VLM_WINDOW) {
+      PLOGD << ". mViewHOfs:         " << mViewHOfs;
+      PLOGD << ". mViewVOfs:         " << mViewVOfs;
+   }
+   if (mMode == VLM_WINDOW) {
+      PLOGD << ". mWindowTopZOfs:    " << mWindowTopZOfs;
+      PLOGD << ". mWindowBottomZOfs: " << mWindowBottomZOfs;
+   }
 }

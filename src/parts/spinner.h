@@ -4,7 +4,14 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "math/matrix.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
+class MeshBuffer;
 
 class SpinnerData final : public BaseProperty
 {
@@ -12,7 +19,6 @@ public:
    Vertex2D m_vCenter;
    float m_length;
    float m_rotation;
-   TimerDataRoot m_tdr;
    float m_height;
    float m_damping;
    float m_angleMax;
@@ -31,21 +37,21 @@ class Spinner :
    public EventProxy<Spinner, &DIID_ISpinnerEvents>,
    public IConnectionPointContainerImpl<Spinner>,
    public IProvideClassInfo2Impl<&CLSID_Spinner, &DIID_ISpinnerEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Spinner();
+   Spinner() { }
    virtual ~Spinner();
 
    BEGIN_COM_MAP(Spinner)
@@ -65,24 +71,20 @@ public:
       CONNECTION_POINT_ENTRY(DIID_ISpinnerEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Spinner, eItemSpinner, SPINNER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Spinner, eItemSpinner, SPINNER)
 
    DECLARE_REGISTRY_RESOURCEID(IDR_SPINNER)
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
    void SetDefaultPhysics(const bool fromMouseClick) final;
 
-   ItemTypeEnum HitableGetItemType() const final { return eItemSpinner; }
    void ExportMesh(ObjLoader& loader) final;
 
    void WriteRegDefaults() final;
-   void UpdateStatusBarInfo() final;
 
    float GetAngleMax() const;
    void  SetAngleMax(const float angle);
@@ -94,19 +96,17 @@ public:
 private:
    void UpdatePlate(Vertex3D_NoTex2 * const vertBuffer);
 
-   PinTable *m_ptable;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_bracketMeshBuffer;
    std::shared_ptr<MeshBuffer> m_plateMeshBuffer;
    Matrix3D m_fullMatrix;
 
    float m_posZ;
 
-   HitSpinner *m_phitspinner;
+   HitSpinner *m_phitspinner = nullptr;
    float m_lastAngle;
 
-   float m_vertexBuffer_spinneranimangle;
+   float m_vertexBuffer_spinneranimangle = -FLT_MAX;
 
    // ISpinner
 public:

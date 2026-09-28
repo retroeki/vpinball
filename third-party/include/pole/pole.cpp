@@ -16,12 +16,19 @@
    More datatype changes to allow for 32 and 64 bit code, some fixes involving incremental updates, flushing
    Copyright 2013 <srbaum@gmail.com>
 
-   Corrected some of the artificial (=failing on 32bit systems) handling of 64bit sizes/indices, leading to a lot of warnings
-   Note that things can still fail on 32bit systems for large files, but it should at least assert now
-   Also some minor optimizations
+   - Corrected some of the artificial (=failing on 32bit systems) handling of 64bit sizes/indices, leading to a lot of warnings
+   - Note that things can still fail on 32bit systems for large files, but it should at least assert now
+   - Allow multithreaded reading of multiple streams from a single storage (synchronized read access)
+   - Also some minor optimizations
+   - Fixed OLE FAT entries sector indices wrongly considered as 64bit, causing over allocation
+   - Fixed DirTree::flush partial last directory block
+   - Fixed StorageIO::flush not padding file to sector boundary
+   - Fixed StorageIO::flush writing uninitialized data in the last DIFAT sector
+   - Balance directory sibling trees on flush (deep chains break recursive readers)
+   - Added creation of version 4 files with 4K sectors (Storage::open bLargeSectors)
    2026 VPX team
 
-   Version: 0.5.2 VPX
+   Version: 0.5.5 VPX
 
    Redistribution and use in source and binary forms, with or without 
    modification, are permitted provided that the following conditions 
@@ -56,7 +63,9 @@
 #include <string>
 #include <vector>
 #include <queue>
+#include <algorithm>
 #include <limits>
+#include <mutex>
 
 #include <cstring>
 
@@ -71,6 +80,13 @@
 // enable to activate debugging output
 // #define POLE_DEBUG
 #define CACHEBUFSIZE 4096 //a presumably reasonable size for the read cache
+// Readahead window used by StreamIO::read. Callers such as VPX's BiffReader read stream
+// contents a few bytes at a time, and without a window each such call became its own
+// block-sized request. Measured on a 428 MB table holding 1860 streams: block chains are
+// contiguous, averaging 352 KB per run, and raising this to 1 MB moved throughput by under
+// 5%. The window is allocated lazily and never exceeds the stream's own length, so small
+// streams stay small.
+#define READAHEADBUFSIZE (256*1024)
 
 namespace POLE
 {
@@ -88,6 +104,7 @@ class Header final
     uint64 num_sbat;         // blocks allocated for small bat
     uint64 mbat_start;       // starting block to store meta bat
     uint64 num_mbat;         // blocks allocated for meta bat
+    uint64 num_dirent;       // blocks allocated for directory (only written for 4K sector files)
     uint64 bb_blocks[109];
     bool dirty;                // Needs to be written
     
@@ -169,6 +186,7 @@ class DirTree final
     void debug();
     bool isDirty() const;
     void markAsDirty(uint64 dataIndex, int64 bigBlockSize);
+    void rebalance(int64 bigBlockSize);
     void flush(const std::vector<uint64>& blocks, StorageIO *const io, uint64 bigBlockSize, uint64 sb_start, uint64 sb_size);
     size_t unused();
     void findParentAndSib(uint64 inIdx, const std::string& inFullName, uint64 &parentIdx, uint64 &sibIdx);
@@ -192,6 +210,8 @@ class StorageIO final
     uint64 filesize;   // size of the file
     bool writeable;           // true if the file can be modified
     
+    std::mutex readMutex;
+
     Header* header;           // storage header 
     DirTree* dirtree;         // directory tree
     AllocTable* bbat;         // allocation table for big blocks
@@ -207,7 +227,7 @@ class StorageIO final
     StorageIO( Storage* storage, const char* filename );
     ~StorageIO();
     
-    bool open(bool bWriteAccess = false, bool bCreate = false);
+    bool open(bool bWriteAccess = false, bool bCreate = false, bool bLargeSectors = false);
     void close();
     void flush();
     void load(bool bWriteAccess);
@@ -284,6 +304,10 @@ class StreamIO final
 
     // pointer for read
     uint64 m_pos;
+    // readahead window over this stream's block chain, see READAHEADBUFSIZE
+    std::vector<unsigned char> ra_buf;
+    uint64 ra_pos;
+    uint64 ra_len;
 
     // simple cache system to speed-up getch()
     unsigned char* cache_data;
@@ -363,6 +387,7 @@ Header::Header()
     num_sbat(0),                // [40H,04] number of SECTs in the MiniFAT chain
     mbat_start(AllocTable::Eof),// [44H,04] first SECT in the DIFAT chain
     num_mbat(0),                // [48H,04] number of SECTs in the DIFAT chain
+    num_dirent(0),              // [28H,04] number of SECTs in the directory chain (version 4 only)
     dirty(true)	
 
 {
@@ -388,6 +413,7 @@ bool Header::valid() const
 void Header::load( const unsigned char* buffer ) {
   b_shift      = readU16( buffer + 0x1e ); // [1EH,02] size of sectors in power-of-two; typically 9 indicating 512-byte sectors and 12 for 4096
   s_shift      = readU16( buffer + 0x20 ); // [20H,02] size of mini-sectors in power-of-two; typically 6 indicating 64-byte mini-sectors
+  num_dirent   = readU32( buffer + 0x28 ); // [28H,04] number of SECTs in the directory chain (version 4 only)
   num_bat      = readU32( buffer + 0x2c ); // [2CH,04] number of SECTs in the FAT chain
   dirent_start = readU32( buffer + 0x30 ); // [30H,04] first SECT in the directory chain
   threshold    = readU32( buffer + 0x38 ); // [38H,04] maximum size for a mini stream; typically 4096 bytes
@@ -413,10 +439,11 @@ void Header::save( unsigned char* buffer )
   writeU32( buffer + 12, 0 );             // unknown
   writeU32( buffer + 16, 0 );             // unknown
   writeU16( buffer + 24, 0x003e );        // revision ?
-  writeU16( buffer + 26, 3 );             // version ?
+  writeU16( buffer + 26, b_shift == 12 ? 4 : 3 ); // major version: 3 for 512 byte sectors, 4 for 4096 byte sectors
   writeU16( buffer + 28, 0xfffe );        // unknown
   writeU16( buffer + 0x1e, (uint32) b_shift );
   writeU16( buffer + 0x20, (uint32) s_shift );
+  writeU32( buffer + 0x28, b_shift == 12 ? (uint32) num_dirent : 0 );
   writeU32( buffer + 0x2c, (uint32) num_bat );
   writeU32( buffer + 0x30, (uint32) dirent_start );
   writeU32( buffer + 0x38, (uint32) threshold );
@@ -870,7 +897,7 @@ DirEntry* DirTree::entry( const std::string& name, bool create, int64 bigBlockSi
            io->bbat->set(nblock, AllocTable::Eof);
            io->bbat->markAsDirty(nblock, bigBlockSize);
            blocks.push_back(nblock);
-           uint64 bbidxn = nblock / (io->bbat->blockSize / sizeof(uint64));
+           uint64 bbidxn = nblock / (io->bbat->blockSize / sizeof(uint32));
            while (bbidxn >= io->header->num_bat)
                io->addbbatBlock();
        }
@@ -1057,11 +1084,74 @@ void DirTree::markAsDirty(uint64 dataIndex, int64 bigBlockSize)
     dirtyBlocks.push_back(dbidx);
 }
 
+static void dirtree_collect_siblings(DirTree* dirtree, std::vector<uint64>& result, uint64 index)
+{
+    uint64 count = dirtree->entryCount();
+    std::vector<uint64> pending;
+    pending.push_back(index);
+    while (!pending.empty())
+    {
+        uint64 idx = pending.back();
+        pending.pop_back();
+        if (idx == DirTree::End || idx >= count)
+            continue;
+        DirEntry* e = dirtree->entry(idx);
+        if (!e || !e->valid)
+            continue;
+        result.push_back(idx);
+        pending.push_back(e->prev);
+        pending.push_back(e->next);
+    }
+}
+
+static uint64 dirtree_balance(DirTree* dirtree, const std::vector<uint64>& sorted, size_t lo, size_t hi, int64 bigBlockSize)
+{
+    if (lo >= hi)
+        return DirTree::End;
+    size_t mid = lo + (hi - lo) / 2;
+    uint64 prev = dirtree_balance(dirtree, sorted, lo, mid, bigBlockSize);
+    uint64 next = dirtree_balance(dirtree, sorted, mid + 1, hi, bigBlockSize);
+    DirEntry* e = dirtree->entry(sorted[mid]);
+    if (e->prev != prev || e->next != next)
+    {
+        e->prev = prev;
+        e->next = next;
+        dirtree->markAsDirty(sorted[mid], bigBlockSize);
+    }
+    return sorted[mid];
+}
+
+// Siblings are inserted as a plain binary search tree, so creating streams in sorted order
+// (the common case) degenerates into a linked list. Rebuild each storage's sibling tree as a
+// balanced one before writing, as readers that recurse over it choke on deep chains.
+void DirTree::rebalance(int64 bigBlockSize)
+{
+    for (size_t idx = 0; idx < entryCount(); idx++)
+    {
+        DirEntry* e = entry(idx);
+        if (!e || !e->valid || !e->dir || e->child == End)
+            continue;
+        std::vector<uint64> children;
+        dirtree_collect_siblings(this, children, e->child);
+        std::sort(children.begin(), children.end(), [this](uint64 a, uint64 b) { return entry(a)->compare(*entry(b)) < 0; });
+        uint64 child = dirtree_balance(this, children, 0, children.size(), bigBlockSize);
+        if (e->child != child)
+        {
+            e->child = child;
+            markAsDirty(idx, bigBlockSize);
+        }
+    }
+}
+
 void DirTree::flush(const std::vector<uint64>& blocks, StorageIO *const io, uint64 bigBlockSize, uint64 sb_start, uint64 sb_size)
 {
+    rebalance(bigBlockSize);
     uint64 bufLen = size();
-    assert(bufLen <= std::numeric_limits<size_t>::max());
-    unsigned char *buffer = new unsigned char[(size_t)bufLen];
+    uint64 allocLen = static_cast<uint64>(blocks.size()) * bigBlockSize;
+    if (allocLen < bufLen)
+        allocLen = bufLen;
+    assert(allocLen <= std::numeric_limits<size_t>::max());
+    unsigned char *buffer = new unsigned char[(size_t)allocLen]();
     save(buffer);
     writeU32( buffer + 0x74, (uint32) sb_start );
     writeU32( buffer + 0x78, (uint32) sb_size );
@@ -1076,12 +1166,9 @@ void DirTree::flush(const std::vector<uint64>& blocks, StorageIO *const io, uint
                 break;
             }
         }
-        uint64 bytesToWrite = bigBlockSize;
         uint64 pos = bigBlockSize*idx;
-        if ((bufLen - pos) < bytesToWrite)
-            bytesToWrite = bufLen - pos;
         if (bDirty)
-            io->saveBigBlock(blocks[idx], 0, &buffer[pos], bytesToWrite);
+            io->saveBigBlock(blocks[idx], 0, &buffer[pos], bigBlockSize);
     }
     dirtyBlocks.clear();
     delete[] buffer;
@@ -1265,13 +1352,17 @@ StorageIO::~StorageIO()
   delete header;
 }
 
-bool StorageIO::open(bool bWriteAccess, bool bCreate)
+bool StorageIO::open(bool bWriteAccess, bool bCreate, bool bLargeSectors)
 {
   // already opened ? close first
   if (opened)
       close();
   if (bCreate)
   {
+      header->b_shift = bLargeSectors ? 12 : 9;
+      bbat->blockSize = (uint64) 1 << header->b_shift;
+      sbat->blockSize = (uint64) 1 << header->s_shift;
+      dirtree->clear(bbat->blockSize);
       create();
       init();
       writeable = true;
@@ -1291,6 +1382,8 @@ void StorageIO::load(bool bWriteAccess)
   uint64 buflen = 0;
   std::vector<uint64> blocks;
   
+  std::unique_lock lock(readMutex);
+
   // open the file, check for error
   result = Storage::OpenFailed;
 
@@ -1319,6 +1412,8 @@ void StorageIO::load(bool bWriteAccess)
   fileCheck(file);
   header->load( buffer );
   delete[] buffer;
+
+  lock.unlock();
 
   // check OLE magic id
   result = Storage::NotOLE;
@@ -1431,13 +1526,25 @@ void StorageIO::init()
 
 void StorageIO::flush()
 {
+    if (writeable)
+    {
+        uint64 num_dirent = static_cast<uint64>(bbat->follow(header->dirent_start).size());
+        if (num_dirent != header->num_dirent)
+        {
+            header->num_dirent = num_dirent;
+            header->dirty = true;
+        }
+    }
     if (header->dirty)
     {
-        unsigned char *buffer = new unsigned char[512];
+        assert(bbat->blockSize >= 512 && bbat->blockSize <= std::numeric_limits<size_t>::max());
+        unsigned char *buffer = new unsigned char[(size_t)bbat->blockSize]();
         header->save( buffer );
         file.seekp( 0 ); 
-        file.write( (char*)buffer, 512 );
+        file.write( (char*)buffer, (std::streamsize)bbat->blockSize );
         fileCheck(file);
+        if (filesize < bbat->blockSize)
+            filesize = bbat->blockSize;
         delete[] buffer;
     }
     if (bbat->isDirty())
@@ -1458,9 +1565,10 @@ void StorageIO::flush()
         uint64 nBytes = bbat->blockSize * static_cast<uint64>(mbat_blocks.size());
         assert(nBytes <= std::numeric_limits<size_t>::max());
         unsigned char *buffer = new unsigned char[(size_t)nBytes];
+        memset(buffer, 0xff, (size_t)nBytes);
         uint64 sIdx = 0;
         uint64 dcount = 0;
-        uint64 blockCapacity = bbat->blockSize / sizeof(uint64) - 1;
+        uint64 blockCapacity = bbat->blockSize / sizeof(uint32) - 1;
         size_t blockIdx = 0;
         for (size_t mdIdx = 0; mdIdx < mbat_data.size(); mdIdx++)
         {
@@ -1478,9 +1586,23 @@ void StorageIO::flush()
                 dcount = 0;
             }
         }
+        if (dcount != 0)
+            writeU32(buffer + (mbat_blocks.size() - 1) * bbat->blockSize + blockCapacity * 4, AllocTable::Eof);
         saveBigBlocks(mbat_blocks, 0, buffer, nBytes);
         delete[] buffer;
         mbatDirty = false;
+    }
+    // Pad the file to a whole number of sectors; partial writes of the last
+    // data or directory block would otherwise leave the file mid-sector.
+    const uint64 blockSize = bbat->blockSize;
+    uint64 alignedSize = (filesize + blockSize - 1) / blockSize * blockSize;
+    if (writeable && alignedSize > filesize)
+    {
+        std::vector<char> zeros(static_cast<size_t>(alignedSize - filesize), 0);
+        file.seekp(filesize);
+        file.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+        fileCheck(file);
+        filesize = alignedSize;
     }
     file.flush();
     fileCheck(file);
@@ -1496,6 +1618,8 @@ void StorageIO::close()
 {
   if( !opened ) return;
   
+  std::lock_guard lock(readMutex);
+
   file.close(); 
   opened = false;
   
@@ -1593,25 +1717,40 @@ uint64 StorageIO::loadBigBlocks( const std::vector<uint64>& blocks,
 {
   // sentinel
   if( !data ) return 0;
+  std::lock_guard fileLock(readMutex);
   fileCheck(file);
   if( !file.good() ) return 0;
   if( blocks.size() < 1 ) return 0;
   if( maxlen == 0 ) return 0;
 
-  // read block one by one, seems fast enough
+  // Read each run of consecutive blocks in a single request. Block chains in a .vpx are
+  // overwhelmingly contiguous, so this collapses what was one seek and one read per block
+  // into roughly one per run. It matters most on a network filesystem, where each request
+  // costs a round trip rather than just a syscall.
   uint64 bytes = 0;
-  for( size_t i=0; (i < blocks.size() ) && ( bytes<maxlen ); i++ )
+  size_t i = 0;
+  while( ( i < blocks.size() ) && ( bytes < maxlen ) )
   {
-    uint64 block = blocks[i];
-    uint64 pos =  bbat->blockSize * ( block+1 );
-    uint64 p = (bbat->blockSize < maxlen-bytes) ? bbat->blockSize : maxlen-bytes;
-    if( pos + p > filesize )
-        p = filesize - pos;
+    // extend the run while the next block immediately follows the previous one
+    size_t runEnd = i + 1;
+    while( ( runEnd < blocks.size() ) && ( blocks[runEnd] == blocks[runEnd-1] + 1 ) )
+      runEnd++;
+
+    const uint64 pos = bbat->blockSize * ( blocks[i] + 1 );
+    // A chain pointing past the end of the file would underflow the clamp below, and that
+    // length is then used directly as a read size, so stop rather than clamp.
+    if( pos >= filesize ) break;
+
+    uint64 p = static_cast<uint64>( runEnd - i ) * bbat->blockSize;
+    if( p > maxlen - bytes ) p = maxlen - bytes;
+    if( pos + p > filesize ) p = filesize - pos;
+
     file.seekg( pos );
     file.read( (char*)data + bytes, p );
     fileCheck(file);
     // should use gcount to see how many bytes were really returned - eof check...
     bytes += p;
+    i = runEnd;
   }
 
   return bytes;
@@ -1621,9 +1760,12 @@ uint64 StorageIO::loadBigBlock( uint64 block,
   unsigned char* data, uint64 maxlen )
 {
   // sentinel
-  if( !data ) return 0;
-  fileCheck(file);
-  if( !file.good() ) return 0;
+  {
+     if( !data ) return 0;
+     std::lock_guard fileLock(readMutex);
+     fileCheck(file);
+     if( !file.good() ) return 0;
+  }
   
   // wraps call for loadBigBlocks
   std::vector<uint64> blocks;
@@ -1683,18 +1825,23 @@ uint64 StorageIO::loadSmallBlocks( const std::vector<uint64>& blocks,
   unsigned char* data, uint64 maxlen )
 {
   // sentinel
-  if( !data ) return 0;
-  fileCheck(file);
-  if( !file.good() ) return 0;
-  if( blocks.size() < 1 ) return 0;
-  if( maxlen == 0 ) return 0;
+  {
+     if( !data ) return 0;
+     std::lock_guard fileLock(readMutex);
+     fileCheck(file);
+     if( !file.good() ) return 0;
+     if( blocks.size() < 1 ) return 0;
+     if( maxlen == 0 ) return 0;
+  }
 
   // our own local buffer
   assert(bbat->blockSize <= std::numeric_limits<size_t>::max());
   unsigned char* buf = new unsigned char[ (size_t)bbat->blockSize ];
 
-  // read small block one by one
+  // Sixty-four mini-blocks live inside one big block, so consecutive mini-blocks almost
+  // always resolve to the block already in hand. Remember it rather than re-reading it.
   uint64 bytes = 0;
+  uint64 loadedIndex = std::numeric_limits<uint64>::max();
   for( size_t i=0; ( i<blocks.size() ) && ( bytes<maxlen ); i++ )
   {
     uint64 block = blocks[i];
@@ -1704,7 +1851,11 @@ uint64 StorageIO::loadSmallBlocks( const std::vector<uint64>& blocks,
     uint64 bbindex = pos / bbat->blockSize;
     if( bbindex >= sb_blocks.size() ) break;
 
-    loadBigBlock( sb_blocks[ (size_t)bbindex ], buf, bbat->blockSize );
+    if( bbindex != loadedIndex )
+    {
+      loadBigBlock( sb_blocks[ (size_t)bbindex ], buf, bbat->blockSize );
+      loadedIndex = bbindex;
+    }
 
     // copy the data
     uint64 offset = pos % bbat->blockSize;
@@ -1724,9 +1875,12 @@ uint64 StorageIO::loadSmallBlock( uint64 block,
   unsigned char* data, uint64 maxlen )
 {
   // sentinel
-  if( !data ) return 0;
-  fileCheck(file);
-  if( !file.good() ) return 0;
+  {
+     if( !data ) return 0;
+     std::lock_guard fileLock(readMutex);
+     fileCheck(file);
+     if( !file.good() ) return 0;
+  }
 
   // wraps call for loadSmallBlocks
   std::vector<uint64> blocks;
@@ -1869,7 +2023,7 @@ uint64 StorageIO::ExtendFile( std::vector<uint64> *chain )
 {
     uint64 newblockIdx = bbat->unused();
     bbat->set(newblockIdx, AllocTable::Eof);
-    uint64 bbidx = newblockIdx / (bbat->blockSize / sizeof(uint64));
+    uint64 bbidx = newblockIdx / (bbat->blockSize / sizeof(uint32));
     while (bbidx >= header->num_bat)
         addbbatBlock();
     bbat->markAsDirty(newblockIdx, bbat->blockSize);
@@ -1894,7 +2048,7 @@ void StorageIO::addbbatBlock()
         mbatDirty = true;
         mbat_data.push_back(newblockIdx);
         uint64 metaIdx = header->num_bat - 109;
-        uint64 idxPerBlock = bbat->blockSize / sizeof(uint64) - 1; //reserve room for index to next block
+        uint64 idxPerBlock = bbat->blockSize / sizeof(uint32) - 1; //reserve room for index to next block
         uint64 idxBlock = metaIdx / idxPerBlock;
         if (idxBlock == mbat_blocks.size())
         {
@@ -1921,6 +2075,9 @@ StreamIO::StreamIO( StorageIO* s, DirEntry* e)
     eof(false),
     fail(false),
     m_pos(0),
+    ra_buf(),
+    ra_pos(0),
+    ra_len(0),             // indicating an empty readahead window
     cache_data(new unsigned char[CACHEBUFSIZE]),        
     cache_size(0),         // indicating an empty cache
     cache_pos(0)
@@ -2052,53 +2209,89 @@ uint64 StreamIO::read( uint64 pos, unsigned char* data, uint64 maxlen )
       maxlen = entry->size - pos;
   if ( entry->size < io->header->threshold )
   {
-    // small file
-    uint64 index = pos / io->sbat->blockSize;
+    // Small file, served out of the same readahead window the big-file branch uses. The
+    // previous form fetched one mini-block per call, and each of those pulled a whole
+    // 4 KiB block, so a caller reading four bytes at a time paid a block read per call.
+    const uint64 miniSize = io->sbat->blockSize;
+    assert(miniSize <= std::numeric_limits<size_t>::max());
 
-    if( index >= blocks.size() ) return 0;
+    if( pos / miniSize >= blocks.size() ) return 0;
 
-    assert(io->sbat->blockSize <= std::numeric_limits<size_t>::max());
-    unsigned char* buf = new unsigned char[ (size_t)io->sbat->blockSize ];
-    uint64 offset = pos % io->sbat->blockSize;
     while( totalbytes < maxlen )
     {
-      if( index >= blocks.size() ) break;
-      io->loadSmallBlock( blocks[(size_t)index], buf, io->bbat->blockSize );
-      uint64 count = io->sbat->blockSize - offset;
-      if( count > maxlen-totalbytes ) count = maxlen-totalbytes;
-      assert(count <= std::numeric_limits<size_t>::max());
-      memcpy( data+totalbytes, buf + offset, (size_t)count );
-      totalbytes += count;
-      offset = 0;
-      index++;
-    }
-    delete[] buf;
+      const uint64 wanted = pos + totalbytes;
+      const bool inWindow = ( ra_len > 0 ) && ( wanted >= ra_pos ) && ( wanted < ra_pos + ra_len );
+      if( !inWindow )
+      {
+        const uint64 index = wanted / miniSize;
+        if( index >= blocks.size() ) break;
 
+        // A mini stream is under the threshold that decides this branch, so the rest of
+        // its chain always fits in one window and one fill covers every later read.
+        const uint64 span = ( static_cast<uint64>( blocks.size() ) - index ) * miniSize;
+        assert(span <= std::numeric_limits<size_t>::max());
+        if( ra_buf.size() < (size_t)span ) ra_buf.resize( (size_t)span );
+
+        const std::vector<uint64> chain( blocks.begin() + (size_t)index, blocks.end() );
+        const uint64 got = io->loadSmallBlocks( chain, ra_buf.data(), span );
+        if( got == 0 ) break;
+
+        ra_pos = index * miniSize;
+        ra_len = got;
+      }
+
+      const uint64 offset = wanted - ra_pos;
+      uint64 count = ra_len - offset;
+      if( count > maxlen - totalbytes ) count = maxlen - totalbytes;
+      assert(count <= std::numeric_limits<size_t>::max());
+      memcpy( data + totalbytes, ra_buf.data() + (size_t)offset, (size_t)count );
+      totalbytes += count;
+    }
   }
   else
   {
-    // big file
-    uint64 index = pos / io->bbat->blockSize;
-    
-    if( index >= blocks.size() ) return 0;
-    
-    assert(io->bbat->blockSize <= std::numeric_limits<size_t>::max());
-    unsigned char* buf = new unsigned char[ (size_t)io->bbat->blockSize ];
-    uint64 offset = pos % io->bbat->blockSize;
+    // Big file, served out of a readahead window rather than a block at a time. The
+    // previous form issued a block-sized read on every call, so a caller reading four
+    // bytes at a time paid a whole block read per four bytes.
+    const uint64 blockSize = io->bbat->blockSize;
+    assert(blockSize <= std::numeric_limits<size_t>::max());
+
+    if( pos / blockSize >= blocks.size() ) return 0;
+
+    const uint64 windowBlocks = (READAHEADBUFSIZE + blockSize - 1) / blockSize;
     while( totalbytes < maxlen )
     {
-      if( index >= blocks.size() ) break;
-      io->loadBigBlock( blocks[(size_t)index], buf, io->bbat->blockSize );
-      uint64 count = io->bbat->blockSize - offset;
-      if( count > maxlen-totalbytes ) count = maxlen-totalbytes;
-      assert(count <= std::numeric_limits<size_t>::max());
-      memcpy( data+totalbytes, buf + offset, (size_t)count );
-      totalbytes += count;
-      index++;
-      offset = 0;
-    }
-    delete [] buf;
+      const uint64 wanted = pos + totalbytes;
+      const bool inWindow = ( ra_len > 0 ) && ( wanted >= ra_pos ) && ( wanted < ra_pos + ra_len );
+      if( !inWindow )
+      {
+        // refill, block aligned so the window maps onto whole blocks
+        const uint64 index = wanted / blockSize;
+        if( index >= blocks.size() ) break;
 
+        uint64 nblocks = static_cast<uint64>( blocks.size() ) - index;
+        if( nblocks > windowBlocks ) nblocks = windowBlocks;
+
+        const uint64 span = nblocks * blockSize;
+        assert(span <= std::numeric_limits<size_t>::max());
+        if( ra_buf.size() < (size_t)span ) ra_buf.resize( (size_t)span );
+
+        const std::vector<uint64> chain( blocks.begin() + (size_t)index,
+                                         blocks.begin() + (size_t)( index + nblocks ) );
+        const uint64 got = io->loadBigBlocks( chain, ra_buf.data(), span );
+        if( got == 0 ) break;
+
+        ra_pos = index * blockSize;
+        ra_len = got;
+      }
+
+      const uint64 offset = wanted - ra_pos;
+      uint64 count = ra_len - offset;
+      if( count > maxlen - totalbytes ) count = maxlen - totalbytes;
+      assert(count <= std::numeric_limits<size_t>::max());
+      memcpy( data + totalbytes, ra_buf.data() + (size_t)offset, (size_t)count );
+      totalbytes += count;
+    }
   }
 
   return totalbytes;
@@ -2229,9 +2422,9 @@ int Storage::result() const
   return (int) io->result;
 }
 
-bool Storage::open(bool bWriteAccess, bool bCreate)
+bool Storage::open(bool bWriteAccess, bool bCreate, bool bLargeSectors)
 {
-  return io->open(bWriteAccess, bCreate);
+  return io->open(bWriteAccess, bCreate, bLargeSectors);
 }
 
 void Storage::close()
@@ -2265,6 +2458,30 @@ bool Storage::exists( const std::string& name )
 {
     DirEntry* e = io->dirtree->entry( name, false );
     return (e != 0);
+}
+
+uint64 Storage::streamOffset( const std::string& name )
+{
+  DirEntry* e = io->dirtree->entry( name, false );
+  if( !e || e->dir ) return 0;
+
+  if( e->size >= io->header->threshold )
+  {
+    const std::vector<uint64> chain = io->bbat->follow( e->start );
+    if( chain.empty() ) return 0;
+    return io->bbat->blockSize * ( chain[0] + 1 );
+  }
+
+  // Below the threshold the stream lives in the mini-stream container, so its chain is in
+  // mini-block units and has to be resolved through the container's own block chain before
+  // it can be compared with a big stream's offset.
+  const std::vector<uint64> chain = io->sbat->follow( e->start );
+  if( chain.empty() ) return 0;
+  const uint64 pos = chain[0] * io->sbat->blockSize;
+  const uint64 bbindex = pos / io->bbat->blockSize;
+  if( bbindex >= io->sb_blocks.size() ) return 0;
+  return io->bbat->blockSize * ( io->sb_blocks[(size_t)bbindex] + 1 )
+       + ( pos % io->bbat->blockSize );
 }
 
 bool Storage::isWriteable() const

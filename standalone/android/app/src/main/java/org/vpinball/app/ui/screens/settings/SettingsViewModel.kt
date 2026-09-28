@@ -13,18 +13,15 @@ import org.vpinball.app.VPinballManager
 import org.vpinball.app.jni.VPinballExternalDMD
 import org.vpinball.app.jni.VPinballGfxBackend
 import org.vpinball.app.jni.VPinballMaxTexDimension
+import org.vpinball.app.jni.VPinballPath
 import org.vpinball.app.jni.VPinballSettingsSection.PLAYER
 import org.vpinball.app.jni.VPinballSettingsSection.PLUGIN_DMDUTIL
 import org.vpinball.app.jni.VPinballSettingsSection.STANDALONE
 import org.vpinball.app.jni.VPinballStorageMode
-import org.vpinball.app.jni.VPinballViewMode
 import org.vpinball.app.ui.screens.landing.LandingScreenViewModel
 
 class SettingsViewModel : ViewModel() {
     // General
-
-    var haptics by mutableStateOf(false)
-        private set
 
     var renderingModeOverride by mutableStateOf(false)
         private set
@@ -40,12 +37,9 @@ class SettingsViewModel : ViewModel() {
 
     // Display
 
-    var bgSet by mutableStateOf(VPinballViewMode.DESKTOP_FSS)
-        private set
-
     // Performance
 
-    var maxTexDimension by mutableStateOf(VPinballMaxTexDimension.MAX_768)
+    var maxTexDimension by mutableStateOf(VPinballMaxTexDimension.MAX_3072)
         private set
 
     // External DMD
@@ -70,45 +64,35 @@ class SettingsViewModel : ViewModel() {
     var webServerPort by mutableIntStateOf(0)
         private set
 
-    // Advanced
-
-    var resetLogOnPlay by mutableStateOf(false)
-        private set
-
     var needsTableReload by mutableStateOf(false)
         private set
 
     fun loadSettings() {
         // General
 
-        haptics = VPinballManager.loadValue(STANDALONE, "Haptics", true)
-        renderingModeOverride = (VPinballManager.loadValue(STANDALONE, "RenderingModeOverride", 2) == 2)
+        renderingModeOverride = (VPinballManager.loadValue(STANDALONE, "RenderingModeOverride", -1) == 2)
         gfxBackend = VPinballGfxBackend.fromString(VPinballManager.loadValue(PLAYER, "GfxBackend", VPinballGfxBackend.OPENGLES.value))
 
-        val savedTablesPath = VPinballManager.loadValue(STANDALONE, "TablesPath", "")
-        storageMode = VPinballStorageMode.fromTablesPath(savedTablesPath)
+        val savedSAFPath = VPinballManager.loadValue(STANDALONE, "SAFPath", "")
+        storageMode = VPinballStorageMode.fromSAFPath(savedSAFPath)
 
         currentTablesPath =
             when (storageMode) {
-                VPinballStorageMode.INTERNAL -> ""
+                VPinballStorageMode.INTERNAL -> VPinballManager.getPath(VPinballPath.TABLES)
                 VPinballStorageMode.CUSTOM -> {
                     if (SAFFileSystem.isUsingSAF()) {
                         val displayPath = SAFFileSystem.getExternalStorageDisplayPath()
-                        if (displayPath.isNotEmpty()) displayPath else savedTablesPath
+                        if (displayPath.isNotEmpty()) displayPath else savedSAFPath
                     } else {
-                        savedTablesPath
+                        savedSAFPath
                     }
                 }
             }
 
-        // Display
-
-        bgSet = VPinballViewMode.fromInt(VPinballManager.loadValue(PLAYER, "BGSet", VPinballViewMode.DESKTOP_FSS.value))
-
         // Performance
 
         maxTexDimension =
-            VPinballMaxTexDimension.fromInt(VPinballManager.loadValue(PLAYER, "MaxTexDimension", VPinballMaxTexDimension.MAX_1024.value))
+            VPinballMaxTexDimension.fromInt(VPinballManager.loadValue(PLAYER, "MaxTexDimension", VPinballMaxTexDimension.MAX_3072.value))
 
         // External DMD
 
@@ -116,7 +100,7 @@ class SettingsViewModel : ViewModel() {
             when {
                 VPinballManager.loadValue(PLUGIN_DMDUTIL, "DMDServer", false) -> VPinballExternalDMD.DMD_SERVER
 
-                VPinballManager.loadValue(PLUGIN_DMDUTIL, "ZeDMDWiFi", false) -> VPinballExternalDMD.ZEDMD_WIFI
+                VPinballManager.loadValue(PLUGIN_DMDUTIL, "ZeDMDWiFiEnabled", false) -> VPinballExternalDMD.ZEDMD_WIFI
 
                 else -> VPinballExternalDMD.NONE
             }
@@ -129,18 +113,9 @@ class SettingsViewModel : ViewModel() {
 
         webServer = VPinballManager.loadValue(STANDALONE, "WebServer", false)
         webServerPort = VPinballManager.loadValue(STANDALONE, "WebServerPort", 2112)
-
-        // Advanced
-
-        resetLogOnPlay = VPinballManager.loadValue(STANDALONE, "ResetLogOnPlay", true)
     }
 
     // General
-
-    fun handleHaptics(value: Boolean) {
-        haptics = value
-        VPinballManager.saveValue(STANDALONE, "Haptics", haptics)
-    }
 
     fun handleRenderingModeOverride(value: Boolean) {
         renderingModeOverride = value
@@ -157,7 +132,7 @@ class SettingsViewModel : ViewModel() {
             VPinballStorageMode.INTERNAL -> {
                 SAFFileSystem.clearExternalStorageUri()
                 storageMode = VPinballStorageMode.INTERNAL
-                currentTablesPath = VPinballManager.getTablesPath()
+                currentTablesPath = VPinballManager.getPath(VPinballPath.TABLES)
                 needsTableReload = true
             }
             VPinballStorageMode.CUSTOM -> {
@@ -171,7 +146,7 @@ class SettingsViewModel : ViewModel() {
         storageMode = VPinballStorageMode.CUSTOM
 
         val displayPath = SAFFileSystem.getExternalStorageDisplayPath()
-        currentTablesPath = if (displayPath.isNotEmpty()) displayPath else VPinballManager.getTablesPath()
+        currentTablesPath = if (displayPath.isNotEmpty()) displayPath else VPinballManager.getPath(VPinballPath.TABLES)
 
         needsTableReload = true
     }
@@ -185,11 +160,6 @@ class SettingsViewModel : ViewModel() {
 
     // Display
 
-    fun handleBGSet(value: VPinballViewMode) {
-        bgSet = value
-        VPinballManager.saveValue(PLAYER, "BGSet", bgSet.value)
-    }
-
     // Performance
 
     fun handleMaxTexDimension(value: VPinballMaxTexDimension) {
@@ -202,7 +172,7 @@ class SettingsViewModel : ViewModel() {
     fun handleExternalDMD(value: VPinballExternalDMD) {
         externalDMD = value
         VPinballManager.saveValue(PLUGIN_DMDUTIL, "DMDServer", externalDMD == VPinballExternalDMD.DMD_SERVER)
-        VPinballManager.saveValue(PLUGIN_DMDUTIL, "ZeDMDWiFi", externalDMD == VPinballExternalDMD.ZEDMD_WIFI)
+        VPinballManager.saveValue(PLUGIN_DMDUTIL, "ZeDMDWiFiEnabled", externalDMD == VPinballExternalDMD.ZEDMD_WIFI)
         VPinballManager.saveValue(PLUGIN_DMDUTIL, "Enable", externalDMD != VPinballExternalDMD.NONE)
     }
 
@@ -233,13 +203,6 @@ class SettingsViewModel : ViewModel() {
         webServerPort = value
         VPinballManager.saveValue(STANDALONE, "WebServerPort", webServerPort)
         VPinballManager.updateWebServer()
-    }
-
-    // Advanced
-
-    fun handleResetLogOnPlay(value: Boolean) {
-        resetLogOnPlay = value
-        VPinballManager.saveValue(STANDALONE, "ResetLogOnPlay", resetLogOnPlay)
     }
 
     // Reset

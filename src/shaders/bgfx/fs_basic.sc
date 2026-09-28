@@ -2,10 +2,10 @@
 
 $input v_worldPos, v_tablePos, v_normal, v_texcoord0
 #ifdef STEREO
-	$input v_eye
+    $input v_eye
 #endif
 #ifdef CLIP
-	$input v_clipDistance
+    $input v_clipDistance
 #endif
 
 #include "common.sh"
@@ -24,17 +24,26 @@ SAMPLER2DSTEREO(tex_reflection, 5); // reflections
 SAMPLER2DSTEREO(tex_refraction, 6); // refractions
 SAMPLER2DSTEREO(tex_probe_depth, 7); // refractions depth probe
 
-uniform mat4 matWorldView;
-uniform mat4 matWorldViewInverseTranspose;
-uniform mat4 matWorld;
-uniform mat4 matView;
 #ifdef STEREO
-	uniform mat4 matProj[2];
-	// FIXME v_eye needs to be flat interpolated, but if declared as such in varying.def.sc, DX11 will fail (OpenGL/Vulkan are good)
-	#define mProj matProj[int(round(v_eye))]
+    uniform mat4 matView[2];
+    uniform mat4 matWorldView[2];
+    uniform mat4 matWorldViewInverseTranspose[2];
+    uniform mat4 matProj[2];
+    // FIXME v_eye needs to be flat interpolated, but if declared as such in varying.def.sc, DX11 will fail (OpenGL/Vulkan are good)
+    #define mView                      matView[int(round(v_eye))]
+    #define mWorldView                 matWorldView[int(round(v_eye))]
+    #define mWorldViewInverseTranspose matWorldViewInverseTranspose[int(round(v_eye))]
+    #define mProj                      matProj[int(round(v_eye))]
 #else
-	uniform mat4 matProj;
-	#define mProj matProj
+    uniform mat4 matView;
+    uniform mat4 matWorldView;
+    uniform mat4 matWorldViewInverseTranspose;
+    uniform mat4 matWorld;
+    uniform mat4 matProj;
+    #define mView                      matView
+    #define mWorldView                 matWorldView
+    #define mWorldViewInverseTranspose matWorldViewInverseTranspose
+    #define mProj                      matProj
 #endif
 
 uniform vec4 objectSpaceNormalMap; // float extended to vec4 for BGFX FIXME float uniforms are not supported: group or declare as vec4
@@ -94,17 +103,21 @@ mat3 TBN_trafo(const vec3 N, const vec3 V, const vec2 uv)
    return mat3(T, B, N * sqrt( max(dot(T,T), dot(B,B)) )); // inverse scale, as will be normalized anyhow later-on (to save some mul's)
 }
 
+#ifdef STEREO
+vec3 normal_map(const vec3 N, const vec3 V, const vec2 uv, const float v_eye)
+#else
 vec3 normal_map(const vec3 N, const vec3 V, const vec2 uv)
+#endif
 {
    vec3 tn;
    if (noMipMaps)
-      tn = texture2DLod(tex_base_normalmap, uv, 0.0).xyz * (255./127.) - (128./127.);
+      tn = texNoLod(tex_base_normalmap, uv).xyz * (255./127.) - (128./127.);
    else
       tn = texture2D(tex_base_normalmap, uv).xyz * (255./127.) - (128./127.);
 
    BRANCH if (objectSpaceNormalMap.x != 0.0)
    { // Object space: this matches the object space, +X +Y +Z, export/baking in Blender with our trafo setup
-      return normalize(mul(matWorldViewInverseTranspose, vec4(tn.x, tn.y, -tn.z, 0.0)).xyz);
+      return normalize(mul(mWorldViewInverseTranspose, vec4(tn.x, tn.y, -tn.z, 0.0)).xyz);
    }
    else
    { // Tangent space
@@ -123,8 +136,7 @@ vec3 compute_reflection(const vec2 screenCoord, const vec3 N)
    // Only apply to faces pointing in the direction of the probe (normal = [0,0,-1])
    // the smoothstep values are *magic* values taken from visual tests
    // dot(mirrorNormal, N) does not really needs to be done per pixel and could be moved to the vertx shader
-   // Offset by half a texel to use GPU filtering for some blur
-   return smoothstep(0.5, 0.9, dot(mirrorNormal.xyz, N)) * mirrorFactor * texStereo(tex_reflection, (screenCoord.xy + vec2_splat(0.5)) * w_h_height.xy).rgb;
+   return smoothstep(0.5, 0.9, dot(mirrorNormal, N)) * mirrorFactor * texStereo(tex_reflection, screenCoord.xy * w_h_height.xy).rgb;
 }
 
 // Compute refractions from screen space probe
@@ -154,7 +166,7 @@ vec3 compute_refraction(const vec3 pos, const vec3 screenCoord, const vec3 N, co
    // The following code gives a smoother transition but depends too much on the POV since it uses homogeneous depth to lerp instead of fragment's world depth
    //const vec3 unbiased = vec3(1.0, 0.0, 0.0);
    //const vec3 biased = vec3(0.0, 1.0, 0.0);
-   //const vec3 unbiased = texture2D(tex_refraction, screenCoord.xy).rgb;
+   //const vec3 unbiased = texture2D(tex_refraction, screenCoord.xy * w_h_height.xy).rgb;
    //const vec3 biased = texture2D(tex_refraction, uv).rgb;
    //return mix(unbiased, biased, saturate((d - fragCoord.z) / fragCoord.w));
 
@@ -173,23 +185,23 @@ vec3 compute_refraction(const vec3 pos, const vec3 screenCoord, const vec3 N, co
 
 
 #ifdef REFL
-	#ifndef CLIP
-	EARLY_DEPTH_STENCIL
-	#endif
-	void main() {
-		// Reflection only pass variant of the basic material shading
-		#ifdef CLIP
-		if (v_clipDistance < 0.0)
-		   discard;
-		#endif
-		vec3 N = normalize(v_normal);
-		#ifdef STEREO
-		vec3 color = compute_reflection(gl_FragCoord.xy, N, v_eye);
-		#else
-		vec3 color = compute_reflection(gl_FragCoord.xy, N);
-		#endif
-		gl_FragColor = vec4(color.rgb * staticColor_Alpha.rgb, staticColor_Alpha.a);
-	}
+    #ifndef CLIP
+    EARLY_DEPTH_STENCIL
+    #endif
+    void main() {
+        // Reflection only pass variant of the basic material shading
+        #ifdef CLIP
+        if (v_clipDistance < 0.0)
+           discard;
+        #endif
+        vec3 N = normalize(v_normal);
+        #ifdef STEREO
+        vec3 color = compute_reflection(gl_FragCoord.xy, N, v_eye);
+        #else
+        vec3 color = compute_reflection(gl_FragCoord.xy, N);
+        #endif
+        gl_FragColor = vec4(color.rgb * staticColor_Alpha.rgb, staticColor_Alpha.a);
+    }
 
 #else
    #if !defined(AT) && !defined(CLIP)
@@ -204,10 +216,10 @@ vec3 compute_refraction(const vec3 pos, const vec3 screenCoord, const vec3 N, co
       // Full basic material shading
       #ifdef TEX
          vec4 pixel;
-		 if (noMipMaps)
-		    pixel = texture2DLod(tex_base_color, v_texcoord0, 0.0);
-		 else
-		    pixel = texture2D(tex_base_color, v_texcoord0);
+         if (noMipMaps)
+            pixel = texNoLod(tex_base_color, v_texcoord0);
+         else
+            pixel = texture2D(tex_base_color, v_texcoord0);
          #ifdef AT
             if (pixel.a <= alphaTestValue.x)
                discard; //stop the pixel shader if alpha test should reject pixel
@@ -231,12 +243,20 @@ vec3 compute_refraction(const vec3 pos, const vec3 screenCoord, const vec3 N, co
       vec3 N = normalize(v_normal);
       #ifdef TEX
          BRANCH if (doNormalMapping)
-             N = normal_map(N, -V, v_texcoord0);
+            #ifdef STEREO
+               N = normal_map(N, -V, v_texcoord0, v_eye);
+            #else
+               N = normal_map(N, -V, v_texcoord0);
+            #endif
       #endif
 
       //color = vec4((N+1.0)*0.5,1.0); return; // visualize normals
 
-      color = vec4(lightLoop(v_worldPos, N, V, diffuse, glossy, specular, edge, doMetal), pixel.a);
+      #ifdef STEREO
+         color = vec4(lightLoop(v_worldPos, N, V, diffuse, glossy, specular, edge, doMetal, v_eye), pixel.a);
+      #else
+         color = vec4(lightLoop(v_worldPos, N, V, diffuse, glossy, specular, edge, doMetal), pixel.a);
+      #endif
 
       BRANCH if (color.a < 1.0) // We may not opacify if we already are opaque
       {
@@ -257,18 +277,18 @@ vec3 compute_refraction(const vec3 pos, const vec3 screenCoord, const vec3 N, co
 
       BRANCH if (doReflections)
          #ifdef STEREO
-			color.rgb += compute_reflection(gl_FragCoord.xy, N, v_eye);
+            color.rgb += compute_reflection(gl_FragCoord.xy, N, v_eye);
          #else
-			color.rgb += compute_reflection(gl_FragCoord.xy, N);
+            color.rgb += compute_reflection(gl_FragCoord.xy, N);
          #endif
 
       BRANCH if (doRefractions)
       {
          // alpha channel is the transparency of the object, tinting is supported even if alpha is 0 by applying a tint color to background
          #ifdef STEREO
-			color.rgb = mix(compute_refraction(v_worldPos.xyz, gl_FragCoord.xyz, N, V, v_eye), color.rgb, color.a);
+            color.rgb = mix(compute_refraction(v_worldPos.xyz, gl_FragCoord.xyz, N, V, v_eye), color.rgb, color.a);
          #else
-			color.rgb = mix(compute_refraction(v_worldPos.xyz, gl_FragCoord.xyz, N, V), color.rgb, color.a);
+            color.rgb = mix(compute_refraction(v_worldPos.xyz, gl_FragCoord.xyz, N, V), color.rgb, color.a);
          #endif
          color.a = 1.0;
       }

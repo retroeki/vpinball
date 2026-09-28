@@ -15,20 +15,24 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+using namespace std::string_literals;
+using namespace std::string_view_literals;
 #include <chrono>
 #include <thread>
 #include <semaphore>
+#include <mutex>
 
 // Shared logging
 #include "plugins/LoggingPlugin.h"
 
 namespace RemoteControl {
 
-LPI_USE();
-#define LOGD RemoteControl::LPI_LOGD
-#define LOGI RemoteControl::LPI_LOGI
-#define LOGW RemoteControl::LPI_LOGW
-#define LOGE RemoteControl::LPI_LOGE
+LPI_USE_CPP();
+#define LOGD RemoteControl::LPI_LOGD_CPP
+#define LOGI RemoteControl::LPI_LOGI_CPP
+#define LOGW RemoteControl::LPI_LOGW_CPP
+#define LOGE RemoteControl::LPI_LOGE_CPP
 
 ///////////////////////////////////////////////////////////////////////////////
 // Minimal portable sockets
@@ -141,7 +145,7 @@ public:
    {
       return recvfrom(_sock, (char*)buf, (int)len, 0, (struct sockaddr*)&_si_other, &_slen);
    }
-   bool hasTimedOut()
+   static bool hasTimedOut()
    {
       #ifdef _WIN32
          return WSAGetLastError() == WSAETIMEDOUT;
@@ -231,11 +235,7 @@ std::binary_semaphore msgReadySem { 0 };
 struct StateMsg
 {
    uint16_t version = 0;
-   uint32_t timestamp = 0;
-   uint64_t keyState = 0;
-   float nudgeX = 0.f;
-   float nudgeY = 0.f;
-   float plunger = 0.f;
+   VPXInputState state {};
 };
 
 enum RunMode
@@ -246,9 +246,11 @@ enum RunMode
 };
 RunMode runMode = RunMode::RunModeNone;
 
-StateMsg lastState; // Last state acquired from VPX (controller mode) or received from network (player mode)
-uint64_t actionState = 0;
-uint32_t lastPlayerAppliedStateTimestamp = 0;
+std::mutex stateMutex;
+StateMsg inputState[2]; // Last state acquired from VPX (controller mode) or received from network (player mode)
+int activeInputState = 0;
+int lastReceivedMsgId = 0;
+int lastProcessedMsgId = 0;
 enum class ConnectionState
 {
    Unconnected, ConnectionMade, Connected, ConnectionLost
@@ -261,7 +263,7 @@ MSGPI_INT_VAL_SETTING(portProp, "Port", "Port", "", true, 0, 0xFFFF, 0);
 MSGPI_STRING_VAL_SETTING(hostProp, "Host", "Host", "", true, "", 1024);
 
 
-void onPrepareFrame(const unsigned int eventId, void* userData, void* eventData)
+static void onPrepareFrame(const unsigned int eventId, void* userData, void* eventData)
 {
    switch (connectionState)
    {
@@ -283,72 +285,71 @@ void onPrepareFrame(const unsigned int eventId, void* userData, void* eventData)
    }
 }
 
-void onControllerActionEvent(const unsigned int eventId, void* userData, void* eventData)
+static void onControllerActionEvent(const unsigned int eventId, void* userData, void* eventData)
 {
    if (connectionState == ConnectionState::Connected)
    {
       VPXActionEvent* event = static_cast<VPXActionEvent*>(eventData);
-      uint64_t mask = static_cast<uint64_t>(1) << static_cast<int>(event->action);
-      if (event->isPressed)
-      {
-         actionState |= mask;
-         event->isPressed = false;
-      }
-      else
-      {
-         actionState &= ~mask;
-      }
+      event->enableVPXProcessing = false; // Disable local processing
    }
 }
 
-void onControllerUpdatePhysics(const unsigned int eventId, void* userData, void* eventData)
+static void onControllerUpdatePhysics(const unsigned int eventId, void* userData, void* eventData)
 {
    // Gather input state and broadcast it to the server
-   // FIXME reimplement
-   /* uint64_t newKeyState;
-   float newNudgeX, newNudgeY, newPlunger;
-   vpxApi->GetInputState(&newKeyState, &newNudgeX, &newNudgeY, &newPlunger);
-   if ((lastState.keyState != actionState) || (lastState.nudgeX != newNudgeX) || (lastState.nudgeY != newNudgeY) || (lastState.plunger != newPlunger))
+   VPXInputState& lastState = inputState[activeInputState].state;
+   VPXInputState& state = inputState[1 - activeInputState].state;
+   state.actionMask = 0xFFFFFFFFFFFFFFFFULL; // Request all actions
+   state.stateMask = 7; // Request plunger position, velocity and nudge
+   vpxApi->GetInputState(&state);
+   if (((lastState.actionState & lastState.actionMask) != (state.actionState & state.actionMask))
+      || ((state.stateMask & 1) && (lastState.plungerPosition != state.plungerPosition))
+      || ((state.stateMask & 2) && (lastState.plungerVelocity != state.plungerVelocity))
+      || ((state.stateMask & 4) && (lastState.nudgeAccelerationX != state.nudgeAccelerationX))
+      || ((state.stateMask & 4) && (lastState.nudgeAccelerationY != state.nudgeAccelerationY))
+      || ((state.stateMask & 4) && (lastState.nudgeDisplacementX != state.nudgeDisplacementX))
+      || ((state.stateMask & 4) && (lastState.nudgeDisplacementY != state.nudgeDisplacementY)))
    {
       // LOGI(">>> New InputState");
-      lastState.keyState = actionState;
-      lastState.nudgeX = newNudgeX;
-      lastState.nudgeY = newNudgeY;
-      lastState.plunger = newPlunger;
+      std::lock_guard lock(stateMutex);
+      activeInputState = 1 - activeInputState;
       msgReadySem.release();
-   }*/
-}
-
-void onPlayerUpdatePhysics(const unsigned int eventId, void* userData, void* eventData)
-{
-   // Process any pending message from the controller
-   if (lastState.timestamp != lastPlayerAppliedStateTimestamp)
-   {
-      // LOGI(">>> New InputState %08x", lastState.timestamp);
-      lastPlayerAppliedStateTimestamp = lastState.timestamp;
-      actionState = lastState.keyState;
-      // FIXME vpxApi->SetInputState(actionState, lastState.nudgeX, lastState.nudgeY, lastState.plunger);
    }
 }
 
-void onGameStart(const unsigned int eventId, void* userData, void* eventData)
+static void onPlayerUpdatePhysics(const unsigned int eventId, void* userData, void* eventData)
 {
-   lastState.timestamp = 0;
+   // Process any pending message from the controller
+   if (lastReceivedMsgId != lastProcessedMsgId)
+   {
+      std::lock_guard lock(stateMutex);
+      // LOGI(std::format(">>> New InputState"));
+      lastProcessedMsgId = lastReceivedMsgId;
+      vpxApi->SetInputState(&inputState[activeInputState].state);
+   }
+}
+
+static void onGameStart(const unsigned int eventId, void* userData, void* eventData)
+{
+   lastReceivedMsgId = 0;
+   lastProcessedMsgId = 0;
    if (runModeProp_Val == 1)
    {
       runMode = RunMode::RunModeController;
-      LOGI("RemoteControl plugin started as controller (client mode, server ip is %s:%d)", hostProp_Get(), portProp_Val);
+      LOGI("RemoteControl plugin started as controller (client mode, server ip is "s + hostProp_Get() + ':' + std::to_string(portProp_Val) + ')');
       udpThread = std::thread([]()
          {
             using namespace std::literals;
             StateMsg stateMsg;
             UdpClientSocket client(hostProp_Get(), portProp_Val, 500);
-            auto start = std::chrono::high_resolution_clock::now();
+            const auto start = std::chrono::steady_clock::now();
             while (runMode != RunMode::RunModeNone)
             {
                msgReadySem.acquire();
-               stateMsg = lastState;
-               stateMsg.timestamp = static_cast<uint32_t>((std::chrono::high_resolution_clock::now() - start) / 1us);
+               {
+                  std::lock_guard lock(stateMutex);
+                  stateMsg = inputState[activeInputState];
+               }
                int sent = 0;
                while (sent < sizeof(stateMsg))
                {
@@ -357,18 +358,18 @@ void onGameStart(const unsigned int eventId, void* userData, void* eventData)
                   {
                      if (client.hasTimedOut())
                      {
-                        LOGE("RemoteControl failed to send input state over network (timed out), retrying");
+                        LOGE("RemoteControl failed to send input state over network (timed out), retrying"s);
                      }
                      else
                      {
-                        LOGE("RemoteControl failed to send input state over network, stopping");
+                        LOGE("RemoteControl failed to send input state over network, stopping"s);
                         runMode = RunMode::RunModeNone;
                      }
                      break;
                   }
                   sent += n;
                }
-               // LOGD("Sent %08x", stateMsg.timestamp);
+               // LOGD(std::format("Sent {:08x}", stateMsg.timestamp));
                int n = client.receiveData(reinterpret_cast<char*>(&stateMsg), 1);
                if (n == 1) // Acked, therefore connected
                {
@@ -386,55 +387,56 @@ void onGameStart(const unsigned int eventId, void* userData, void* eventData)
       msgApi->SubscribeMsg(endpointId, onActionEventId, onControllerActionEvent, nullptr);
       msgApi->SubscribeMsg(endpointId, onUpdatePhysicsId, onControllerUpdatePhysics, nullptr);
       msgApi->SubscribeMsg(endpointId, onPrepareFrameId, onPrepareFrame, nullptr);
-      float newNudgeX, newNudgeY, newPlunger;
-      // FIXME vpxApi->GetInputState(&actionState, &newNudgeX, &newNudgeY, &newPlunger);
    }
    else if (runModeProp_Val == 2)
    {
       runMode = RunMode::RunModePlayer;
-      LOGI("RemoteControl plugin started as player (server mode, using port: %d)", portProp_Val);
+      LOGI("RemoteControl plugin started as player (server mode, using port: "s + std::to_string(portProp_Val) + ')');
       udpThread = std::thread([]()
          {
-            StateMsg stateMsg;
             UdpServerSocket server(portProp_Val, 500);
             while (runMode != RunMode::RunModeNone)
             {
                int rcv = 0;
-               while (rcv < sizeof(stateMsg))
+               while (rcv < sizeof(StateMsg))
                {
-                  int n = server.receiveData(reinterpret_cast<char*>(&stateMsg) + rcv, sizeof(stateMsg) - rcv);
+                  int n = server.receiveData(reinterpret_cast<char*>(&inputState[1 - activeInputState]) + rcv, sizeof(StateMsg) - rcv);
                   if (n < 0)
                   {
                      // Just ignore failed request and continue to wait for messages
                      /* if (server.hasTimedOut())
                      {
-                        LOGE("RemoteControl failed to receive controller state (timed out), retrying");
+                        LOGE("RemoteControl failed to receive controller state (timed out), retrying"s);
                      }
                      else
                      {
-                        LOGE("RemoteControl failed to receive controller state, stopping");
+                        LOGE("RemoteControl failed to receive controller state, stopping"s);
                         runMode = RunMode::RunModeNone;
                      } */
                      break;
                   }
                   rcv += n;
                }
-               if (rcv == sizeof(stateMsg))
+               if (rcv == sizeof(StateMsg))
                {
-                  if (stateMsg.version != 0)
+                  if (inputState[1 - activeInputState].version != 0)
                   {
-                     LOGE("RemoteControl plugin versions do not match");
+                     LOGE("RemoteControl plugin versions do not match"s);
                      runMode = RunMode::RunModeNone;
                      break;
                   }
-                  //LOGD("Rcv ok %08x", stateMsg.timestamp);
-                  lastState = stateMsg;
-                  server.sendData(&stateMsg, 1);
+                  // LOGD(std::format("Rcv ok"));
+                  {
+                     std::lock_guard lock(stateMutex);
+                     activeInputState = 1 - activeInputState;
+                     lastReceivedMsgId++;
+                  }
+                  int acq = 0;
+                  server.sendData(&acq, 1);
                }
             }
             server.closeConnection();
          });
-      actionState = 0;
       msgApi->SubscribeMsg(endpointId, onUpdatePhysicsId, onPlayerUpdatePhysics, nullptr);
       msgApi->SubscribeMsg(endpointId, onPrepareFrameId, onPrepareFrame, nullptr);
    }
@@ -444,18 +446,18 @@ void onGameStart(const unsigned int eventId, void* userData, void* eventData)
    }
 }
 
-void stopThread()
+static void stopThread()
 {
    if (runMode == RunMode::RunModePlayer)
    {
-      msgApi->UnsubscribeMsg(onUpdatePhysicsId, onPlayerUpdatePhysics);
-      msgApi->UnsubscribeMsg(onPrepareFrameId, onPrepareFrame);
+      msgApi->UnsubscribeMsg(onUpdatePhysicsId, onPlayerUpdatePhysics, nullptr);
+      msgApi->UnsubscribeMsg(onPrepareFrameId, onPrepareFrame, nullptr);
    }
    else if (runMode == RunMode::RunModeController)
    {
-      msgApi->UnsubscribeMsg(onUpdatePhysicsId, onControllerUpdatePhysics);
-      msgApi->UnsubscribeMsg(onPrepareFrameId, onPrepareFrame);
-      msgApi->UnsubscribeMsg(onActionEventId, onControllerActionEvent);
+      msgApi->UnsubscribeMsg(onUpdatePhysicsId, onControllerUpdatePhysics, nullptr);
+      msgApi->UnsubscribeMsg(onPrepareFrameId, onPrepareFrame, nullptr);
+      msgApi->UnsubscribeMsg(onActionEventId, onControllerActionEvent, nullptr);
    }
    runMode = RunMode::RunModeNone;
    if (udpThread.joinable())
@@ -465,12 +467,12 @@ void stopThread()
    }
 }
 
-void onGameEnd(const unsigned int eventId, void* userData, void* eventData)
+static void onGameEnd(const unsigned int eventId, void* userData, void* eventData)
 {
    stopThread();
 }
 
-LPI_IMPLEMENT // Implement shared log support
+LPI_IMPLEMENT_CPP // Implement shared log support
 
 }
 
@@ -496,8 +498,8 @@ MSGPI_EXPORT void MSGPIAPI RemoteControlPluginLoad(const uint32_t sessionId, con
 MSGPI_EXPORT void MSGPIAPI RemoteControlPluginUnload()
 {
    stopThread();
-   msgApi->UnsubscribeMsg(onGameStartId, onGameStart);
-   msgApi->UnsubscribeMsg(onGameEndId, onGameEnd);
+   msgApi->UnsubscribeMsg(onGameStartId, onGameStart, nullptr);
+   msgApi->UnsubscribeMsg(onGameEndId, onGameEnd, nullptr);
    msgApi->ReleaseMsgID(getVpxApiId);
    msgApi->ReleaseMsgID(onGameStartId);
    msgApi->ReleaseMsgID(onGameEndId);

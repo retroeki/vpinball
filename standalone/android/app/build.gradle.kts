@@ -32,8 +32,8 @@ val versionCodeValue: Int by lazy {
 
 val versionFilename: String by lazy {
     val (maj, min, rev, build) = parseVersion(versionNameValue)
-    val sha7 = project.findProperty("sha7")?.toString()
-    val value = if (sha7 != null) "$maj.$min.$rev-$build-$sha7" else "$maj.$min.$rev-$build"
+    val shaShort = project.findProperty("sha_short")?.toString()
+    val value = if (shaShort != null) "$maj.$min.$rev-$build-$shaShort" else "$maj.$min.$rev-$build"
     println("versionFilename: $value")
     value
 }
@@ -61,6 +61,9 @@ tasks {
         from("${layout.buildDirectory}/../../../../plugins/flexdmd/assets") {
            into("plugins/flexdmd/assets")
         }
+        from("${layout.buildDirectory}/../../../../plugins/inspector/assets") {
+           into("plugins/inspector/assets")
+        }
         into(destinationDir)
     }
 
@@ -79,7 +82,6 @@ android {
         targetSdk = 35
         versionCode = versionCodeValue
         versionName = versionNameValue
-        setProperty("archivesBaseName", "VPinball_BGFX-$versionFilename")
 
         vectorDrawables { useSupportLibrary = true }
 
@@ -122,12 +124,21 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures {
         buildConfig = true
         compose = true
     }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+}
+
+base {
+    archivesName.set("VPinballX_BGFX-$versionFilename")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 ktfmt {

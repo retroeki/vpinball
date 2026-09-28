@@ -9,36 +9,23 @@ enum VPinballLogLevel: CInt {
     case error
 }
 
+enum VPinballPath: CInt {
+    case root
+    case tables
+    case preferences
+    case assets
+}
+
 enum VPinballStatus: CInt {
     case success
     case failure
 }
 
 enum VPinballSettingsSection: String {
+    case global = "Global"
     case standalone = "Standalone"
     case player = "Player"
     case pluginDMDUtil = "Plugin.DMDUtil"
-}
-
-enum VPinballViewMode: CInt {
-    case desktopFSS
-    case cabinet
-    case desktopNoFSS
-
-    static let all: [VPinballViewMode] = [.desktopFSS,
-                                          .cabinet,
-                                          .desktopNoFSS]
-
-    var name: String {
-        switch self {
-        case .desktopFSS:
-            return "Desktop & FSS"
-        case .cabinet:
-            return "Cabinet"
-        case .desktopNoFSS:
-            return "Desktop (no FSS)"
-        }
-    }
 }
 
 enum VPinballMaxTexDimension: CInt {
@@ -52,7 +39,7 @@ enum VPinballMaxTexDimension: CInt {
     case max1536 = 1536
     case max1792 = 1792
     case max2048 = 2048
-    case max3172 = 3172
+    case max3072 = 3072
     case max4096 = 4096
 
     static let all: [VPinballMaxTexDimension] = [.max256,
@@ -64,7 +51,7 @@ enum VPinballMaxTexDimension: CInt {
                                                  .max1536,
                                                  .max1792,
                                                  .max2048,
-                                                 .max3172,
+                                                 .max3072,
                                                  .max4096,
                                                  .unlimited]
 
@@ -97,31 +84,21 @@ enum VPinballExternalDMD: CInt {
 // VPinball Event Enums
 
 enum VPinballEvent: CInt {
-    case loadingItems
-    case loadingSounds
-    case loadingImages
-    case loadingFonts
-    case loadingCollections
+    case initComplete
+    case extractScript
+    case loading
     case prerendering
     case playerStarted
-    case rumble
-    case scriptError
     case playerClosed
     case webServer
     case command
 
     var name: String? {
         switch self {
-        case .loadingItems:
-            return "Loading Items"
-        case .loadingSounds:
-            return "Loading Sounds"
-        case .loadingImages:
-            return "Loading Images"
-        case .loadingFonts:
-            return "Loading Fonts"
-        case .loadingCollections:
-            return "Loading Collections"
+        case .extractScript:
+            return "Extracting Script"
+        case .loading:
+            return "Loading"
         case .prerendering:
             return "Prerendering Static Parts"
         default:
@@ -130,37 +107,10 @@ enum VPinballEvent: CInt {
     }
 }
 
-enum VPinballScriptErrorType: CInt {
-    case compile
-    case runtime
-
-    var name: String {
-        switch self {
-        case .compile:
-            return "Compile error"
-        case .runtime:
-            return "Runtime error"
-        }
-    }
-}
-
 // Event Data Structures
 
 struct ProgressEventData: Codable {
     let progress: Int
-}
-
-struct RumbleData: Codable {
-    let lowFrequencyRumble: UInt16
-    let highFrequencyRumble: UInt16
-    let durationMs: UInt32
-}
-
-struct ScriptErrorData: Codable {
-    let error: Int
-    let line: Int
-    let position: Int
-    let description: String
 }
 
 struct WebServerData: Codable {
@@ -175,6 +125,7 @@ struct CommandData: Codable {
 // VPinball Callbacks (hybrid approach: JSON)
 
 typealias VPinballEventCallback = @convention(c) (CInt, UnsafePointer<CChar>?) -> Void
+typealias VPinballRumbleCallback = @convention(c) (Float, Float, CUnsignedInt) -> Void
 
 // VPinball C Definitions
 
@@ -182,13 +133,10 @@ typealias VPinballEventCallback = @convention(c) (CInt, UnsafePointer<CChar>?) -
 func VPinballGetVersionStringFull() -> UnsafePointer<CChar>
 
 @_silgen_name("VPinballInit")
-func VPinballInit(_ callback: VPinballEventCallback)
+func VPinballInit(_ eventCallback: VPinballEventCallback, _ rumbleCallback: VPinballRumbleCallback?)
 
 @_silgen_name("VPinballLog")
 func VPinballLog(_ level: CInt, _ pMessage: UnsafePointer<CChar>)
-
-@_silgen_name("VPinballResetLog")
-func VPinballResetLog()
 
 @_silgen_name("VPinballLoadValueInt")
 func VPinballLoadValueInt(_ section: UnsafePointer<CChar>, _ pKey: UnsafePointer<CChar>, _ defaultValue: CInt) -> CInt
@@ -220,14 +168,25 @@ func VPinballResetIni() -> CInt
 @_silgen_name("VPinballUpdateWebServer")
 func VPinballUpdateWebServer()
 
+@_silgen_name("VPinballGetPath")
+func VPinballGetPath(_ pathType: CInt) -> UnsafePointer<CChar>
+
 @_silgen_name("VPinballLoadTable")
 func VPinballLoadTable(_ pPath: UnsafePointer<CChar>) -> CInt
 
 @_silgen_name("VPinballExtractTableScript")
-func VPinballExtractTableScript() -> CInt
+func VPinballExtractTableScript(_ pPath: UnsafePointer<CChar>) -> CInt
 
 @_silgen_name("VPinballPlay")
 func VPinballPlay() -> CInt
 
 @_silgen_name("VPinballStop")
 func VPinballStop()
+
+typealias VPinballZipCallback = @convention(c) (CInt, CInt, UnsafePointer<CChar>?) -> Void
+
+@_silgen_name("VPinballZipCreate")
+func VPinballZipCreate(_ pSourcePath: UnsafePointer<CChar>, _ pDestPath: UnsafePointer<CChar>, _ callback: VPinballZipCallback?) -> CInt
+
+@_silgen_name("VPinballZipExtract")
+func VPinballZipExtract(_ pSourcePath: UnsafePointer<CChar>, _ pDestPath: UnsafePointer<CChar>, _ callback: VPinballZipCallback?) -> CInt

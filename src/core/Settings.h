@@ -2,14 +2,12 @@
 
 #pragma once
 
-#define MINI_CASE_SENSITIVE
-#include "mINI/ini.h"
+#include "core/PropertyRegistry.h"
+#include "core/LayeredINIPropertyStore.h"
+#include "core/vpversion.h"
+#include "renderer/typedefs3D.h"
+
 #include "unordered_dense.h"
-
-#include "PropertyRegistry.h"
-#include "LayeredINIPropertyStore.h"
-
-#include "vpversion.h"
 
 
 // This class holds the settings registry.
@@ -21,8 +19,8 @@ public:
    Settings();
    Settings(Settings *parent);
 
-   void SetIniPath(const string &path);
-   const string &GetIniPath() const;
+   void SetIniPath(const std::filesystem::path &path);
+   const std::filesystem::path &GetIniPath() const;
    void Reset();
    bool Load(const bool createDefault);
    void Load(const Settings &settings);
@@ -190,7 +188,7 @@ public:
 
 #define PropFloatStepped(groupId, propId, label, comment, minVal, maxVal, step, defVal) PropFloatBase(groupId, propId, label, comment, false, minVal, maxVal, step, defVal)
 #define PropFloatSteppedDyn(groupId, propId, label, comment, minVal, maxVal, step, defVal) PropFloatBase(groupId, propId, label, comment, true, minVal, maxVal, step, defVal)
-#define PropFloatUnbounded(groupId, propId, label, comment, defVal) PropFloatBase(groupId, propId, label, comment, false, FLT_MIN, FLT_MAX, 0.f, defVal)
+#define PropFloatUnbounded(groupId, propId, label, comment, defVal) PropFloatBase(groupId, propId, label, comment, false, -FLT_MAX, FLT_MAX, 0.f, defVal)
 #define PropFloat(groupId, propId, label, comment, minVal, maxVal, defVal) PropFloatBase(groupId, propId, label, comment, false, minVal, maxVal, 0.f, defVal)
 #define PropFloatDyn(groupId, propId, label, comment, minVal, maxVal, defVal) PropFloatBase(groupId, propId, label, comment, true, minVal, maxVal, 0.f, defVal)
 

@@ -7,12 +7,20 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
-#include "standalone/PoleStorage.h"
+#if defined(__APPLE__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#elif defined(__linux__) || defined(__ANDROID__)
+#include <sys/vfs.h>
+#endif
 #include "core/ScriptArrayList.h"
 #include "core/ScriptShellApplication.h"
-#include "core/ScriptWScriptShell.h"
 #endif
 
+#include "core/VPApp.h"
+#include "core/resourceid.h"
+
+#include <atomic>
 #include <charconv>
 #include <iomanip>
 #include <filesystem>
@@ -20,7 +28,17 @@
 #include <pthread.h>
 #endif
 
-static const char point = std::use_facet<std::numpunct<char>>(std::locale("")).decimal_point(); // gets the OS locale decimal point (e.g. ',' or '.')
+#ifdef __MINGW32__
+#include <winnls.h>
+static const char point = []() -> char {
+   char buf[4];
+   if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SDECIMAL, buf, sizeof(buf)) > 0)
+      return buf[0];
+   return '.';
+}();
+#else
+static const char point = std::use_facet<std::numpunct<char>>(std::locale("")).decimal_point();
+#endif
 
 uint64_t mwc64x_state = 4077358422479273989ull;
 
@@ -121,18 +139,38 @@ string f2sz(const float f, const bool can_convert_decimal_point)
 #endif
 }
 
+wstring f2wz(const float f, const bool can_convert_decimal_point)
+{
+   wstring wz = std::to_wstring(f);
+   const size_t pos = wz.find_first_of(L'.');
+   if (pos != wstring::npos)
+   {
+      if (can_convert_decimal_point && point != '.') // fix locales that use a ',' instead of the C '.' as decimal point
+         wz[pos] = point;
+
+      size_t pos0 = wz.find_last_not_of(L'0');
+      if (pos0 == pos)
+         pos0++;
+      wz.erase(pos0 + 1, wstring::npos); // remove trailing zeros, but leave .0 for integers (line above), as then its clearer that a decimal point can be used for a certain setting!
+   }
+
+   return wz;
+}
+
 LocalString::LocalString(const int resid)
 {
    m_szbuffer[0] = '\0';
 #ifndef __STANDALONE__
    if (resid > 0)
    {
-      /*const int cchar =*/ LoadString(g_pvp->theInstance, resid, m_szbuffer, sizeof(m_szbuffer));
+      // Note that with the char version of LoadString one cannot get a pointer to the internal buffer directly
+      /*const int cchar =*/LoadString(g_app->GetInstanceHandle(), resid, m_szbuffer, sizeof(m_szbuffer));
       m_szbuffer[std::size(m_szbuffer)-1] = '\0'; // in case of truncation
    }
 #else
    static const ankerl::unordered_dense::map<int, const char*> ids_map = {
      { IDS_SCRIPT, "Script" },
+     { IDS_SAVEERROR, "There was an error saving the file." },
      { IDS_TB_BUMPER, "Bumper" },
      { IDS_TB_DECAL, "Decal" },
      { IDS_TB_DISPREEL, "EMReel" },
@@ -161,39 +199,40 @@ LocalString::LocalString(const int resid)
 
 LocalStringW::LocalStringW(const int resid)
 {
-   m_szbuffer[0] = L'\0';
 #ifndef __STANDALONE__
    if (resid > 0)
    {
-      LoadStringW(g_pvp->theInstance, resid, m_szbuffer, static_cast<int>(std::size(m_szbuffer)));
-      m_szbuffer[std::size(m_szbuffer)-1] = L'\0'; // in case of truncation
+      LPWSTR strPtr = nullptr;
+      const int len = LoadStringW(g_app->GetInstanceHandle(), resid, reinterpret_cast<LPWSTR>(&strPtr), 0);
+      if (len > 0 && strPtr)
+         m_buffer = wstring(strPtr, len);
    }
 #else
-   static const ankerl::unordered_dense::map<int, const WCHAR*> ids_map = {
-     { IDS_SCRIPT, L"Script" },
-     { IDS_TB_BUMPER, L"Bumper" },
-     { IDS_TB_DECAL, L"Decal" },
-     { IDS_TB_DISPREEL, L"EMReel" },
-     { IDS_TB_FLASHER, L"Flasher" },
-     { IDS_TB_FLIPPER, L"Flipper" },
-     { IDS_TB_GATE, L"Gate" },
-     { IDS_TB_KICKER, L"Kicker" },
-     { IDS_TB_LIGHT, L"Light" },
-     { IDS_TB_LIGHTSEQ, L"LightSeq" },
-     { IDS_TB_PLUNGER, L"Plunger" },
-     { IDS_TB_PRIMITIVE, L"Primitive" },
-     { IDS_TB_WALL, L"Wall" },
-     { IDS_TB_RAMP, L"Ramp" },
-     { IDS_TB_RUBBER, L"Rubber" },
-     { IDS_TB_SPINNER, L"Spinner" },
-     { IDS_TB_TEXTBOX, L"TextBox" },
-     { IDS_TB_TIMER, L"Timer" },
-     { IDS_TB_TRIGGER, L"Trigger" },
-     { IDS_TB_TARGET, L"Target" }
+   static const ankerl::unordered_dense::map<int, const wstring> ids_map = {
+     { IDS_SCRIPT, L"Script"s },
+     { IDS_TB_BUMPER, L"Bumper"s },
+     { IDS_TB_DECAL, L"Decal"s },
+     { IDS_TB_DISPREEL, L"EMReel"s },
+     { IDS_TB_FLASHER, L"Flasher"s },
+     { IDS_TB_FLIPPER, L"Flipper"s },
+     { IDS_TB_GATE, L"Gate"s },
+     { IDS_TB_KICKER, L"Kicker"s },
+     { IDS_TB_LIGHT, L"Light"s },
+     { IDS_TB_LIGHTSEQ, L"LightSeq"s },
+     { IDS_TB_PLUNGER, L"Plunger"s },
+     { IDS_TB_PRIMITIVE, L"Primitive"s },
+     { IDS_TB_WALL, L"Wall"s },
+     { IDS_TB_RAMP, L"Ramp"s },
+     { IDS_TB_RUBBER, L"Rubber"s },
+     { IDS_TB_SPINNER, L"Spinner"s },
+     { IDS_TB_TEXTBOX, L"TextBox"s },
+     { IDS_TB_TIMER, L"Timer"s },
+     { IDS_TB_TRIGGER, L"Trigger"s },
+     { IDS_TB_TARGET, L"Target"s }
    };
-   const ankerl::unordered_dense::map<int, const WCHAR*>::const_iterator it = ids_map.find(resid);
+   const ankerl::unordered_dense::map<int, const wstring>::const_iterator it = ids_map.find(resid);
    if (it != ids_map.end())
-      wcsncpy_s(m_szbuffer, std::size(m_szbuffer), it->second);
+      m_buffer = it->second;
 #endif
 }
 
@@ -204,162 +243,240 @@ string SizeToReadable(const size_t bytes)
 
    // Format with one decimal for KiB and above, no decimal for bytes
    if (bytes < 1024)
-      return std::to_string(bytes) + " B";
+      return std::format("{} B", bytes);
 
-   double size = static_cast<double>(bytes);
+   double size = static_cast<double>(bytes) / 1024.0;
    int suffixIndex = 0;
-   while (size >= 1024.0 && suffixIndex++ < (int)std::size(suffixes)-1)
+   while (size >= 1024.0 && suffixIndex < (int)std::size(suffixes) - 1)
+   {
+      suffixIndex++;
       size /= 1024.0;
+   }
 
    const int whole = (int)size;
-   return std::to_string(whole) + '.' + std::to_string((int)((size-whole)*10.0 + 0.5)) + ' ' + suffixes[suffixIndex-1] + "iB";
+   return std::format("{}.{} {}iB", whole, (int)((size - whole) * 10.0 + 0.5), suffixes[suffixIndex]);
 }
 
-WCHAR *MakeWide(const char* const sz)
+//
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+// returns true if szcstr is 100% ASCII, in that case result also contains the converted WCHARs (but no null terminator!)
+// (szcstr can be any codepage)
+static bool HelperConvertASCII(const char* const __restrict szcstr, const int len, WCHAR* const __restrict result)
 {
-   const int len = MultiByteToWideChar(CP_ACP, 0, sz, -1, nullptr, 0); //(int)strlen(sz) + 1; // include null termination
-   if (len <= 1)
+   int i = 0;
+   const __m128i zero = _mm_setzero_si128();
+   for (; i+16 <= len; i+=16) // check 16 bytes, then widen to 16 WCHARs per iteration, or break if non-ASCII found
    {
-      WCHAR * const wzT = new WCHAR[1];
-      wzT[0] = L'\0';
-      return wzT;
-   }
-   WCHAR * const wzT = new WCHAR[len];
-   MultiByteToWideChar(CP_ACP, 0, sz, -1, wzT, len);
-   return wzT;
-}
-
-BSTR MakeWideBSTR(const string& sz)
-{
-   const int len = MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, nullptr, 0); //(int)sz.length() + 1; // include null termination
-   if (len <= 1)
-      return SysAllocString(L"");
-   BSTR wzT = SysAllocStringLen(nullptr, len - 1);
-   MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, wzT, len);
-   return wzT;
-}
-
-WCHAR *MakeWide(const string& sz)
-{
-   const int len = MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, nullptr, 0); //(int)sz.length() + 1; // include null termination
-   if (len <= 1)
-   {
-      WCHAR * const wzT = new WCHAR[1];
-      wzT[0] = L'\0';
-      return wzT;
-   }
-   WCHAR * const wzT = new WCHAR[len];
-   MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, wzT, len);
-   return wzT;
-}
-
-string MakeString(const wstring &wz)
-{
-   const int len = WideCharToMultiByte(CP_ACP, 0, wz.c_str(), -1, nullptr, 0, nullptr, nullptr); //(int)wz.length() + 1; // include null termination
-   if (len <= 1)
-      return string();
-   string result(len - 1, '\0');
-   WideCharToMultiByte(CP_ACP, 0, wz.c_str(), -1, result.data(), len, nullptr, nullptr);
-   return result;
-}
-
-string MakeString(const WCHAR* const wz)
-{
-   const int len = WideCharToMultiByte(CP_ACP, 0, wz, -1, nullptr, 0, nullptr, nullptr); //(int)wcslen(wz) + 1; // include null termination
-   if (len <= 1)
-      return string();
-   string result(len - 1, '\0');
-   WideCharToMultiByte(CP_ACP, 0, wz, -1, result.data(), len, nullptr, nullptr);
-   return result;
-}
-
-string MakeString(const BSTR wz)
-{
-   const int len = WideCharToMultiByte(CP_ACP, 0, wz, -1, nullptr, 0, nullptr, nullptr); //(int)SysStringLen(wz) + 1; // include null termination
-   if (len <= 1)
-      return string();
-   string result(len - 1, '\0');
-   WideCharToMultiByte(CP_ACP, 0, wz, -1, result.data(), len, nullptr, nullptr);
-   return result;
-}
-
-wstring MakeWString(const string &sz)
-{
-   const int len = MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, nullptr, 0); //(int)sz.length() + 1; // include null termination
-   if (len <= 1)
-      return wstring();
-   wstring result(len - 1, L'\0');
-   MultiByteToWideChar(CP_ACP, 0, sz.c_str(), -1, result.data(), len);
-   return result;
-}
-
-wstring MakeWString(const char * const sz)
-{
-   const int len = MultiByteToWideChar(CP_ACP, 0, sz, -1, nullptr, 0); //(int)strlen(sz) + 1; // include null termination
-   if (len <= 1)
-      return wstring();
-   wstring result(len - 1, L'\0');
-   MultiByteToWideChar(CP_ACP, 0, sz, -1, result.data(), len);
-   return result;
-}
-
-char *MakeChar(const WCHAR* const wz)
-{
-   const int len = WideCharToMultiByte(CP_ACP, 0, wz, -1, nullptr, 0, nullptr, nullptr); //(int)wcslen(wz) + 1; // include null termination
-   if (len <= 1)
-   {
-      char * const szT = new char[1];
-      szT[0] = '\0';
-      return szT;
-   }
-   char * const szT = new char[len];
-   WideCharToMultiByte(CP_ACP, 0, wz, -1, szT, len, nullptr, nullptr);
-   return szT;
-}
-
-HRESULT OpenURL(const string& szURL)
-{
-#ifdef _WIN32
-   IUniformResourceLocator* pURL;
-
-   HRESULT hres = CoCreateInstance(CLSID_InternetShortcut, nullptr, CLSCTX_INPROC_SERVER, IID_IUniformResourceLocator, (void**)&pURL);
-   if (FAILED(hres))
-   {
-      return hres;
-   }
-
-   hres = pURL->SetURL(szURL.c_str(), IURL_SETURL_FL_GUESS_PROTOCOL);
-
-   if (FAILED(hres))
-   {
-      pURL->Release();
-      return hres;
-   }
-
-   //Open the URL by calling InvokeCommand
-   URLINVOKECOMMANDINFO ivci;
-   ivci.dwcbSize = sizeof(URLINVOKECOMMANDINFO);
-   ivci.dwFlags = IURL_INVOKECOMMAND_FL_ALLOW_UI;
-   ivci.hwndParent = g_pvp->GetHwnd();
-   ivci.pcszVerb = "open";
-   hres = pURL->InvokeCommand(&ivci);
-   pURL->Release();
-   return hres;
-#else
-   return 0L;
+      const __m128i sz16 = _mm_loadu_si128((const __m128i*)(szcstr + i));
+      if (_mm_movemask_epi8(sz16) != 0) // test highest bit of each byte, so check for >=0x80 -> non-ASCII
+         return false;
+#if (WCHAR_T_SIZE == 2) // UTF16
+      _mm_storeu_si128((__m128i*)(result + i    ), _mm_unpacklo_epi8(sz16, zero)); // zero-extend 16 bytes -> 2x8 uint16 and store
+      _mm_storeu_si128((__m128i*)(result + i + 8), _mm_unpackhi_epi8(sz16, zero));
+#else // UTF32
+      // zero-extend 16 bytes -> 4×4 uint32 and store
+      const __m128i lo16 = _mm_unpacklo_epi8(sz16, zero); // uint8 -> uint16
+      const __m128i hi16 = _mm_unpackhi_epi8(sz16, zero);
+      _mm_storeu_si128((__m128i*)(result + i     ), _mm_unpacklo_epi16(lo16, zero)); // uint16 -> uint32
+      _mm_storeu_si128((__m128i*)(result + i +  4), _mm_unpackhi_epi16(lo16, zero));
+      _mm_storeu_si128((__m128i*)(result + i +  8), _mm_unpacklo_epi16(hi16, zero));
+      _mm_storeu_si128((__m128i*)(result + i + 12), _mm_unpackhi_epi16(hi16, zero));
 #endif
+   }
+   for (; i < len; ++i)
+   {
+      if (static_cast<unsigned char>(szcstr[i]) > 0x7F) // non-ASCII?
+         return false;
+      result[i] = static_cast<WCHAR>(szcstr[i]);
+   }
+   return true; // all ASCII
 }
+#endif
+
+WCHAR *MakeWide(const string& sz, const UINT codepage)
+{
+   // assume that we usually deal with (mostly) ASCII, so then the following over-allocation is (mostly) exact
+   // this will speed up both the full ASCII and the non-ASCII fallback cases (1.1x-20x incl. SIMD path); BUT allocates 1x (all ASCII) up to (overallocating) 3x (all non-ASCII), works for all codepages (not just CP_ACP), thus saving one Win-API call
+   int len = (int)sz.length();
+   WCHAR* const __restrict result = new WCHAR[len+1];
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+   if (!HelperConvertASCII(sz.c_str(), len, result)) // Non-ASCII found? -> Trigger Win-API conversion
+#endif
+      len = MultiByteToWideChar(codepage, 0, sz.c_str(), len, result, len+1);
+   result[len] = L'\0';
+   return result;
+}
+
+BSTR MakeWideBSTR(const string& sz, const UINT codepage)
+{
+   // assume that we usually deal with (mostly) ASCII, so then the following over-allocation is (mostly) exact
+   // this will speed up both the full ASCII and the non-ASCII fallback cases (1.1x-20x incl. SIMD path); BUT allocates 1x (all ASCII) up to (overallocating) 3x (all non-ASCII), works for all codepages (not just CP_ACP), thus saving one Win-API call
+   //!! note that this BSTR variant only reaches about 1.1x-1.9x speed up, due to more Win-API overhead
+   //   and in the non-ASCII case an additional alloc+copy, but this also removes the overallocation
+   const int szlen = (int)sz.length();
+   if (szlen == 0)
+      return SysAllocString(L"");
+
+   BSTR result = SysAllocStringLen(nullptr, szlen);
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+   if (HelperConvertASCII(sz.c_str(), szlen, result)) // all ASCII? -> done
+      return result;
+#endif
+
+   const int len = MultiByteToWideChar(codepage, 0, sz.c_str(), szlen, result, szlen+1);
+   if (len < szlen) // shrink the BSTR if the actual conversion produced fewer WCHARs (or if above call errors with 0)
+   {
+      BSTR trimmed = SysAllocStringLen(result, len);
+      SysFreeString(result);
+      return trimmed;
+   }
+   return result;
+}
+
+// Just for convenience and native file system path conversion
+BSTR MakeWideBSTR(const wstring& wz)
+{
+   return SysAllocStringLen(wz.c_str(), (UINT)wz.length());
+}
+
+wstring MakeWString(const string& sz, const UINT codepage)
+{
+   // assume that we usually deal with (mostly) ASCII, so then the following over-allocation is (mostly) exact
+   // this will speed up both the full ASCII and the non-ASCII fallback cases (1.1x-20x incl. SIMD path); BUT allocates 1x (all ASCII) up to (overallocating) 3x (all non-ASCII), works for all codepages (not just CP_ACP), thus saving one Win-API call
+   //!! note that this wstring variant only reaches about 1.3x-3.4x speed up
+   int len = (int)sz.length();
+   wstring result(len, L'\0');
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+   if (HelperConvertASCII(sz.c_str(), len, result.data())) // all ASCII? -> done
+      return result;
+#endif
+   len = MultiByteToWideChar(codepage, 0, sz.c_str(), len, result.data(), len+1);
+   result.resize(len); //!! potentially reallocs
+   return result;
+}
+
+wstring MakeWString(const char* const sz, const UINT codepage)
+{
+   // assume that we usually deal with (mostly) ASCII, so then the following over-allocation is (mostly) exact
+   // this will speed up both the full ASCII and the non-ASCII fallback cases (1.1x-20x incl. SIMD path); BUT allocates 1x (all ASCII) up to (overallocating) 3x (all non-ASCII), works for all codepages (not just CP_ACP), thus saving one Win-API call
+   //!! note that this wstring variant only reaches about 1.2x-3.2x speed up
+   int len = (int)strlen(sz);
+   wstring result(len, L'\0');
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+   if (HelperConvertASCII(sz, len, result.data())) // all ASCII? -> done
+      return result;
+#endif
+   len = MultiByteToWideChar(codepage, 0, sz, len, result.data(), len+1);
+   result.resize(len); //!! potentially reallocs
+   return result;
+}
+
+//
+
+#ifdef ENABLE_SSE_OPTIMIZATIONS
+// returns true if wzcstr is 100% ASCII
+static bool HelperIsASCII(const WCHAR* const __restrict wzcstr, const int len)
+{
+   int i = 0;
+   const __m128i zero = _mm_setzero_si128();
+   // mask/check bits above ASCII range, so if any character is >0x7f, it's non-ASCII
+#if (WCHAR_T_SIZE == 2) // UTF16
+   const __m128i mask = _mm_set1_epi16(~(short)0x7F);
+   for (; i+8 <= len; i+=8)
+      if (_mm_movemask_epi8(_mm_cmpeq_epi16(_mm_and_si128(_mm_loadu_si128((const __m128i*)(wzcstr + i)), mask), zero)) != 0xFFFF)
+         return false; // non-ASCII found
+#else // UTF32
+   const __m128i mask = _mm_set1_epi32(~(int)0x7F);
+   for (; i+4 <= len; i+=4)
+      if (_mm_movemask_epi8(_mm_cmpeq_epi32(_mm_and_si128(_mm_loadu_si128((const __m128i*)(wzcstr + i)), mask), zero)) != 0xFFFF)
+         return false; // non-ASCII found
+#endif
+   for (; i < len; ++i)
+      if (static_cast<unsigned int>(wzcstr[i]) > 0x7F)
+         return false; // dto.
+   return true; // all ASCII
+}
+#endif
+
+string MakeString(const wstring& wz, const UINT codepage)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // 1.5x-8.5x faster for all ASCII cases
+#pragma warning(push)
+#pragma warning(disable : 4244) // conversion from wchar to char
+   if (HelperIsASCII(wz.c_str(), (int)wz.length()))
+      return string(wz.begin(), wz.end()); // all ASCII
+#pragma warning(pop)
+#endif
+
+   // non-ASCII found
+   // Note: Even in this case, the additional SIMD detection loop above is barely noticeable, thus overall performance is still ~1x
+   // Note: Overallocation (by up to 3x (UTF16) or 4x (UTF32), depending-on/for-all codepages (not just CP_ACP)) instead of exact allocation (similar to MakeWide) is not efficient as the assumption is that most of the chars will be ASCII (such benchmarks are significantly slower then)
+   const int len = WideCharToMultiByte(codepage, 0, wz.c_str(), -1, nullptr, 0, nullptr, nullptr);
+   if (len <= 1)
+      return string();
+   string result(len-1, '\0');
+   WideCharToMultiByte(codepage, 0, wz.c_str(), -1, result.data(), len, nullptr, nullptr);
+   return result;
+}
+
+string MakeString(const WCHAR* const wz, const UINT codepage)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // 1.5x-8.5x faster for all ASCII cases
+   const int wzlen = (int)wcslen(wz); //!! this penalties the non-ASCII case, dropping perf to 0.8x-0.9x instead of ~1x
+#pragma warning(push)
+#pragma warning(disable : 4244) // conversion from wchar to char
+   if (HelperIsASCII(wz, wzlen))
+      return string(wz, wz + wzlen); // all ASCII
+#pragma warning(pop)
+#endif
+
+   // non-ASCII found
+   // Note: Even in this case, the additional SIMD detection loop above is barely noticeable, thus overall performance is still ~1x
+   // Note: Overallocation (by up to 3x (UTF16) or 4x (UTF32), depending-on/for-all codepages (not just CP_ACP)) instead of exact allocation (similar to MakeWide) is not efficient as the assumption is that most of the chars will be ASCII (such benchmarks are significantly slower then)
+   const int len = WideCharToMultiByte(codepage, 0, wz, -1, nullptr, 0, nullptr, nullptr);
+   if (len <= 1)
+      return string();
+   string result(len-1, '\0');
+   WideCharToMultiByte(codepage, 0, wz, -1, result.data(), len, nullptr, nullptr);
+   return result;
+}
+
+string MakeString(const BSTR wz, const UINT codepage)
+{
+#ifdef ENABLE_SSE_OPTIMIZATIONS // 1.5x-8.5x faster for all ASCII cases
+   const int wzlen = (int)SysStringLen(wz);
+#pragma warning(push)
+#pragma warning(disable : 4244) // conversion from wchar to char
+   if (HelperIsASCII(wz, wzlen))
+      return string(wz, wz + wzlen); // all ASCII
+#pragma warning(pop)
+#endif
+
+   // non-ASCII found
+   // Note: Even in this case, the additional SIMD detection loop above is barely noticeable, thus overall performance is still ~1x
+   // Note: Overallocation (by up to 3x (UTF16) or 4x (UTF32), depending-on/for-all codepages (not just CP_ACP)) instead of exact allocation (similar to MakeWide) is not efficient as the assumption is that most of the chars will be ASCII (such benchmarks are significantly slower then)
+   const int len = WideCharToMultiByte(codepage, 0, wz, -1, nullptr, 0, nullptr, nullptr);
+   if (len <= 1)
+      return string();
+   string result(len-1, '\0');
+   WideCharToMultiByte(codepage, 0, wz, -1, result.data(), len, nullptr, nullptr);
+   return result;
+}
+
+//
 
 #ifdef _WIN32
 void SetThreadName(const std::string& name)
 {
-   const int size_needed = MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1, nullptr, 0);
-   if (size_needed <= 1)
+   const wstring wname = MakeWString(name, CP_UTF8);
+   if (wname.empty())
       return;
-   std::wstring wstr(size_needed - 1, L'\0');
-   if (MultiByteToWideChar(CP_UTF8, 0, name.c_str(), -1, wstr.data(), size_needed) == 0)
-      return;
-   HRESULT hr = SetThreadDescription(GetCurrentThread(), wstr.c_str());
+   HRESULT hr = SetThreadDescription(GetCurrentThread(), wname.c_str());
 }
 #else
 void SetThreadName(const std::string& name)
@@ -443,14 +560,61 @@ bool IsWindowsVistaOr7()
 }
 #endif
 
-vector<uint8_t> read_file(const string& filename, const bool binary)
+static std::atomic<UserMessageSink*> s_userMessageSink = nullptr;
+
+UserMessageSink* SetUserMessageSink(UserMessageSink* const sink) { return s_userMessageSink.exchange(sink); }
+
+void ShowMessage(const MsgSeverity severity, const string& message, const string& title)
+{
+   switch (severity)
+   {
+   case MsgSeverity::Info: PLOGI << message; break;
+   case MsgSeverity::Warning: PLOGW << message; break;
+   case MsgSeverity::Error:
+   case MsgSeverity::Fatal: PLOGE << message; break;
+   }
+   UserMessageSink* const sink = s_userMessageSink.load();
+   if (sink)
+      sink->Notify(severity, title.empty() ? ((severity == MsgSeverity::Error || severity == MsgSeverity::Fatal) ? "Visual Pinball Error"s : "Visual Pinball"s) : title, message);
+}
+
+void ShowError(const char* const sz) { ShowMessage(MsgSeverity::Error, sz); }
+
+void ShowFatalError(const string& message) { ShowMessage(MsgSeverity::Fatal, message); }
+
+bool AskUser(const string& question, const string& title, const bool fallback)
+{
+   UserMessageSink* const sink = s_userMessageSink.load();
+   if (sink == nullptr)
+   {
+      PLOGI << "User question '" << question << "' answered with fallback (" << (fallback ? "yes" : "no") << ") as no message sink is installed";
+      return fallback;
+   }
+   const bool answer = sink->Confirm(title.empty() ? "Visual Pinball"s : title, question, fallback);
+   PLOGI << "User question '" << question << "' answered: " << (answer ? "yes" : "no");
+   return answer;
+}
+
+#ifndef __STANDALONE__
+void Win32DialogSink::Notify(const MsgSeverity severity, const string& title, const string& message)
+{
+   const UINT icon = severity == MsgSeverity::Info ? MB_ICONINFORMATION : severity == MsgSeverity::Warning ? MB_ICONWARNING : MB_ICONERROR;
+   ::MessageBox(m_parent, message.c_str(), title.c_str(), MB_OK | icon);
+}
+
+bool Win32DialogSink::Confirm(const string& title, const string& message, const bool fallback)
+{
+   return ::MessageBox(m_parent, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION | (fallback ? MB_DEFBUTTON1 : MB_DEFBUTTON2)) == IDYES;
+}
+#endif
+
+vector<uint8_t> read_file(const std::filesystem::path& filename, const bool binary)
 {
    vector<uint8_t> data;
    std::ifstream file(filename, binary ? (std::ios::binary | std::ios::ate) : std::ios::ate);
    if (!file)
    {
-      const string text = "The file \"" + filename + "\" could not be opened.";
-      ShowError(text);
+      ShowError("The file \"" + filename.string() + "\" could not be opened.");
       return data;
    }
    data.resize((size_t)file.tellg());
@@ -473,6 +637,47 @@ void write_file(const string& filename, const vector<uint8_t>& data, const bool 
    file.close();
 }
 
+bool IsNetworkPath(const std::filesystem::path& path)
+{
+#ifndef __STANDALONE__
+   // Windows: a UNC path (\\server\share or //server/share) is always remote. Otherwise ask the
+   // drive type of the path's root.
+   const std::wstring wpath = path.native();
+   if (wpath.size() >= 2 && (wpath[0] == L'\\' || wpath[0] == L'/') && (wpath[1] == L'\\' || wpath[1] == L'/'))
+      return true;
+   const std::filesystem::path root = path.root_path();
+   if (root.empty())
+      return false;
+   return GetDriveTypeW(root.wstring().c_str()) == DRIVE_REMOTE;
+#elif defined(__APPLE__)
+   // macOS/BSD: MNT_LOCAL is set for local filesystems and clear for network mounts.
+   struct statfs buf;
+   if (statfs(path.c_str(), &buf) != 0)
+      return false;
+   return (buf.f_flags & MNT_LOCAL) == 0;
+#elif defined(__linux__) || defined(__ANDROID__)
+   // Linux has no MNT_LOCAL, so match the filesystem magic of known network filesystems.
+   struct statfs buf;
+   if (statfs(path.c_str(), &buf) != 0)
+      return false;
+   switch (static_cast<unsigned long>(buf.f_type))
+   {
+   case 0x6969:     // NFS_SUPER_MAGIC
+   case 0x517B:     // SMB_SUPER_MAGIC (legacy smbfs)
+   case 0xFF534D42: // CIFS_MAGIC_NUMBER
+   case 0xFE534D42: // SMB2_MAGIC_NUMBER
+   case 0x7461636C: // OCFS2
+   case 0x01021997: // V9FS (Plan 9, used by some VM shares)
+      return true;
+   default:
+      return false;
+   }
+#else
+   (void)path;
+   return false;
+#endif
+}
+
 string normalize_path_separators(const string& szPath)
 {
    string szResult = szPath;
@@ -490,97 +695,38 @@ string normalize_path_separators(const string& szPath)
    return szResult;
 }
 
-string find_case_insensitive_file_path(const string& szPath)
+std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path& searchedFile)
 {
-   auto fn = [&](auto& self, const string& s) -> string {
-      string path = normalize_path_separators(s);
-      std::filesystem::path p = std::filesystem::path(path).lexically_normal();
+   auto fn = [](const auto& self, std::filesystem::path path)
+   {
       std::error_code ec;
+      path = path.lexically_normal();
+      if (std::filesystem::exists(path, ec))
+         return path;
 
-      if (std::filesystem::exists(p, ec))
-         return p.string();
+      const auto& parent = path.parent_path();
+      std::filesystem::path base = (parent.empty() || parent == path) ? std::filesystem::path("."s) : self(self, parent);
+      if (base.empty())
+         return base;
 
-      auto parent = p.parent_path();
-      string base;
-      if (parent.empty() || parent == p) {
-         base = ".";
-      } else {
-         base = self(self, parent.string());
-         if (base.empty())
-            return string();
-      }
-
-      for (auto& ent : std::filesystem::directory_iterator(base, ec)) {
-         if (!ec && StrCompareNoCase(ent.path().filename().string(), p.filename().string())) {
-            auto found = ent.path().string();
-            if (found != path) {
+      for (const auto& ent : std::filesystem::directory_iterator(base, ec))
+      {
+         if (!ec && StrCompareNoCase(ent.path().filename().string(), path.filename().string()))
+         {
+            const auto& found = ent.path();
+            if (found != path)
+            {
                PLOGI << "case insensitive file match: requested \"" << path << "\", actual \"" << found << '"';
             }
             return found;
          }
       }
 
-      return string();
+      return std::filesystem::path();
    };
 
-   string result = fn(fn, szPath);
-   if (!result.empty()) {
-      std::filesystem::path p = std::filesystem::absolute(result);
-      return p.string();
-   }
-   return string();
-}
-
-string find_case_insensitive_directory_path(const string& szPath)
-{
-   auto fn = [&](auto& self, const string& s) -> string {
-      string path = normalize_path_separators(s);
-      std::filesystem::path p = std::filesystem::path(path).lexically_normal();
-      std::error_code ec;
-
-      if (std::filesystem::exists(p, ec) && std::filesystem::is_directory(p, ec)) {
-         string exact = p.string();
-         if (!exact.empty() && exact.back() != PATH_SEPARATOR_CHAR)
-            exact.push_back(PATH_SEPARATOR_CHAR);
-         return exact;
-      }
-
-      auto parent = p.parent_path();
-      string base;
-      if (parent.empty() || parent == p) {
-         base = ".";
-      } else {
-         base = self(self, parent.string());
-         if (base.empty())
-            return string();
-      }
-
-      for (auto& ent : std::filesystem::directory_iterator(base, ec)) {
-         if (ec || !ent.is_directory(ec))
-            continue;
-         if (StrCompareNoCase(ent.path().filename().string(), p.filename().string())) {
-            string found = ent.path().string();
-            if (!found.empty() && found.back() != PATH_SEPARATOR_CHAR)
-               found.push_back(PATH_SEPARATOR_CHAR);
-            if (found != path) {
-               PLOGI << "case insensitive directory match: requested \"" << path << "\", actual \"" << found << '"';
-            }
-            return found;
-         }
-      }
-
-      return string();
-   };
-
-   string result = fn(fn, szPath);
-   if (!result.empty()) {
-      std::filesystem::path p = std::filesystem::absolute(result);
-      string exact = p.string();
-      if (!exact.empty() && exact.back() != PATH_SEPARATOR_CHAR)
-         exact.push_back(PATH_SEPARATOR_CHAR);
-      return exact;
-   }
-   return string();
+   const std::filesystem::path result = fn(fn, searchedFile);
+   return result.empty() ? result : std::filesystem::absolute(result);
 }
 
 // returns file extension in lower case (e.g. "png" or "hdr")
@@ -608,208 +754,122 @@ bool try_parse_float(const string& str, float& value)
 #endif
 }
 
-bool try_parse_color(const string& str, OLE_COLOR& value)
-{
-   string hexStr;
-   if (str[0] == '#')
-      hexStr = str.substr(1);
-   else
-      hexStr = str;
-
-   if (hexStr.size() == 6)
-      hexStr += "FF";
-
-   if (hexStr.size() != 8)
-      return false;
-
-   uint32_t rgba;
-   std::stringstream ss;
-   ss << std::hex << hexStr;
-   if (!(ss >> rgba))
-      return false;
-
-   const uint8_t r = (rgba >> 24) & 0xFF;
-   const uint8_t g = (rgba >> 16) & 0xFF;
-   const uint8_t b = (rgba >> 8) & 0xFF;
-
-   value = RGB(r, g, b);
-
-   return true;
-}
-
-bool is_string_numeric(const string& str)
-{
-   return !str.empty() && std::find_if(str.begin(), str.end(), [](char c) { return !std::isdigit(c); }) == str.end();
-}
-
-int string_to_int(const string& str, int default_value)
-{
-   int value;
-   return try_parse_int(str, value) ? value : default_value;
-}
-
-float string_to_float(const string& str, float default_value)
-{
-   float value;
-   return try_parse_float(str, value) ? value : default_value;
-}
-
-vector<string> parse_csv_line(const string& line)
-{
-   vector<string> parts;
-   string field;
-   enum State { Normal, Quoted };
-   State currentState = Normal;
-
-   for (char c : trim_string(line)) {
-      switch (currentState) {
-         case Normal:
-            if (c == '"') {
-               currentState = Quoted;
-            } else if (c == ',') {
-               parts.push_back(field);
-               field.clear();
-            } else {
-               field += c;
-            }
-            break;
-         case Quoted:
-            if (c == '"') {
-               currentState = Normal;
-            } else {
-               field += c;
-            }
-            break;
-      }
-   }
-
-   parts.push_back(field);
-
-   return parts;
-}
-
-string color_to_hex(OLE_COLOR color)
-{
-   const uint32_t rgba = (GetRValue(color) << 24) | (GetGValue(color) << 16) | (GetBValue(color) << 8) | 0xFF;
-   std::stringstream stream;
-   stream << std::setfill('0') << std::setw(8) << std::hex << rgba;
-   return stream.str();
-}
-
-bool string_contains_case_insensitive(const string& str1, const string& str2)
-{
-   return lowerCase(str1).find(lowerCase(str2)) != string::npos;
-}
-
-bool string_starts_with_case_insensitive(const string& str, const string& prefix)
-{
-   if(prefix.size() > str.size()) return false;
-   return StrCompareNoCase(str.substr(0, prefix.size()), prefix);
-}
-
 string string_replace_all(const string& szStr, const string& szFrom, const string& szTo, const size_t offs)
 {
-   size_t startPos = szStr.find(szFrom, offs);
-   if (startPos == string::npos)
-      return szStr;
-
-   string szNewStr = szStr;
-   szNewStr.replace(startPos, szFrom.length(), szTo);
-   return string_replace_all(szNewStr, szFrom, szTo, startPos+szTo.length());
+   string result = szStr;
+   size_t pos = offs;
+   while ((pos = result.find(szFrom, pos)) != string::npos)
+   {
+      result.replace(pos, szFrom.length(), szTo);
+      pos += szTo.length();
+   }
+   return result;
 }
 
 string string_replace_all(const string& szStr, const string& szFrom, const char szTo, const size_t offs)
 {
-   size_t startPos = szStr.find(szFrom, offs);
-   if (startPos == string::npos)
-      return szStr;
-
-   string szNewStr = szStr;
-   szNewStr.replace(startPos, szFrom.length(), 1, szTo);
-   return string_replace_all(szNewStr, szFrom, szTo, startPos+1);
+   string result = szStr;
+   size_t pos = offs;
+   while ((pos = result.find(szFrom, pos)) != string::npos)
+   {
+      result.replace(pos, szFrom.length(), 1, szTo);
+      ++pos;
+   }
+   return result;
 }
 
 string string_replace_all(const string& szStr, const char szFrom, const string& szTo, const size_t offs)
 {
-   size_t startPos = szStr.find(szFrom, offs);
-   if (startPos == string::npos)
-      return szStr;
-
-   string szNewStr = szStr;
-   szNewStr.replace(startPos, 1, szTo);
-   return string_replace_all(szNewStr, szFrom, szTo, startPos+szTo.length());
+   string result = szStr;
+   size_t pos = offs;
+   while ((pos = result.find(szFrom, pos)) != string::npos)
+   {
+      result.replace(pos, 1, szTo);
+      pos += szTo.length();
+   }
+   return result;
 }
 
-string create_hex_dump(const uint8_t* buffer, size_t size)
+// Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
+// See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
+
+#define UTF8_ACCEPT 0
+#define UTF8_REJECT 1
+
+static constexpr uint8_t utf8d[] = {
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 00..1f
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 20..3f
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 40..5f
+   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 60..7f
+   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, // 80..9f
+   7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // a0..bf
+   8, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // c0..df
+   0xa, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x3, 0x4, 0x3, 0x3, // e0..ef
+   0xb, 0x6, 0x6, 0x6, 0x5, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, // f0..ff
+   0x0, 0x1, 0x2, 0x3, 0x5, 0x8, 0x7, 0x1, 0x1, 0x1, 0x4, 0x6, 0x1, 0x1, 0x1, 0x1, // s0..s0
+   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, // s1..s2
+   1, 2, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, // s3..s4
+   1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, // s5..s6
+   1, 3, 1, 1, 1, 1, 1, 3, 1, 3, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // s7..s8
+};
+
+// old ANSI to UTF-8 (allocates new mem block)
+static string iso8859_1_to_utf8(const char* str, const size_t length)
 {
-   constexpr int bytesPerLine = 32;
-   std::stringstream ss;
+   string utf8(2 * length, '\0'); // worst case
 
-   for (size_t i = 0; i < size; i += bytesPerLine) {
-      for (size_t j = i; j < i + bytesPerLine && j < size; ++j)
-         ss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(buffer[j]) << ' ';
-
-      for (size_t j = i; j < i + bytesPerLine && j < size; ++j) {
-         char ch = buffer[j];
-         if (ch < 32 || ch > 126)
-             ch = '.';
-         ss << ch;
+   char* c = utf8.data();
+   for (size_t i = 0; i < length; ++i, ++str)
+   {
+      if (*str & 0x80)
+      {
+         *c++ = 0xc0 | (char)((unsigned char)*str >> 6);
+         *c++ = 0x80 | (*str & 0x3f);
       }
-
-      ss << '\n';
+      //else // check for bogus ASCII control characters
+      //if (*str < 9 || (*str > 10 && *str < 13) || (*str > 13 && *str < 32))
+      //   *c++ = ' ';
+      else
+         *c++ = *str;
    }
+   utf8.resize(c - utf8.data());
 
-   return ss.str();
+   return utf8;
 }
 
-vector<unsigned char> base64_decode(string encoded_string)
+static uint32_t decode(uint32_t* const state, uint32_t* const codep, const uint32_t byte)
 {
-   static const string base64_chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      "abcdefghijklmnopqrstuvwxyz"
-      "0123456789+/"s;
+   const uint32_t type = utf8d[byte];
 
-   std::erase(encoded_string, '\r');
-   std::erase(encoded_string, '\n');
+   *codep = (*state != UTF8_ACCEPT) ? (byte & 0x3fu) | (*codep << 6) : (0xff >> type) & (byte);
 
-   int in_len = static_cast<int>(encoded_string.length());
-   int i = 0, in_ = 0;
-   unsigned char char_array_4[4], char_array_3[3];
-   vector<unsigned char> ret;
-
-   while (in_len-- && (encoded_string[in_] != '=') && (std::isalnum(encoded_string[in_]) || (encoded_string[in_] == '+') || (encoded_string[in_] == '/'))) {
-      char_array_4[i++] = encoded_string[in_];
-      in_++;
-      if (i == 4) {
-         for (i = 0; i < 4; i++)
-            char_array_4[i] = (unsigned char)base64_chars.find(char_array_4[i]);
-
-         char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-         char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-         char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-         for (i = 0; i < 3; i++)
-            ret.push_back(char_array_3[i]);
-         i = 0;
-     }
-   }
-
-   if (i) {
-      for (int j = i; j < 4; j++)
-         char_array_4[j] = 0;
-
-      for (int j = 0; j < 4; j++)
-         char_array_4[j] = (unsigned char)base64_chars.find(char_array_4[j]);
-
-      char_array_3[0] =  (char_array_4[0]        << 2) + ((char_array_4[1] & 0x30) >> 4);
-      char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-      char_array_3[2] = ((char_array_4[2] & 0x3) << 6) +   char_array_4[3];
-
-      for (int j = 0; (j < i - 1); j++) ret.push_back(char_array_3[j]);
-   }
-
-   return ret;
+   *state = utf8d[256 + *state * 16 + type];
+   return *state;
 }
+
+static uint32_t validate_utf8(uint32_t* const state, const char* const str, const size_t length)
+{
+   for (size_t i = 0; i < length; i++)
+   {
+      const uint8_t type = utf8d[(uint8_t)str[i]];
+      *state = utf8d[256 + (*state) * 16 + type];
+
+      if (*state == UTF8_REJECT)
+         return UTF8_REJECT;
+   }
+   return *state;
+}
+
+string string_from_utf8_or_iso8859_1(const char* src, size_t srcSize)
+{
+   uint32_t state = UTF8_ACCEPT;
+   if (validate_utf8(&state, src, srcSize) == UTF8_REJECT)
+      return iso8859_1_to_utf8(src, srcSize); // old ANSI characters? -> convert to UTF-8
+   else
+      return string(src, srcSize);
+}
+
+//
 
 #ifdef ENABLE_OPENGL
 const char* gl_to_string(GLuint value)
@@ -847,7 +907,7 @@ vector<string> add_line_numbers(const char* src)
          src++;
       }
 
-      result.push_back(line);
+      result.push_back(std::move(line));
       lineNumber++;
 
       if (*src == '\n') {
@@ -859,29 +919,12 @@ vector<string> add_line_numbers(const char* src)
 }
 
 #ifdef __STANDALONE__
-HRESULT external_open_storage(const OLECHAR* pwcsName, IStorage* pstgPriority, DWORD grfMode, SNB snbExclude, DWORD reserved, IStorage** ppstgOpen)
+HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown** obj)
 {
-   char szName[1024];
-   WideCharToMultiByte(CP_ACP, 0, pwcsName, -1, szName, std::size(szName), nullptr, nullptr);
-
-   return PoleStorage::Create(szName, "/", (IStorage**)ppstgOpen);
-}
-
-HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown* obj)
-{
-   // External objects should now be handled using the DynamicScript overrides in 10.8.1.
-   // Keeping as a fallback, and to allow for syncing Wine updates to 10.8.0 Standalone.
-   //
-   // NB: the third parameter is actually an `IUnknown**` mis-typed as
-   // `IUnknown*` — global.c calls us as `external_create_object(progid, cf,
-   // (IUnknown*)&obj)`, so what we receive in `obj` is really the address of
-   // the caller's pointer. To write back to the caller, cast the parameter
-   // itself back to `IUnknown**`. (Casting `&obj` only writes to our local
-   // stack copy, which is what the original code did — harmless on the
-   // failure path because the caller ignores the out-pointer when the HRESULT
-   // is non-S_OK, but silently broken on any success path.)
-   IUnknown** ppObj = (IUnknown**)obj;
-   if (ppObj) *ppObj = nullptr;
+   // Host-side fallback called by libwinevbs for CreateObject progids it does not implement itself
+   // (Scripting.FileSystemObject, Scripting.Dictionary and WScript.Shell are handled inside libwinevbs).
+   if (obj)
+      *obj = nullptr;
 
    // System.Collections.ArrayList — host-side shim. .NET ArrayList COM is not
    // shipped with Wine on Android; many community VPX tables use it for
@@ -892,23 +935,7 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
    if (wcscmp(progid, L"System.Collections.ArrayList") == 0) {
       IDispatch* arr = CreateScriptArrayList();
       if (!arr) return E_OUTOFMEMORY;
-      if (ppObj) *ppObj = (IUnknown*)arr;
-      return S_OK;
-   }
-
-   // WScript.Shell — host-side stub. Real WScript.Shell isn't available on
-   // Wine/Android (no Windows registry, no shell exec). Most community VPX
-   // tables only touch RegRead/RegWrite for settings probes (UltraDMD config,
-   // B2S settings, etc.) and Sleep/Run for timing/launches. Stub no-ops let
-   // scripts continue past these calls instead of dying with 424 — and
-   // critically, lets the Sub bodies that wrap WshShell calls reach their
-   // *other* code (e.g. Sonic's LoadUltraDMD does WshShell.RegWrite then
-   // Set UltraDMD = CreateObject(...) — without the stub the Sub would die
-   // on the first RegWrite and UltraDMD would never be created).
-   if (wcsicmp(progid, L"WScript.Shell") == 0) {
-      IDispatch* shell = CreateScriptWScriptShell();
-      if (!shell) return E_OUTOFMEMORY;
-      if (ppObj) *ppObj = (IUnknown*)shell;
+      if (obj) *obj = (IUnknown*)arr;
       return S_OK;
    }
 
@@ -925,38 +952,19 @@ HRESULT external_create_object(const WCHAR* progid, IClassFactory* cf, IUnknown*
    if (wcsicmp(progid, L"Shell.Application") == 0) {
       IDispatch* shell = CreateScriptShellApplication();
       if (!shell) return E_OUTOFMEMORY;
-      if (ppObj) *ppObj = (IUnknown*)shell;
+      if (obj) *obj = (IUnknown*)shell;
       return S_OK;
    }
 
-   const char* const szT = MakeChar(progid);
-   PLOGW << "Creating an object of type \"" << szT << "\" is not supported";
-   delete[] szT;
-
+   PLOGW << "Creating an object of type \"" << MakeString(progid) << "\" is not supported";
    return CLASS_E_CLASSNOTAVAILABLE;
 }
+#endif
 
-void external_log_info(const char* format, ...)
-{
-   va_list args;
-   va_start(args, format);
-   va_list args_copy;
-   va_copy(args_copy, args);
-   int size = vsnprintf(nullptr, 0, format, args_copy);
-   va_end(args_copy);
-   if (size > 0) {
-      char* const buffer = static_cast<char*>(malloc(size + 1));
-      vsnprintf(buffer, size + 1, format, args);
-      PLOGI << buffer;
-      free(buffer);
-   }
-   va_end(args);
-}
-
-// Script-diagnostic channel switch — see vbscript.h for usage.
+// Script-diagnostic channel switch.
 // Enable: set env VPX_SCRIPT_DIAG=1 (anything non-empty/non-"0") before launching.
 // Result is cached after first call; flipping requires app restart.
-int external_diag_enabled(void)
+int external_diag_enabled()
 {
    static int cached = -1;
    if (cached < 0) {
@@ -965,39 +973,3 @@ int external_diag_enabled(void)
    }
    return cached;
 }
-
-void external_log_debug(const char* format, ...)
-{
-   va_list args;
-   va_start(args, format);
-   va_list args_copy;
-   va_copy(args_copy, args);
-   int size = vsnprintf(nullptr, 0, format, args_copy);
-   va_end(args_copy);
-   if (size > 0) {
-      char* const buffer = static_cast<char*>(malloc(size + 1));
-      vsnprintf(buffer, size + 1, format, args);
-      PLOGD << buffer;
-      free(buffer);
-   }
-   va_end(args);
-}
-
-void external_log_error(const char* format, ...)
-{
-   va_list args;
-   va_start(args, format);
-   va_list args_copy;
-   va_copy(args_copy, args);
-   int size = vsnprintf(nullptr, 0, format, args_copy);
-   va_end(args_copy);
-   if (size > 0) {
-      char* const buffer = static_cast<char*>(malloc(size + 1));
-      vsnprintf(buffer, size + 1, format, args);
-      PLOGE << buffer;
-      free(buffer);
-   }
-   va_end(args);
-}
-
-#endif

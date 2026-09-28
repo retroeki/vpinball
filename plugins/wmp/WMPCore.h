@@ -59,7 +59,7 @@ enum WMPOpenState
 class WMPCore
 {
 public:
-   WMPCore(MsgPluginAPI* msgApi, uint32_t endpointId, unsigned int onAudioUpdateId);
+   WMPCore(const MsgPluginAPI* msgApi, uint32_t endpointId, unsigned int onAudioUpdateId);
    ~WMPCore();
 
    PSC_IMPLEMENT_REFCOUNT()
@@ -79,7 +79,7 @@ public:
 public:
    bool m_autoStart = false;
    bool m_mute = false;
-   long m_volume = 50;
+   int m_volume = 50;
 
 private:
    string m_url;

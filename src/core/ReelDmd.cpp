@@ -8,7 +8,7 @@
 #include "parts/dispreel.h"
 #include "renderer/Texture.h"
 #include "core/ReelClassifier.h"
-#include "core/extern.h" // g_pvp (resolves the bundled-assets path for the label font)
+#include "core/VPApp.h" // g_app (resolves the bundled-assets path for the label font)
 #include "utils/Logger.h"
 
 #include <vector>
@@ -77,13 +77,12 @@ ReelDmd::ReelDmd(Player* player)
 }
 
 // Collect the live DispReel parts (item type eItemDispReel) from the player's
-// renderable parts. Uses the same iterate-m_vhitables / static_cast idiom as
-// player.cpp:683-684 (eItemBall -> static_cast<Ball*>).
+// table parts (same iterate-GetParts / static_cast idiom as player.cpp).
 static void CollectReels(Player* player, std::vector<DispReel*>& out)
 {
-   if (player == nullptr)
+   if (player == nullptr || player->m_ptable == nullptr)
       return;
-   for (IEditable* hitable : player->m_vhitables)
+   for (IEditable* hitable : player->m_ptable->GetParts())
       if (hitable->GetItemType() == ItemTypeEnum::eItemDispReel)
          out.push_back(static_cast<DispReel*>(hitable));
 }
@@ -587,9 +586,9 @@ const ReelDmd::LabelBitmap* ReelDmd::GetLabelBitmap(const char* s, int glyphH) c
    {
       m_labelFontTried = true;
       TTF_Init(); // refcounted / idempotent (the engine may already have inited it)
-      if (g_pvp != nullptr)
+      if (g_app != nullptr)
       {
-         const std::string path = g_pvp->m_myPath + "assets" + PATH_SEPARATOR_CHAR + "TeXGyreBonum-Regular.otf";
+         const std::string path = g_app->m_fileLocator.GetAppPath(FileLocator::AppSubFolder::Assets, "TeXGyreBonum-Regular.otf").string();
          m_labelFont = TTF_OpenFont(path.c_str(), (float)glyphH);
          if (m_labelFont == nullptr)
             SVLOGW << "[ReelDmd] label font load failed: " << path;

@@ -11,24 +11,25 @@ namespace PUP {
 class PUPMediaPlayer final
 {
 public:
-   PUPMediaPlayer(const string& name);
+   explicit PUPMediaPlayer(const string& name);
    ~PUPMediaPlayer();
 
-   void Play(const string& filename);
-   bool IsPlaying() const;
+   void SetGameTime(double gameTime);
+
+   void Play(const std::filesystem::path& filename, float volume);
+   const std::filesystem::path& GetFilename() const { return m_filename; }
+   bool IsPlaying();
    void Pause(bool pause);
-   const string& GetFilename() const { return m_filename; }
    int GetVideoWidth() const { std::lock_guard lock(m_mutex); return m_pVideoContext ? m_pVideoContext->width : 0; }
    int GetVideoHeight() const { std::lock_guard lock(m_mutex); return m_pVideoContext ? m_pVideoContext->height : 0; }
-   int GetPriority() const { return m_priority; }
    void Stop();
    void SetVolume(float volume);
    void SetLoop(bool loop);
    void SetLength(int length);
-   void Render(VPXRenderContext2D* const ctx, const SDL_Rect& destRect);
+   void Render(VPXRenderContext2D* const ctx, const SDL_Rect& destRect, float alpha = 1.f);
 
    void SetName(const string& name);
-   void SetOnEndCallback(std::function<void(PUPMediaPlayer*)> onEndCallback) { std::lock_guard lock(m_mutex); m_onEndCallback = onEndCallback; }
+   void SetOnEndCallback(const std::function<void()>& onEndCallback) { std::lock_guard lock(m_mutex); m_onEndCallback = onEndCallback; }
    void SetBounds(const SDL_Rect& rect);
    void SetMask(std::shared_ptr<SDL_Surface> mask);
 
@@ -37,40 +38,56 @@ private:
    void Run();
    AVCodecContext* OpenStream(AVFormatContext* pInputFormatContext, int stream);
    void HandleAudioFrame(AVFrame* pFrame, bool sync);
-   void HandleVideoFrame(AVFrame* pFrame, bool sync);
+   void HandleVideoFrame(AVFrame* pFrame);
 
    string m_name;
-   SDL_Rect m_bounds;
+   SDL_Rect m_bounds = {};
 
-   std::function<void(PUPMediaPlayer*)> m_onEndCallback = [](PUPMediaPlayer*) { };
+   std::atomic<int> m_pendingPlay = 0;
+   std::atomic<int> m_pendingStop = 0;
 
-   string m_filename;
-   uint64_t m_startTimestamp = 0; // timestamp in ms when the play command was called
+   std::function<void()> m_onEndCallback = [](){};
+
+   double GetPlayTime() const;
+   bool m_syncOnGameTime = false;
+   double m_gameTime = -1.0;
+   double m_startTimestamp = 0.0; // timestamp in seconds when the play command was called
+
+   std::filesystem::path m_filename;
    bool m_loop = false;
    int m_playIndex = 0;
    float m_volume = 100.f;
    int m_length = 0;
-   int m_priority = -1;
 
    bool m_paused = false;
    double m_pauseTimestamp = 0.0;
+   bool m_firstRenderPending = false;
+   double m_lastDecodedPts = 0.0;
 
    AVFormatContext* m_pFormatContext = nullptr;
 
    int m_videoStream = -1;
    AVCodecContext* m_pVideoContext = nullptr;
+   bool m_videoPtsBaseValid = false;
+   double m_videoPtsBase = 0.0;
 
-   // Circular buffer of m_nRgbFrames frames, ready to be rendered if framePTS >= playPTS
-   int m_activeRgbFrame = 0;
-   vector<AVFrame*> m_rgbFrames;
-   vector<VPXTexture> m_videoTextures;
+   // Slots of unordered decoded frames
+   struct FrameInfo
+   {
+      bool valid = false;
+      AVFrame* frame = nullptr;
+      uint8_t* buffer = nullptr;
+      VPXTexture texture = nullptr;
+      double pts = -1.0;
+      bool uploaded = false;
+      int age = 0;
+   };
+   vector<FrameInfo> m_frames;
    SwsContext* m_swsContext = nullptr;
+   uint64_t m_lastRenderTicks = 0;
 
    std::shared_ptr<SDL_Surface> m_mask = nullptr;
    std::unique_ptr<SDL_Surface, void (*)(SDL_Surface*)> m_scaledMask;
-
-   VPXTexture m_videoTexture = nullptr;
-   unsigned int m_videoTextureId = 0xFFFFFF;
 
    int m_audioStream = -1;
    AVCodecContext* m_pAudioContext = nullptr;
@@ -78,11 +95,12 @@ private:
    AVSampleFormat m_audioFormat = AV_SAMPLE_FMT_NONE;
    void* m_pAudioLoop = nullptr;
    int m_audioFreq = 0;
-   CtlResId m_audioResId {};
+   uint32_t m_audioStreamId;
+   static std::atomic<uint32_t> m_nextAudioStreamId;
 
    mutable std::mutex m_mutex;
    std::thread m_thread;
-   bool m_running = false;
+   std::atomic<bool> m_running = false;
 
    const LibAV::LibAV& m_libAv;
 

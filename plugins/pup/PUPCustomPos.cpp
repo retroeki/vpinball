@@ -5,7 +5,10 @@
 namespace PUP {
 
 /*
-   First number is always the screen. 1,22.5,45.3,55.1,54.7 [pupid # source screen,xpos,ypos,width,height] values in % of pupdisplay. 
+   First number is always the screen. 1,22.5,45.3,55.1,54.7 [pupid # source screen,xpos,ypos,width,height] values in % of pupdisplay.
+   Some packs add a 6th (and beyond) value (seen in PinUp Player). We don't know what it does and don't
+   implement it yet, but it is valid input, so the trailing parts are ignored rather than rejected.
+   TODO implement the trailing value(s)
 */
 
 std::unique_ptr<PUPCustomPos> PUPCustomPos::CreateFromCSV(const string& line)
@@ -14,11 +17,11 @@ std::unique_ptr<PUPCustomPos> PUPCustomPos::CreateFromCSV(const string& line)
       return nullptr;
    vector<string> parts = parse_csv_line(line);
    if (parts.size() < 5){
-      LOGE("Expected 5 parts for CustomPos, got %d: %s", parts.size(), line.c_str());
+      LOGE(std::format("Expected 5 parts for CustomPos, got {}: {}", parts.size(), line));
       return nullptr;
    }
    if (parts.size() > 5){
-      LOGE("Ignoring trailing parts for CustomPos. Expected 5 parts, got %d: %s", parts.size(), line.c_str());
+      LOGW(std::format("Ignoring trailing parts for CustomPos (6th and beyond not yet implemented), handling 5 of {} parts: {}", parts.size(), line));
    }
 
    std::unique_ptr<PUPCustomPos> pCustomPos = std::make_unique<PUPCustomPos>();

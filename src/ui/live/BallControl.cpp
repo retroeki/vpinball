@@ -1,9 +1,11 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "BallControl.h"
 
+#include "parts/ball.h"
+#include "renderer/Renderer.h"
+#include "ui/live/LiveUI.h"
 
 void BallControl::LoadSettings(const Settings& settings)
 {
@@ -33,13 +35,22 @@ void BallControl::SetMode(Mode mode)
    m_mode = mode;
 }
 
+bool BallControl::IsSelectedBallDraggable() const
+{
+   // A ball is only a valid drag target while it is in active play: visible and not held in a kicker
+   // (trough/saucer/lock). Checked at use time rather than registration because a ball's state changes
+   // (e.g. trough balls are briefly unlocked while being shuffled along the trough). Matches the physics
+   // engine, which skips locked balls in HitBall::UpdateVelocities.
+   return m_draggedBall != nullptr && m_draggedBall->m_d.m_visible && !m_draggedBall->m_hitBall.m_d.m_lockedInKicker;
+}
+
 void BallControl::Update(const int width, const int height)
 {
    using enum Mode;
    const Player *const player = g_pplayer;
-   const InputManager::ActionState &inputState = player->m_pininput.GetActionState();
-   const bool leftFlipperPressed = inputState.IsKeyPressed(player->m_pininput.GetLeftFlipperActionId(), m_prevActionState);
-   m_prevActionState = inputState;
+   const bool leftFlipperPressed = player->m_pininput.IsPressed(player->m_pininput.GetLeftFlipperActionId());
+   const bool leftFlipperJustPressed = leftFlipperPressed && !m_prevLeftFlipperPressed;
+   m_prevLeftFlipperPressed = leftFlipperPressed;
 
    switch (m_mode)
    {
@@ -52,7 +63,7 @@ void BallControl::Update(const int width, const int height)
       break;
 
    case DragBall:
-      if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !leftFlipperPressed)
+      if (IsSelectedBallDraggable() && ImGui::IsMouseDown(ImGuiMouseButton_Left) && !leftFlipperJustPressed)
          HandleDragBall(width, height);
       break;
       
@@ -60,49 +71,56 @@ void BallControl::Update(const int width, const int height)
       break;
    }
    
-   if (leftFlipperPressed)
-      EndBallDrag();
+   if (leftFlipperJustPressed)
+      ReleaseDragTarget();
+}
+
+static ImVec2 ToRenderPos(const ImVec2& pos, const int orientation, const int width, const int height)
+{
+   switch (orientation)
+   {
+   case 1: return ImVec2(static_cast<float>(width) - pos.y, pos.x);
+   case 2: return ImVec2(pos.x, static_cast<float>(height) - pos.y);
+   case 3: return ImVec2(pos.y, static_cast<float>(height) - pos.x);
+   default: return pos;
+   }
 }
 
 void BallControl::HandleDragBall(const int width, const int height)
 {
    Player * const player = g_pplayer;
-   Renderer * const m_renderer = player->m_renderer;
+   const std::unique_ptr<Renderer> & m_renderer = player->m_renderer;
    const PinTable *const live_table = player->m_ptable;
 
    // Note that ball control release is handled by pininput
    m_dragging = true;
-   const ImVec2 mousePos = ImGui::GetMousePos();
-   m_dragTarget = m_renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), m_draggedBall ? m_draggedBall->m_d.m_pos.z : 25.f);
+   const ImVec2 mousePos = ToRenderPos(ImGui::GetMousePos(), m_liveUI.GetUIOrientation(), width, height);
+   m_dragTarget = m_renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), m_draggedBall ? m_draggedBall->GetPosition().z : DEFAULT_BALL_SIZE);
    m_dragTarget.x = clamp(m_dragTarget.x, 0.f, live_table->m_right);
    m_dragTarget.y = clamp(m_dragTarget.y, 0.f, live_table->m_bottom);
    
    // Double click.  Move the ball directly to the target if possible.
    // Drop it from the glass height, so it will appear over any object (or on a raised playfield)
-   if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && m_draggedBall && !m_draggedBall->m_d.m_lockedInKicker)
+   if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && m_draggedBall && !m_draggedBall->m_hitBall.m_d.m_lockedInKicker)
    {
-      m_draggedBall->m_d.m_pos.x = m_dragTarget.x;
-      m_draggedBall->m_d.m_pos.y = m_dragTarget.y;
-      m_draggedBall->m_d.m_pos.z = live_table->m_glassTopHeight;
-      m_draggedBall->m_d.m_vel.x = 0.0f;
-      m_draggedBall->m_d.m_vel.y = 0.0f;
-      m_draggedBall->m_d.m_vel.z = -1000.0f;
+      m_draggedBall->SetPosition({ m_dragTarget.x, m_dragTarget.y, live_table->m_glassTopHeight });
+      m_draggedBall->SetVelocity({ 0.f, 0.f, -1000.f });
    }
 }
 
 void BallControl::HandleDestroyBall(const int width, const int height) const
 {
    Player * const player = g_pplayer;
-   Renderer * const renderer = player->m_renderer;
+   const std::unique_ptr<Renderer> & renderer = player->m_renderer;
 
-   const ImVec2 mousePos = ImGui::GetMousePos();
-   const Vertex3Ds vertex = renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), 25.f);
+   const ImVec2 mousePos = ToRenderPos(ImGui::GetMousePos(), m_liveUI.GetUIOrientation(), width, height);
+   const Vertex3Ds vertex = renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), DEFAULT_BALL_SIZE);
    for (size_t i = 0; i < player->m_vball.size(); i++)
    {
-      HitBall *const pBall = player->m_vball[i];
-      const float dx = fabsf(vertex.x - pBall->m_d.m_pos.x);
-      const float dy = fabsf(vertex.y - pBall->m_d.m_pos.y);
-      if (dx < pBall->m_d.m_radius * 2.f && dy < pBall->m_d.m_radius * 2.f)
+      Ball *const pBall = player->m_vball[i];
+      const float dx = fabsf(vertex.x - pBall->GetPosition().x);
+      const float dy = fabsf(vertex.y - pBall->GetPosition().y);
+      if (dx < pBall->GetRadius() * 2.f && dy < pBall->GetRadius() * 2.f)
       {
          player->DestroyBall(pBall);
          break;
@@ -113,7 +131,7 @@ void BallControl::HandleDestroyBall(const int width, const int height) const
 void BallControl::HandleThrowBalls(const int width, const int height)
 {
    Player * const player = g_pplayer;
-   Renderer * const renderer = player->m_renderer;
+   const std::unique_ptr<Renderer> & renderer = player->m_renderer;
    const PinTable * const live_table = player->m_ptable;
 
    const ImVec2 mouseDrag = ImGui::GetMouseDragDelta();
@@ -138,42 +156,26 @@ void BallControl::HandleThrowBalls(const int width, const int height)
       return;
 
    // Adjust mouse position based on UI orientation
-   switch (m_liveUI.GetUIOrientation())
-   {
-   case 0:
-      break;
-   case 1:
-      mousePos = ImVec2(static_cast<float>(width) - mousePos.y, mousePos.x);
-      mouseInitalPos = ImVec2(static_cast<float>(width) - mouseInitalPos.y, mouseInitalPos.x);
-      break;
-   case 2:
-      mousePos = ImVec2(mousePos.x, static_cast<float>(height) - mousePos.y);
-      mouseInitalPos = ImVec2(mouseInitalPos.x, static_cast<float>(height) - mouseInitalPos.y);
-      break;
-   case 3:
-      mousePos = ImVec2(mousePos.y, static_cast<float>(height) - mousePos.x);
-      mouseInitalPos = ImVec2(mouseInitalPos.y, static_cast<float>(height) - mouseInitalPos.x);
-      break;
-   default:
-      assert(false);
-      return;
-   }
-   const Vertex3Ds throwCenter = renderer->Get3DPointFrom2D(width, height, Vertex2D(mouseInitalPos.x, mouseInitalPos.y), 25.f);
-   const Vertex3Ds throwTarget = renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), 25.f);
+   const int orientation = m_liveUI.GetUIOrientation();
+   mousePos = ToRenderPos(mousePos, orientation, width, height);
+   mouseInitalPos = ToRenderPos(mouseInitalPos, orientation, width, height);
+
+   const Vertex3Ds throwCenter = renderer->Get3DPointFrom2D(width, height, Vertex2D(mouseInitalPos.x, mouseInitalPos.y), DEFAULT_BALL_SIZE);
+   const Vertex3Ds throwTarget = renderer->Get3DPointFrom2D(width, height, Vertex2D(mousePos.x, mousePos.y), DEFAULT_BALL_SIZE);
 
    const float vx = (throwTarget.x - throwCenter.x) * 0.25f;
    const float vy = (throwTarget.y - throwCenter.y) * 0.25f;
 
-   HitBall *grabbedBall = m_mode == Mode::ThrowDraggedBall ? m_draggedBall : nullptr;
+   Ball *grabbedBall = m_mode == Mode::ThrowDraggedBall ? m_draggedBall : nullptr;
    const bool isPlayfieldThrow = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
    if (isPlayfieldThrow && grabbedBall == nullptr)
    {
       for (size_t i = 0; i < player->m_vball.size(); i++)
       {
-         HitBall *const pBall = player->m_vball[i];
-         const float dx = fabsf(throwCenter.x - pBall->m_d.m_pos.x);
-         const float dy = fabsf(throwCenter.y - pBall->m_d.m_pos.y);
-         if (dx < pBall->m_d.m_radius * 2.f && dy < pBall->m_d.m_radius * 2.f)
+         Ball *const pBall = player->m_vball[i];
+         const float dx = fabsf(throwCenter.x - pBall->GetPosition().x);
+         const float dy = fabsf(throwCenter.y - pBall->GetPosition().y);
+         if (dx < pBall->GetRadius() * 2.f && dy < pBall->GetRadius() * 2.f)
          {
             grabbedBall = pBall;
             break;
@@ -183,16 +185,13 @@ void BallControl::HandleThrowBalls(const int width, const int height)
    
    if (grabbedBall)
    {
-      grabbedBall->m_d.m_pos.x = throwCenter.x;
-      grabbedBall->m_d.m_pos.y = throwCenter.y;
-      grabbedBall->m_d.m_vel.x = vx;
-      grabbedBall->m_d.m_vel.y = vy;
+      grabbedBall->SetPosition({ throwCenter.x, throwCenter.y, grabbedBall->GetPosition().z });
+      grabbedBall->SetVelocity({ vx, vy, grabbedBall->GetVelocity().z });
    }
    else
    {
       const float z = isPlayfieldThrow ? 0.f : live_table->m_glassTopHeight;
-      HitBall *const pball = player->CreateBall(throwCenter.x, throwCenter.y, z, vx, vy, 0,
-         live_table->m_settings.GetEditor_ThrowBallSize() * 0.5f, live_table->m_settings.GetEditor_ThrowBallMass());
-      pball->m_pBall->AddRef();
+      player->CreateBall(throwCenter.x, throwCenter.y, z, vx, vy, 0,
+         (float)live_table->GetSettings().GetEditor_ThrowBallSize() * 0.5f, live_table->GetSettings().GetEditor_ThrowBallMass());
    }
 }

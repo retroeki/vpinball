@@ -2,6 +2,11 @@
 
 #pragma once
 
+// Main application, never null
 extern class VPApp *g_app;
-extern class VPinball *g_pvp;
-extern class Player *g_pplayer; // Game currently being played
+
+// Player, only defined when playing/live editing a table
+extern class Player *g_pplayer;
+
+// Win32 editor, only defined when used on Windows Platforms
+extern class WinEditor *g_pvp;

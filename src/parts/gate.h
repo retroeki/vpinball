@@ -1,10 +1,14 @@
 // license:GPLv3+
 
-// Definition of the Gate class
-
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/MeshBuffer.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
 
 class GateData final : public BaseProperty
 {
@@ -13,7 +17,6 @@ public:
    float m_length;
    float m_height;
    float m_rotation;
-   TimerDataRoot m_tdr;
    float m_damping;
    float m_gravityfactor;
    string m_szSurface;
@@ -32,21 +35,21 @@ class Gate :
    public EventProxy<Gate, &DIID_IGateEvents>,
    public IConnectionPointContainerImpl<Gate>,
    public IProvideClassInfo2Impl<&CLSID_Gate, &DIID_IGateEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Gate();
+   Gate() { }
    virtual ~Gate();
 
    void SetGateType(GateType type);
@@ -68,7 +71,7 @@ public:
       CONNECTION_POINT_ENTRY(DIID_IGateEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Gate, eItemGate, GATE, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Gate, eItemGate, GATE)
 
    //DECLARE_NOT_AGGREGATABLE(Gate)
    // Remove the comment from the line above if you don't want your object to
@@ -78,18 +81,12 @@ public:
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
    void SetDefaultPhysics(const bool fromMouseClick) final;
 
-   void RenderBlueprint(Sur *psur, const bool solid) final;
    void ExportMesh(ObjLoader &loader) final;
-
-   ItemTypeEnum HitableGetItemType() const final { return eItemGate; }
-   void UpdateStatusBarInfo() final;
 
    void WriteRegDefaults() final;
 
@@ -104,9 +101,7 @@ private:
    void GenerateBracketMesh(Vertex3D_NoTex2 *buf) const;
    void GenerateWireMesh(Vertex3D_NoTex2 *buf) const;
 
-   PinTable *m_ptable = nullptr;
-
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
 
    LineSeg *m_plineseg = nullptr;
    HitGate *m_phitgate = nullptr;

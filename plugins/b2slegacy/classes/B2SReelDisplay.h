@@ -6,7 +6,7 @@
 
 namespace B2SLegacy {
 
-class B2SReelDisplay
+class B2SReelDisplay final
 {
 public:
    B2SReelDisplay();
@@ -17,7 +17,7 @@ public:
    void SetStartDigit(int startDigit) { m_startDigit = startDigit; }
    int GetDigits() const { return m_digits; }
    void SetDigits(int digits) { m_digits = digits; }
-   bool IsInAction();
+   bool IsInAction() const;
    int GetScore() const { return m_score; }
    void SetScore(int score);
    void SetScore_(int score, int startIndex = 0);
@@ -27,17 +27,19 @@ private:
    void TimerRRTick(Timer* pTimer);
    void TimerIATick(Timer* pTimer);
 
-   Timer* m_pTimerRR;
-   Timer* m_pTimerIA;
+   Timer* m_pTimerRR = nullptr;
+   Timer* m_pTimerIA = nullptr;
    ReelDisplayReelBoxCollection m_reels;
-   int m_startDigit;
-   int m_digits;
-   int m_score;
-   int m_nextScore;
-   int m_currentindex;
-   int m_currentnewvalue;
-   int m_currentscore;
-   int m_currentrestartat;
+   int m_startDigit = 0;
+   int m_digits = 0;
+   int m_score = -1;
+   int m_nextScore = -1;
+
+   // reel rolling timer stuff
+   int m_currentindex = 0;
+   int m_currentnewvalue = 0;
+   int m_currentscore = 0;
+   int m_currentrestartat = 0;
 };
 
 }

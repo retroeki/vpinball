@@ -1,47 +1,26 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-
 #include "SensorSetupPage.h"
+
+#include "parts/Collection.h"
 #include "renderer/VRDevice.h"
 
 namespace VPX::InGameUI
 {
 
-SensorSetupPage::SensorSetupPage(const InGameUIItem& item)
-   : InGameUIPage(item.m_label + " Sensor Setup", "Select the hardware sensor you want to use for " + item.m_label, SaveMode::Global)
-   , m_item(item.m_label, item.m_tooltip, item.m_physicsSensor, item.m_physicsSensorTypeMask)
+void SensorSetupPageSection::AppendSection(InGameUIPage* page, PhysicsSensor* sensor, string settingId, int sensorTypeMask, const std::function<void()>& rebuildPage)
 {
-   BuildPage();
-}
-
-void SensorSetupPage::SaveGlobally()
-{
-   InGameUIPage::SaveGlobally();
-   BuildPage();
-}
-
-void SensorSetupPage::SaveTableOverride()
-{
-   InGameUIPage::SaveTableOverride();
-   BuildPage();
-}
-
-void SensorSetupPage::BuildPage()
-{
-   ClearItems();
-
-   m_sensors = m_player->m_pininput.GetAllAxis();
-   if (m_sensors.empty())
-   {
-      AddItem(std::make_unique<InGameUIItem>(InGameUIItem::LabelType::Info, "No hardware sensor connected"s));
-      return;
-   }
+   m_page = page;
+   m_sensor = sensor;
+   m_sensorTypeMask = sensorTypeMask;
+   m_settingId = settingId;
+   m_rebuildPage = rebuildPage;
 
    vector<string> sensorTypeNames;
    SensorMapping::Type defaultSensorType = SensorMapping::Type::Position;
    for (int i = 0; i < 3; i++)
-      if (m_item.m_physicsSensorTypeMask & (1 << i))
+      if (m_sensorTypeMask & (1 << i))
          switch (i)
          {
          case 0:
@@ -70,138 +49,247 @@ void SensorSetupPage::BuildPage()
       return 0;
    };
 
-   const string prevMapping = m_item.m_physicsSensor->GetMappingString();
-   m_item.m_physicsSensor->LoadMapping(m_player->m_ptable->m_settings);
-   std::unique_ptr<SensorMapping> storedMapping = m_item.m_physicsSensor->IsMapped() ? std::make_unique<SensorMapping>(m_item.m_physicsSensor->GetMapping()) : nullptr;
-   m_item.m_physicsSensor->SetMapping(prevMapping);
+   const string prevMapping = m_sensor->GetMappingString();
+   m_sensor->LoadMapping(g_settingsService.GetActiveSettings(), m_settingId);
+   std::unique_ptr<SensorMapping> storedMapping = m_sensor->IsMapped() ? std::make_unique<SensorMapping>(m_sensor->GetMapping()) : nullptr;
+   m_sensor->SetMapping(prevMapping);
 
-   std::unique_ptr<SensorMapping> liveMapping = m_item.m_physicsSensor->IsMapped() ? std::make_unique<SensorMapping>(m_item.m_physicsSensor->GetMapping()) : nullptr;
+   std::unique_ptr<SensorMapping> liveMapping = m_sensor->IsMapped() ? std::make_unique<SensorMapping>(m_sensor->GetMapping()) : nullptr;
 
    int liveAxis = 0;
    int storedAxis = 0;
    vector<string> axisNames;
    axisNames.emplace_back("Unmapped"s);
+   m_sensors = m_page->m_player->m_pininput.GetAllAxis();
    {
       int i = 1;
-      for (uint32_t id : m_sensors)
+      for (auto it = m_sensors.begin(); it != m_sensors.end();)
       {
+         const uint32_t id = *it;
          const uint16_t deviceId = id >> 16;
          const uint16_t axisId = id & 0xFFFF;
-         axisNames.emplace_back(m_player->m_pininput.GetDeviceElementName(deviceId, axisId) + " (" + m_player->m_pininput.GetDeviceName(deviceId) + ')');
-         if (liveMapping && deviceId == liveMapping->GetDeviceId() && axisId == liveMapping->GetAxisId())
-            liveAxis = i;
-         if (storedMapping && deviceId == storedMapping->GetDeviceId() && axisId == storedMapping->GetAxisId())
-            storedAxis = i;
-         i++;
+         const bool connected = m_page->m_player->m_pininput.IsDeviceConnected(deviceId);
+         if (!connected && !m_page->m_player->m_pininput.IsDeviceMapped(deviceId))
+         {
+            it = m_sensors.erase(it);
+         }
+         else
+         {
+            axisNames.emplace_back(std::format(
+               "{} ({}){}", m_page->m_player->m_pininput.GetDeviceElementName(deviceId, axisId), m_page->m_player->m_pininput.GetDeviceName(deviceId), connected ? "" : " [Disconnected]"));
+            if (liveMapping && deviceId == liveMapping->GetDeviceId() && axisId == liveMapping->GetAxisId())
+               liveAxis = i;
+            if (storedMapping && deviceId == storedMapping->GetDeviceId() && axisId == storedMapping->GetAxisId())
+               storedAxis = i;
+            it++;
+            i++;
+         }
       }
    }
 
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::EnumPropertyDef(""s, ""s, sensorTypeNames.size() > 1 ? "Hardware Sensor"s : (sensorTypeNames[0] + " Sensor"), ""s, false, 0, liveAxis, axisNames),
-      [liveAxis]() { return liveAxis; }, // Live
-      [liveAxis, storedAxis](Settings& settings) { return storedAxis >= 0 ? storedAxis : liveAxis; }, // Stored
-      [this, defaultSensorType](int, int v)
-      {
-         const uint16_t deviceId = m_sensors[v - 1] >> 16;
-         const uint16_t axisId = m_sensors[v - 1] & 0xFFFF;
-         SensorMapping mapping(nullptr, nullptr, deviceId, axisId, m_item.m_physicsSensor->IsMapped() ? m_item.m_physicsSensor->GetMapping().GetType() : defaultSensorType);
-         if (m_item.m_physicsSensor->IsMapped())
+   m_page
+      ->AddItem(std::make_unique<InGameUIItem>(
+         VPX::Properties::EnumPropertyDef(
+            ""s, ""s, sensorTypeNames.size() > 1 ? "Hardware Sensor"s : (sensorTypeNames[0] + " Sensor"), "Select analog input to use."s, false, 0, liveAxis, axisNames),
+         [liveAxis]() { return liveAxis; }, // Live
+         [liveAxis, storedAxis](const Settings& settings) { return storedAxis >= 0 ? storedAxis : liveAxis; }, // Stored
+         [this, defaultSensorType](int, int v)
          {
-            mapping.SetDeadZone(m_item.m_physicsSensor->GetMapping().GetDeadZone());
-            mapping.SetScale(m_item.m_physicsSensor->GetMapping().GetScale());
-            mapping.SetLimit(m_item.m_physicsSensor->GetMapping().GetLimit());
-         }
-         m_item.m_physicsSensor->SetMapping(mapping);
-         BuildPage();
-      }, //
-      [](Settings&) { /* Fully overwritten in save */ }, // Reset
-      [this](int, Settings& settings, bool) { m_item.m_physicsSensor->SaveMapping(settings); })); // Save
+            if (v == 0)
+            {
+               m_sensor->ClearMapping();
+            }
+            else
+            {
+               const uint16_t deviceId = m_sensors[v - 1] >> 16;
+               const uint16_t axisId = m_sensors[v - 1] & 0xFFFF;
+               SensorMapping mapping(nullptr, nullptr, deviceId, axisId, m_sensor->IsMapped() ? m_sensor->GetMapping().GetType() : defaultSensorType);
+               if (m_sensor->IsMapped())
+               {
+                  mapping.SetDeadZone(m_sensor->GetMapping().GetDeadZone());
+                  mapping.SetScale(m_sensor->GetMapping().GetScale());
+                  mapping.SetLimit(m_sensor->GetMapping().GetLimit());
+               }
+               m_sensor->SetMapping(mapping);
+            }
+            m_rebuildPage();
+         }, //
+         [](Settings&) { /* Fully overwritten in save */ }, // Reset
+         [this](int, Settings& settings, bool)
+         {
+            m_sensor->SaveMapping(settings, m_settingId);
+            m_rebuildPage();
+         }))
+      .m_excludeFromDefault = true; // Save
 
    if (liveMapping == nullptr)
       return;
 
-   // If the mapping allow more than one type, allow to change it, otherwise, wanr the user it's fixed
+   // If the mapping allow more than one type, allow to change it, otherwise, warn the user it's fixed
    if (sensorTypeNames.size() > 1)
    {
       const int sensorType = findTypeIndex(liveMapping->GetType());
       const int storedSensorType = storedMapping ? findTypeIndex(storedMapping->GetType()) : sensorType;
-      AddItem(std::make_unique<InGameUIItem>(
-         VPX::Properties::EnumPropertyDef(""s, ""s, "Sensor Type"s, ""s, false, 0, sensorType, sensorTypeNames), //
-         [sensorType]() { return sensorType; }, // Live
-         [storedSensorType](Settings&) { return storedSensorType; }, // Stored
-         [this, sensorTypeNames](int, int v)
-         {
-            const uint16_t deviceId = m_item.m_physicsSensor->GetMapping().GetDeviceId();
-            const uint16_t axisId = m_item.m_physicsSensor->GetMapping().GetDeviceId();
-            SensorMapping mapping(nullptr, nullptr, deviceId, axisId,
-               sensorTypeNames[v] == "Position" ? SensorMapping::Type::Position
-                  : sensorTypeNames[v] == "Velocity" ? SensorMapping::Type::Velocity
-                                     : SensorMapping::Type::Acceleration);
-            mapping.SetDeadZone(m_item.m_physicsSensor->GetMapping().GetDeadZone());
-            mapping.SetScale(m_item.m_physicsSensor->GetMapping().GetScale());
-            mapping.SetLimit(m_item.m_physicsSensor->GetMapping().GetLimit());
-            m_item.m_physicsSensor->SetMapping(mapping);
-            BuildPage();
-         }, //
-         [](Settings&) { /* Already performed in first page item */ }, // Reset
-         [](int, Settings&, bool) { /* Already performed in first page item */ })); // Save
+      m_page
+         ->AddItem(std::make_unique<InGameUIItem>(
+            VPX::Properties::EnumPropertyDef(""s, ""s, "Sensor Type"s, "Select the type of data acquired by the selected sensor."s, false, 0, sensorType, sensorTypeNames), //
+            [sensorType]() { return sensorType; }, // Live
+            [storedSensorType](const Settings&) { return storedSensorType; }, // Stored
+            [this, sensorTypeNames](int, int v)
+            {
+               const uint16_t deviceId = m_sensor->GetMapping().GetDeviceId();
+               const uint16_t axisId = m_sensor->GetMapping().GetAxisId();
+               SensorMapping mapping(nullptr, nullptr, deviceId, axisId,
+                  sensorTypeNames[v] == "Position"      ? SensorMapping::Type::Position
+                     : sensorTypeNames[v] == "Velocity" ? SensorMapping::Type::Velocity
+                                                        : SensorMapping::Type::Acceleration);
+               mapping.SetDeadZone(m_sensor->GetMapping().GetDeadZone());
+               mapping.SetScale(m_sensor->GetMapping().GetScale());
+               mapping.SetLimit(m_sensor->GetMapping().GetLimit());
+               m_sensor->SetMapping(mapping);
+               m_rebuildPage();
+            }, //
+            [](Settings&) { /* Already performed in first page item */ }, // Reset
+            [](int, Settings&, bool) { /* Already performed in first page item */ }))
+         .m_excludeFromDefault = true; // Save
    }
 
+   // Scale is defined as a custom scale applied on a selected unit.
    const float liveScale = liveMapping->GetScale();
    const float storedScale = storedMapping ? storedMapping->GetScale() : 1.f;
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::BoolPropertyDef(""s, ""s, "Reversed axis"s, ""s, false, false), //
+   if (liveMapping->GetType() == SensorMapping::Type::Acceleration)
+   {
+      // Accelerations must be provided to the engine in m/s^2 (acquired value x scale => m/s^2)
+      // We propose some default scales, that is to say 1/2/4/8g (which is what Pinscape boards propose)
+      constexpr float g = 9.80665f;
+      int accUnit = abs(liveScale - g) < 0.01f ? 1 //
+         : abs(liveScale - 2.f * g) < 0.01f    ? 2 //
+         : abs(liveScale - 4.f * g) < 0.01f    ? 3 //
+         : abs(liveScale - 8.f * g) < 0.01f    ? 4 //
+                                               : 0;
+      if (m_accUnit < 0)
+         m_accUnit = accUnit;
+      m_page->AddItem(std::make_unique<InGameUIItem>(
+         VPX::Properties::EnumPropertyDef(
+            ""s, ""s, "Sensor unit"s, "Unit used by the sensor or custom scaling."s, false, 0, 0, vector { "Custom unit"s, "1 Gravity"s, "2 Gravity"s, "4 Gravity"s, "8 Gravity"s }),
+         [this, accUnit]() { return accUnit; }, // Live
+         [this](const Settings& settings) { return m_accUnit; }, // Stored
+         [this, liveScale, g](int, int v)
+         {
+            const float sign = liveScale < 0.f ? -1.f : 1.f;
+            switch (v)
+            {
+            case 1: m_sensor->GetMapping().SetScale(sign * g); break;
+            case 2: m_sensor->GetMapping().SetScale(sign * 2.f * g); break;
+            case 3: m_sensor->GetMapping().SetScale(sign * 4.f * g); break;
+            case 4: m_sensor->GetMapping().SetScale(sign * 8.f * g); break;
+            }
+            m_rebuildPage();
+         },
+         [](Settings& settings) { /* Already performed in first page item */ }, // Reset
+         [this, accUnit](int v, Settings& settings, bool isTableOverride) { m_accUnit = accUnit; })); // Save
+   }
+   else if (liveMapping->GetType() == SensorMapping::Type::Velocity)
+   {
+      // Velocities must be provided to the engine in m/s (acquired value x scale => m/s)
+      // We propose some default scales (derived from Pinscape firmware)
+      constexpr float pinscapeDefaultNudge = 4096.f / (20.f * 1000.f); // Pinscape measure in mm/s then multiply by 20 and send a -4096/4096 range (this scale can be overriden)
+      constexpr float pinscapeDefaultPlunger = 12.5f;
+      int velUnit = fabs(liveScale/pinscapeDefaultNudge - 1.f) < 0.005f   ? 1 //
+                  : fabs(liveScale/pinscapeDefaultPlunger - 1.f) < 0.005f ? 2 //
+                                                                          : 0;
+      if (m_velUnit < 0)
+         m_velUnit = velUnit;
+      m_page->AddItem(std::make_unique<InGameUIItem>(
+         VPX::Properties::EnumPropertyDef(""s, ""s, "Sensor unit"s, "Unit used by the sensor or custom scaling."s, false, 0, 0,
+            vector {
+               "Custom unit"s, // See below
+               "0.2048 m/s [Pinscape nudge velocity]"s, // The value is surprising but this is really the result of the default scaling (20x)
+               "12.5 p.u/s [Pinscape plunger velocity]"s // Plunger velocity is a per unit velocity regarding full plunger frame length (so no direct length unit)
+            }),
+         [this, velUnit]() { return velUnit; }, // Live
+         [this](const Settings& settings) { return m_velUnit; }, // Stored
+         [this, liveScale](int, int v)
+         {
+            const float sign = liveScale < 0.f ? -1.f : 1.f;
+            switch (v)
+            {
+            case 1: m_sensor->GetMapping().SetScale(sign * pinscapeDefaultNudge); break;
+            case 2: m_sensor->GetMapping().SetScale(sign * pinscapeDefaultPlunger); break;
+            }
+            m_rebuildPage();
+         },
+         [](Settings& settings) { /* Already performed in first page item */ }, // Reset
+         [this, velUnit](int v, Settings& settings, bool isTableOverride) { m_velUnit = velUnit; })); // Save
+   }
+   else if (liveMapping->GetType() == SensorMapping::Type::Position)
+   {
+      // Positions are unit less:
+      // . plunger is +1 for fully retracted, 0 at rest and -1 for fully extended (symmetric from the rest..retracted range)
+      // . nudge only uses position for gamepad nudging where the units does not mean anything (it is just used to evaluate the player intent)
+   }
+   m_page->AddItem(std::make_unique<InGameUIItem>(
+      VPX::Properties::FloatPropertyDef(""s, ""s, "Unit scale"s,
+         liveMapping->GetType() == SensorMapping::Type::Acceleration  ? "Scale to apply to the value acquired to convert it to m/s^2"s
+            : liveMapping->GetType() == SensorMapping::Type::Velocity ? "Scale to apply to the value acquired to convert it to m/s or p.u./s"s
+                                                                      : "Scale to apply to acquired value"s,
+         false, 0.f,
+         liveMapping->GetType() == SensorMapping::Type::Acceleration  ? 80.f
+            : liveMapping->GetType() == SensorMapping::Type::Velocity ? 20.f
+                                                                      : 10.f,
+         0.f, 1.f),
+      1.f,
+      "%4.3f", //
+      [liveScale]() { return fabs(liveScale); }, // Live
+      [storedScale](const Settings&) { return fabs(storedScale); }, // Stored
+      [this, liveScale](float, float v)
+      {
+         const bool reversed = liveScale < 0.f;
+         m_sensor->GetMapping().SetScale(reversed ? -v : v);
+         m_rebuildPage();
+      }, //
+      [](Settings&) { /* Already performed in first page item */ }, // Reset
+      [](float, Settings&, bool) { /* Already performed in first page item */ })); // Save
+
+   m_page->AddItem(std::make_unique<InGameUIItem>(
+      VPX::Properties::BoolPropertyDef(""s, ""s, "Reversed axis"s, "Toggle axis direction"s, false, false), //
       [liveScale]() { return liveScale < 0.f; }, // Live
-      [storedScale](Settings&) { return storedScale < 0.f; }, // Stored
+      [storedScale](const Settings&) { return storedScale < 0.f; }, // Stored
       [this, liveScale](bool v)
       {
          float s = fabs(liveScale);
-         m_item.m_physicsSensor->GetMapping().SetScale(v ? -s : s);
-         BuildPage();
+         m_sensor->GetMapping().SetScale(v ? -s : s);
+         m_rebuildPage();
       }, //
       [](Settings&) { /* Already performed in first page item */ }, // Reset
       [](float, Settings&, bool) { /* Already performed in first page item */ })); // Save
 
    const float liveDeadZone = liveMapping->GetDeadZone();
    const float storedDeadZone = storedMapping ? storedMapping->GetDeadZone() : 0.f;
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::FloatPropertyDef(""s, ""s, "Dead Zone"s, ""s, false, 0.f, 0.3f, 0.f, 0.f), 100.f,
+   m_page->AddItem(std::make_unique<InGameUIItem>(
+      VPX::Properties::FloatPropertyDef(""s, ""s, "Dead Zone"s, "Relative amount of the axis range to nullify to avoid noise at rest position"s, false, 0.f, 0.3f, 0.f, 0.f), 100.f,
       "%4.1f %%", //
       [liveDeadZone]() { return liveDeadZone; }, // Live
-      [storedDeadZone](Settings&) { return storedDeadZone; }, // Stored
+      [storedDeadZone](const Settings&) { return storedDeadZone; }, // Stored
       [this](float, float v)
       {
-         m_item.m_physicsSensor->GetMapping().SetDeadZone(v);
-         BuildPage();
-      }, //
-      [](Settings&) { /* Already performed in first page item */ }, // Reset
-      [](float, Settings&, bool) { /* Already performed in first page item */ })); // Save
-
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::FloatPropertyDef(""s, ""s, "Gain"s, ""s, false, 0.f, 5.f, 0.f, 1.f), 100.f,
-      "%4.1f %%", //
-      [liveScale]() { return fabs(liveScale); }, // Live
-      [storedScale](Settings&) { return fabs(storedScale); }, // Stored
-      [this, liveScale](float, float v)
-      {
-         const bool reversed = liveScale < 0.f;
-         m_item.m_physicsSensor->GetMapping().SetScale(reversed ? -v : v);
-         BuildPage();
+         m_sensor->GetMapping().SetDeadZone(v);
+         m_rebuildPage();
       }, //
       [](Settings&) { /* Already performed in first page item */ }, // Reset
       [](float, Settings&, bool) { /* Already performed in first page item */ })); // Save
 
    float liveLimit = liveMapping->GetLimit();
    float storedLimit = storedMapping ? storedMapping->GetLimit() : 1.f;
-   AddItem(std::make_unique<InGameUIItem>(
-      VPX::Properties::FloatPropertyDef(""s, ""s, "Limit"s, ""s, false, 0.f, 10.f, 0.f, 1.f), 1.f,
+   m_page->AddItem(std::make_unique<InGameUIItem>(
+      VPX::Properties::FloatPropertyDef(""s, ""s, "Limit"s, "Allow to clamp the acquisition (applied before scaling the result by the gain)"s, false, 0.f, 1.f, 0.f, 1.f), 1.f,
       "%4.2f", //
       [liveLimit]() { return liveLimit; }, // Live
-      [storedLimit](Settings&) { return storedLimit; }, // Stored
+      [storedLimit](const Settings&) { return storedLimit; }, // Stored
       [this](float, float v)
       {
-         m_item.m_physicsSensor->GetMapping().SetLimit(v);
-         BuildPage();
+         m_sensor->GetMapping().SetLimit(v);
+         m_rebuildPage();
       }, //
       [](Settings&) { /* Already performed in first page item */ }, // Reset
       [](float, Settings&, bool) { /* Already performed in first page item */ })); // Save

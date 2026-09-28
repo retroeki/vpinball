@@ -3,9 +3,20 @@
 #pragma once
 
 #include <SDL3/SDL.h>
+#include <mutex>
 
-#include "InputAction.h"
-#include "PhysicsSensor.h"
+#include "input/InputAction.h"
+#include "input/PhysicsSensor.h"
+#include "math/vector.h"
+
+class Settings;
+class PlungerSensor;
+class PlungerHandler;
+namespace VPX::Physics
+{
+class NudgeSensor;
+class NudgeHandler;
+};
 
 
 class InputManager final
@@ -13,7 +24,7 @@ class InputManager final
    , public SensorMapping::AxisInputEventManager
 {
 public:
-   InputManager();
+   InputManager(class Player* player, Settings& appSettings);
    InputManager(const InputManager&) = delete;
    InputManager& operator=(const InputManager&) = delete;
    ~InputManager() override;
@@ -33,8 +44,12 @@ public:
    unsigned int GetTiltActionId() const { return m_tiltActionId; }
    unsigned int GetLeftMagnaActionId() const { return m_leftMagnaActionId; }
    unsigned int GetRightMagnaActionId() const { return m_rightMagnaActionId; }
+   unsigned int GetUIUpActionId() const { return m_uiUpActionId; }
+   unsigned int GetUIDownActionId() const { return m_uiDownActionId; }
+   unsigned int GetUILeftActionId() const { return m_uiLeftActionId; }
+   unsigned int GetUIRightActionId() const { return m_uiRightActionId; }
    unsigned int GetExitGameActionId() const { return m_exitGameActionId; }
-   unsigned int GetExitInteractiveActionId() const { return m_exitInteractiveActionId; }
+   unsigned int GetOpenInGameUIActionId() const { return m_openInGameUIActionId; }
    unsigned int GetLockbarActionId() const { return m_lockbarActionId; }
    unsigned int GetJoyCustomActionId(int idx) const { assert(0 <= idx && idx < 4); return m_joyCustomActionId[idx]; }
    unsigned int GetVolumeDownActionId() const { return m_volumeDownActionId; }
@@ -44,76 +59,17 @@ public:
    unsigned int GetSlamTiltActionId() const { return m_slamTiltActionId; }
    unsigned int GetCoinDoorActionId() const { return m_coinDoorActionId; }
    unsigned int GetResetActionId() const { return m_resetActionId; }
-   unsigned int GetInGameUIActionId() const { return m_inGameUIActionId; }
    unsigned int GetServiceActionId(int idx) const { assert(0 <= idx && idx < 8); return m_serviceActionId[idx]; }
+   unsigned int GetVRControllerViewCenteringActionId() const { return m_vrControllerViewCenteringActionId; }
+   unsigned int GetVRViewCenterActionId() const { return m_vrViewCenterActionId; }
+   unsigned int GetVRViewUpActionId() const { return m_vrViewUpActionId; }
+   unsigned int GetVRViewDownActionId() const { return m_vrViewDownActionId; }
+   bool IsUINavigationActionId(unsigned int id) const;
    bool IsPressed(int actionId) const;
    int GetWindowVirtualKeyForAction(unsigned int actionId) const;
 
-   struct ActionState
-   {
-      uint64_t actionState;
-
-      void SetPressed(unsigned int actionId)
-      {
-         assert(actionId < 64);
-         const uint64_t mask = 1ull << actionId;
-         actionState |= mask;
-      }
-
-      void SetReleased(unsigned int actionId)
-      {
-         assert(actionId < 64);
-         const uint64_t mask = 1ull << actionId;
-         actionState &= ~mask;
-      }
-
-      bool IsKeyPressed(int actionId, const ActionState& prev) const
-      {
-         assert(actionId < 64);
-         const uint64_t mask = 1ull << actionId;
-         return (actionState & mask) != 0 && (prev.actionState & mask) == 0;
-      }
-
-      bool IsKeyDown(int actionId) const
-      {
-         assert(actionId < 64);
-         const uint64_t mask = 1ull << actionId;
-         return (actionState & mask) != 0;
-      }
-
-      bool IsKeyReleased(int actionId, const ActionState& prev) const
-      {
-         assert(actionId < 64);
-         const uint64_t mask = 1ull << actionId;
-         return (actionState & mask) == 0 && (prev.actionState & mask) != 0;
-      }
-   };
-   const ActionState& GetActionState() const { return m_inputActionstate; }
-
-
-   ///// Nudge & plunger
-   const std::unique_ptr<PhysicsSensor>& GetPlungerPositionSensor() const { return m_plungerPositionSensor; }
-   const std::unique_ptr<PhysicsSensor>& GetPlungerVelocitySensor() const { return m_plungerVelocitySensor; }
-   const std::unique_ptr<PhysicsSensor>& GetNudgeXSensor(int index) const { return m_nudgeXSensor[index]; }
-   const std::unique_ptr<PhysicsSensor>& GetNudgeYSensor(int index) const { return m_nudgeYSensor[index]; }
-   bool IsNudgeFiltered(int index) const { return m_nudgeFilter[index]; }
-   void SetNudgeFiltered(int index, bool enable);
-   float GetNudgeOrientation(int index) const { return m_nudgeOrientation[index]; }
-   void SetNudgeOrientation(int index, float orientation) { m_nudgeOrientation[index] = orientation; }
-
-   void AddAxisListener(std::function<void()> listener) { m_axisListeners.push_back(std::move(listener)); }
-   void ClearAxisListeners() { m_axisListeners.clear(); }
-
-   bool HasMechPlunger() const { return m_plungerPositionSensor->IsMapped(); }
-   float GetPlungerPos() const { return m_plungerPositionSensor->GetValue(); }
-   bool HasMechPlungerSpeed() const { return m_plungerVelocitySensor->IsMapped(); }
-   float GetPlungerSpeed() const { return m_plungerVelocitySensor->GetValue(); }
-   Vertex2D GetNudge() const;
-
-   // Allow to override local state for remote control support
-   void SetPlungerPos(bool override, const float pos);
-   void SetPlungerSpeed(bool override, const float speed);
-   void SetNudge(bool override, const float nudgeAccelerationX, const float nudgeAccelerationY);
+   void EnableRumbleFeedback(bool enable) { m_rumbleMode = enable; }
+   bool IsRumbleFeedbackEnabled() const { return m_rumbleMode; }
 
    ///// Input devices
    enum class DeviceType
@@ -125,22 +81,28 @@ public:
       VRController,
       OpenPinDev
    };
+   class MappingSetupHandler
+   {
+   public:
+      virtual void MapAction(const vector<ButtonMapping>& input, unsigned int action) = 0;
+      virtual void MapPlunger(std::unique_ptr<PlungerSensor> sensor) = 0;
+      virtual void MapNudge(std::unique_ptr<VPX::Physics::NudgeSensor> sensor) = 0;
+   };
    uint16_t RegisterDevice(const string& settingsId, DeviceType type, const string& name);
-   void RegisterDefaultMapping(uint16_t deviceId,
-      const std::function<bool( // Function to either apply or evaluate applying the default mapping of the given controller
-         std::function<bool(const vector<ButtonMapping>&, unsigned int)>, // Map Button
-         std::function<bool(const SensorMapping&, SensorMapping::Type type, bool isLinear)>, // Map plunger
-         std::function<bool(const SensorMapping& sensorX, const SensorMapping& sensorY)> // Map nudge
-         )>& mapper);
+   void SetDeviceDefaultMapping(uint16_t deviceId, const std::function<void(MappingSetupHandler&)>& mapper);
    void RegisterElementName(uint16_t deviceId, bool isAxis, uint16_t buttonOrAxisId, const string& name);
    void UnregisterDevice(uint16_t deviceId);
+   void ClearDeviceMappings(uint16_t deviceId);
    uint16_t GetDeviceId(const string& settingsId);
    const string& GetDeviceSettingId(uint16_t deviceId) const;
    const string& GetDeviceName(uint16_t deviceId) const;
+   bool IsDeviceConnected(uint16_t deviceId) const;
+   bool IsDeviceMapped(uint16_t deviceId) const;
    string GetDeviceElementName(uint16_t deviceId, uint16_t buttonOrAxisId) const;
    DeviceType GetDeviceType(uint16_t deviceId) const;
    uint16_t GetKeyboardDeviceId() const { return m_keyboardDeviceId; }
    uint16_t GetMouseDeviceId() const { return m_mouseDeviceId; }
+   vector<uint16_t> GetAllDevices() const;
    vector<uint32_t> GetAllAxis() const;
 
    void ProcessInput();
@@ -149,7 +111,9 @@ public:
    void PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_t timestampNs, bool isPressed);
    void PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t timestampNs, float position);
    void PushTouchEvent(SDL_FingerID fingerId, float relativeX, float relativeY, uint64_t timestampNs, bool isPressed);
-   void OnInputActionStateChanged(InputAction* action);
+
+   void AddAxisListener(std::function<void()> listener) { m_axisListeners.push_back(std::move(listener)); }
+   void ClearAxisListeners() { m_axisListeners.clear(); }
 
    void RegisterOnUpdate(InputAction* action);
    void UnregisterOnUpdate(InputAction* action);
@@ -181,23 +145,60 @@ public:
    public:
       virtual ~InputHandler() = default;
       virtual void Update() = 0;
-      virtual void PlayRumble(const float lowFrequencySpeed, const float highFrequencySpeed, const int ms_duration) { }
+      virtual void PlayRumble(const float lowFrequencySpeed, const float highFrequencySpeed, const int ms_duration, const bool kickLow, const bool kickHigh) { }
    };
 
-   // Speed: 0..1
+   // Used by actions to report state changes and query if local processing should be performed
+   bool OnInputActionStateChanged(InputAction* action);
+
+   // Speed: 0..1. Pulses are mixed, not replaced: the device plays the strongest active pulse per motor, and
+   // falls back to the next one when that runs out (see UpdateRumble).
    void PlayRumble(const float lowFrequencySpeed, const float highFrequencySpeed, const int ms_duration);
+   void UpdateRumble(); // Called once per frame: drops expired pulses and re-evaluates the output
 
-   uint64_t m_leftkey_down_usec = 0;
-   unsigned int m_leftkey_down_frame = 0;
-   uint64_t m_leftkey_down_usec_rotate_to_end = 0;
-   unsigned int m_leftkey_down_frame_rotate_to_end = 0;
-   uint64_t m_leftkey_down_usec_EOS = 0;
-   unsigned int m_leftkey_down_frame_EOS = 0;
+   // Rumble on flipper/ball contact, scaled by the relative normal velocity of the impact
+   void PlayFlipperContactRumble(const float normalImpactSpeed);
+   float GetFlipperContactRumbleStrength() const { return m_rumbleFlipperContact; }
+   void SetFlipperContactRumbleStrength(const float strength) { m_rumbleFlipperContact = strength; }
 
-   bool m_linearPlunger = false;
-   bool m_plunger_retract = false; // enable 1s retract phase for button/key plunger
+   // The generic rumbles that used to be fixed-strength calls at their sites; the strength settings scale
+   // them, with 0 disabling the effect.
+   void PlayBumperRumble();
+   void PlaySlingshotRumble();
+   void PlayPlungerRumble(const float fireSpeed);
+   void PlayPlungerLaunchRumble(const float impact); // 0..1 from the closing speed of the tip and the ball
+   void PlayFlipperButtonRumble();
+   float GetBumperRumbleStrength() const { return m_rumbleBumper; }
+   void SetBumperRumbleStrength(const float strength) { m_rumbleBumper = strength; }
+   float GetSlingshotRumbleStrength() const { return m_rumbleSlingshot; }
+   void SetSlingshotRumbleStrength(const float strength) { m_rumbleSlingshot = strength; }
+   float GetPlungerRumbleStrength() const { return m_rumblePlunger; }
+   void SetPlungerRumbleStrength(const float strength) { m_rumblePlunger = strength; }
+   float GetFlipperButtonRumbleStrength() const { return m_rumbleFlipperButton; }
+   void SetFlipperButtonRumbleStrength(const float strength) { m_rumbleFlipperButton = strength; }
+   // Rumble on cabinet nudge, scaled by the cabinet acceleration (m/s^2). Called once per physics millisecond.
+   void PlayNudgeRumble(const Vertex2D& cabinetAcceleration);
+   // Rumble on ball/ball collision, scaled by the closing speed along the contact normal
+   void PlayBallBallRumble(const float impactSpeed);
+   float GetBallBallRumbleStrength() const { return m_rumbleBallBall; }
+   void SetBallBallRumbleStrength(const float strength) { m_rumbleBallBall = strength; }
+   float GetNudgeRumbleStrength() const { return m_rumbleNudge; }
+   void SetNudgeRumbleStrength(const float strength) { m_rumbleNudge = strength; }
+
+   int m_leftFlipperLastChangePollDelay = 0;
+
+   // Used to add/remove the OpenXR input handler
+   void AddInputHandler(std::unique_ptr<InputHandler> handler);
+   std::unique_ptr<InputHandler> RemoveInputHandler(InputHandler* handler);
+
+   std::unique_ptr<VPX::Physics::NudgeHandler> m_nudgeHandler;
+
+   std::unique_ptr<PlungerHandler> m_plungerHandler;
 
 private:
+   class Player* m_player;
+   Settings& m_appSettings; // Input configuration is an application wide setting (not overridable per table)
+
    void CreateInputActions();
    InputAction* AddAction(std::unique_ptr<InputAction>&& action);
    vector<std::unique_ptr<InputAction>> m_inputActions;
@@ -214,8 +215,12 @@ private:
    unsigned int m_tiltActionId;
    unsigned int m_leftMagnaActionId;
    unsigned int m_rightMagnaActionId;
+   unsigned int m_uiUpActionId;
+   unsigned int m_uiDownActionId;
+   unsigned int m_uiLeftActionId;
+   unsigned int m_uiRightActionId;
    unsigned int m_exitGameActionId;
-   unsigned int m_exitInteractiveActionId;
+   unsigned int m_openInGameUIActionId;
    unsigned int m_lockbarActionId;
    unsigned int m_joyCustomActionId[4];
    unsigned int m_volumeDownActionId;
@@ -225,19 +230,15 @@ private:
    unsigned int m_slamTiltActionId;
    unsigned int m_coinDoorActionId;
    unsigned int m_resetActionId;
-   unsigned int m_inGameUIActionId;
    unsigned int m_serviceActionId[8];
+   unsigned int m_vrViewCenterActionId;
+   unsigned int m_vrViewUpActionId;
+   unsigned int m_vrViewDownActionId;
+   unsigned int m_vrControllerViewCenteringActionId;
    ankerl::unordered_dense::map<uint32_t, vector<ButtonMapping*>> m_buttonMappings;
    vector<InputAction*> m_onUpdateActions;
-   ActionState m_inputActionstate {};
    const unsigned int m_onActionEventMsgId;
 
-   std::unique_ptr<PhysicsSensor> m_plungerPositionSensor;
-   std::unique_ptr<PhysicsSensor> m_plungerVelocitySensor;
-   std::unique_ptr<PhysicsSensor> m_nudgeXSensor[2];
-   std::unique_ptr<PhysicsSensor> m_nudgeYSensor[2];
-   float m_nudgeOrientation[2] {};
-   bool m_nudgeFilter[2] { true, true };
    ankerl::unordered_dense::map<uint32_t, vector<SensorMapping*>> m_sensorMappings;
    vector<std::function<void()>> m_axisListeners;
 
@@ -263,11 +264,7 @@ private:
       ankerl::unordered_dense::map<uint16_t, ElementDef> m_buttonOrAxisNames;
 
       bool m_hasPendingLayoutApply = false;
-      std::function<bool( // Function to either apply or evaluate applying the default mapping of the given controller
-         std::function<bool(const vector<ButtonMapping>&, unsigned int)>, // Map Button
-         std::function<bool(const SensorMapping&, SensorMapping::Type type, bool isLinear)>, // Map plunger
-         std::function<bool(const SensorMapping&, const SensorMapping&)> // Map nudge
-         )> m_defaultMapping;
+      std::function<void(MappingSetupHandler&)> m_defaultMapping;
    };
    vector<DeviceDef> m_inputDevices;
    const uint16_t m_keyboardDeviceId;
@@ -295,9 +292,6 @@ private:
    vector<std::unique_ptr<InputHandler>> m_inputHandlers;
    class SDLInputHandler* m_sdlHandler = nullptr;
 
-   uint32_t m_exitPressTimestamp = 0;
-   uint32_t m_exitAppPressLengthMs = 0;
-
    void Autostart(const uint32_t initialDelayMs, const uint32_t retryDelayMs);
    uint32_t m_autoStartTimestamp = 0;
    bool m_gameStartedOnce = false;
@@ -306,6 +300,42 @@ private:
    int m_autoStartDirectStateSlot = -1;
 
    int m_rumbleMode = 0; // 0=Off, 1=Table only, 2=Generic only, 3=Table with generic as fallback
+
+   // Active rumble pulses. Called from the physics thread (collisions, solenoids) and the OS thread (UpdateRumble
+   // once per frame), hence the mutex. Eight slots are plenty: pulses last 60..250 ms and rarely more than three overlap.
+   struct RumblePulse
+   {
+      float low = 0.f;
+      float high = 0.f;
+      uint32_t endMs = 0;
+   };
+   static constexpr int RUMBLE_PULSE_SLOTS = 8;
+   RumblePulse m_rumblePulses[RUMBLE_PULSE_SLOTS];
+   std::mutex m_rumbleMutex;
+   float m_rumbleSentLow = 0.f; // What the device is currently playing
+   float m_rumbleSentHigh = 0.f;
+   uint32_t m_rumbleSentEndMs = 0;
+   bool m_rumbleSentKickLow = false;
+   bool m_rumbleSentKickHigh = false;
+   // A new pulse at RUMBLE_KICK_MIN_LEVEL or above is flagged as a kick for RUMBLE_KICK_MS (see PlayRumble).
+   // Levels are the mix before any device mapping (see SDLInputHandler for the gamepad motor model).
+   static constexpr float RUMBLE_OFF_LEVEL = 0.01f; // below this a strength setting or a pulse level counts as off
+   static constexpr uint32_t RUMBLE_KICK_MS = 80;
+   static constexpr float RUMBLE_KICK_MIN_LEVEL = (0.6f - 0.3f) / 0.7f; // level from which a pulse gets the kick; pulses meant as a light touch stay below it
+   float m_rumbleMixLow = 0.f; // The mix before the kick, to tell a new hit from a kick ending
+   float m_rumbleMixHigh = 0.f;
+   uint32_t m_rumbleKickLowEndMs = 0;
+   uint32_t m_rumbleKickHighEndMs = 0;
+   void UpdateRumbleOutput(const uint32_t now); // m_rumbleMutex must be held
+   void SendRumble(const float low, const float high, const int ms_duration, const bool kickLow, const bool kickHigh);
+   float m_rumbleFlipperContact = 1.f; // Strength of the rumble played on flipper/ball contact, 0 disables it
+   float m_rumbleBumper = 1.f; // Strength of the bumper rumble, 0 disables it
+   float m_rumbleSlingshot = 1.f; // Strength of the slingshot rumble, 0 disables it
+   float m_rumblePlunger = 1.f; // Strength of the plunger rumble, 0 disables it
+   float m_rumbleFlipperButton = 0.5f; // Strength of the flipper solenoid pulse, 0 disables it
+   float m_rumbleNudge = 1.f; // Strength of the rumble played on cabinet nudge, 0 disables it
+   float m_rumbleBallBall = 1.f; // Strength of the rumble played when two balls collide, 0 disables it
+   int m_nudgeRumbleCooldownMs = 0; // Physics milliseconds left before another nudge rumble may be played
 
 #ifdef _WIN32
    HHOOK m_hKeyboardHook = nullptr;

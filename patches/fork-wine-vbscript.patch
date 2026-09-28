@@ -1,0 +1,2076 @@
+Fork (retroeki) changes to the in-tree Wine VBScript engine (standalone/inc/wine),
+saved when merging upstream vpinball/vpinball master (ea85e57f8) on 2026-09-28.
+
+Upstream replaced the in-tree Wine sources with the external vpinball/libwinevbs
+(pinned via LIBWINEVBS_SHA in platforms/config.sh, Wine 11.17 at the time of the
+merge), so these fork changes are no longer built. Port them to a libwinevbs fork
+if still needed.
+
+Contents:
+  Part 1 - fork changes already present in the initial snapshot 75e15dfb1,
+           relative to upstream 10acd90d3 (Wine 10.19 era; parser.output omitted).
+  Part 2 - later fork commits touching the in-tree Wine sources, one patch per
+           commit. The 10.19 -> 11.8 upgrade commit 83bfd53ce is omitted because
+           libwinevbs is already on a newer Wine.
+
+Also removed in this merge: RenderDevice.cpp's use of vbs_get_last_member_assign()
+(defined in the fork's interp.c) is now stubbed; see Part 2 commit 12d716901.
+
+==============================================================================
+Part 1: git diff 10acd90d3 75e15dfb1 -- standalone/inc/wine
+==============================================================================
+diff --git a/standalone/inc/wine/dlls/scrrun/dictionary.c b/standalone/inc/wine/dlls/scrrun/dictionary.c
+index dad3a4529..08890f0fb 100644
+--- a/standalone/inc/wine/dlls/scrrun/dictionary.c
++++ b/standalone/inc/wine/dlls/scrrun/dictionary.c
+@@ -32,6 +32,8 @@
+ #include "wine/debug.h"
+ #include "wine/list.h"
+ 
++void external_log_info(const char* format, ...);
++
+ WINE_DEFAULT_DEBUG_CHANNEL(scrrun);
+ 
+ #define BUCKET_COUNT  509
+@@ -647,6 +649,7 @@ static HRESULT WINAPI dictionary_Exists(IDictionary *iface, VARIANT *key, VARIAN
+         return CTL_E_ILLEGALFUNCTIONCALL;
+ 
+     *exists = get_keyitem_pair(dictionary, key) != NULL ? VARIANT_TRUE : VARIANT_FALSE;
++
+     return S_OK;
+ }
+ 
+diff --git a/standalone/inc/wine/dlls/scrrun/dictionary_proxy.c b/standalone/inc/wine/dlls/scrrun/dictionary_proxy.c
+index 50e94565b..affbc269f 100644
+--- a/standalone/inc/wine/dlls/scrrun/dictionary_proxy.c
++++ b/standalone/inc/wine/dlls/scrrun/dictionary_proxy.c
+@@ -218,7 +218,7 @@ static HRESULT WINAPI dictionary_Invoke(IDictionary *iface, DISPID dispIdMember,
+ 			VariantClear(&res);
+ 	}
+ 	else {
+-		external_log_info("dictionary_Invoke: dispId=%d (0x%08x), wFlags=%d, hres=%d", dispIdMember, dispIdMember, wFlags, hres);
++		/* external_log_info("dictionary_Invoke: dispId=%d (0x%08x), wFlags=%d, hres=%d", dispIdMember, dispIdMember, wFlags, hres); */
+ 	}
+ 	return hres;
+ }
+diff --git a/standalone/inc/wine/dlls/vbscript/compile.c b/standalone/inc/wine/dlls/vbscript/compile.c
+index 8d8c04b85..c78f9cf91 100644
+--- a/standalone/inc/wine/dlls/vbscript/compile.c
++++ b/standalone/inc/wine/dlls/vbscript/compile.c
+@@ -24,6 +24,13 @@
+ 
+ #include "wine/debug.h"
+ 
++#ifdef __ANDROID__
++#include <android/log.h>
++#define COMPILE_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
++#else
++#define COMPILE_LOG(...) fprintf(stderr, __VA_ARGS__)
++#endif
++
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ WINE_DECLARE_DEBUG_CHANNEL(vbscript_disas);
+ 
+@@ -395,6 +402,7 @@ static inline BOOL emit_catch(compile_ctx_t *ctx, unsigned off)
+ 
+ static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT error)
+ {
++    COMPILE_LOG("compile_error called: error=0x%08lx, loc=%d\n", (unsigned long)error, compiler->loc);
+     if(error == SCRIPT_E_REPORTED)
+         return error;
+ 
+@@ -402,6 +410,8 @@ static HRESULT compile_error(script_ctx_t *ctx, compile_ctx_t *compiler, HRESULT
+     ctx->ei.scode = error;
+     ctx->ei.bstrSource = get_vbscript_string(VBS_COMPILE_ERROR);
+     map_vbs_exception(&ctx->ei);
++    COMPILE_LOG("compile_error: after map_vbs_exception, bstrDescription=%s\n",
++                ctx->ei.bstrDescription ? "SET" : "NULL");
+     return report_script_error(ctx, compiler->code, compiler->loc);
+ }
+ 
+@@ -526,6 +536,22 @@ static HRESULT compile_call_expression(compile_ctx_t *ctx, call_expression_t *ex
+     if(call->type == EXPR_MEMBER)
+         return compile_member_call_expression(ctx, (member_expression_t*)call, arg_cnt, ret_val);
+ 
++#ifdef __STANDALONE__
++    /* Wine VBScript Bug: (new ClassName)(args) pattern doesn't work properly.
++     * DISPID_VALUE invocation on script-defined classes fails.
++     * Workaround: Transform to explicit Init method call.
++     * This is a common VPX pattern where classes have an Init default method.
++     */
++    if(call->type == EXPR_NEW) {
++        /* Compile: new ClassName -> creates object on stack */
++        hres = compile_expression(ctx, call);
++        if(FAILED(hres))
++            return hres;
++        /* Call Init method instead of default (DISPID_VALUE) */
++        return push_instr_bstr_uint(ctx, ret_val ? OP_mcall : OP_mcallv, L"Init", arg_cnt);
++    }
++#endif
++
+     hres = compile_expression(ctx, call);
+     if(FAILED(hres))
+         return hres;
+@@ -1141,6 +1167,7 @@ static HRESULT compile_dim_statement(compile_ctx_t *ctx, dim_statement_t *stat)
+         if(lookup_dim_decls(ctx, dim_decl->name) || lookup_args_name(ctx, dim_decl->name)
+            || lookup_const_decls(ctx, dim_decl->name, FALSE)) {
+             FIXME("dim %s name redefined\n", debugstr_w(dim_decl->name));
++            COMPILE_LOG("COMPILE FAIL: Dim '%ls' redefined\n", dim_decl->name);
+             return E_FAIL;
+         }
+ 
+@@ -1234,6 +1261,7 @@ static HRESULT compile_function_statement(compile_ctx_t *ctx, function_statement
+ {
+     if(ctx->func != &ctx->code->main_code) {
+         FIXME("Function is not in the global code\n");
++        COMPILE_LOG("COMPILE FAIL: Function not in global code\n");
+         return E_FAIL;
+     }
+ 
+@@ -1254,6 +1282,7 @@ static HRESULT compile_exitdo_statement(compile_ctx_t *ctx)
+     }
+     if(!iter) {
+         FIXME("Exit Do outside Do Loop\n");
++        COMPILE_LOG("COMPILE FAIL: Exit Do outside Do Loop\n");
+         return E_FAIL;
+     }
+ 
+@@ -1280,6 +1309,7 @@ static HRESULT compile_exitfor_statement(compile_ctx_t *ctx)
+     }
+     if(!iter) {
+         FIXME("Exit For outside For loop\n");
++        COMPILE_LOG("COMPILE FAIL: Exit For outside For loop\n");
+         return E_FAIL;
+     }
+ 
+@@ -1313,6 +1343,7 @@ static HRESULT compile_exitsub_statement(compile_ctx_t *ctx)
+ {
+     if(!ctx->sub_end_label) {
+         FIXME("Exit Sub outside Sub?\n");
++        COMPILE_LOG("COMPILE FAIL: Exit Sub outside Sub\n");
+         return E_FAIL;
+     }
+ 
+@@ -1323,6 +1354,7 @@ static HRESULT compile_exitfunc_statement(compile_ctx_t *ctx)
+ {
+     if(!ctx->func_end_label) {
+         FIXME("Exit Function outside Function?\n");
++        COMPILE_LOG("COMPILE FAIL: Exit Function outside Function\n");
+         return E_FAIL;
+     }
+ 
+@@ -1333,6 +1365,7 @@ static HRESULT compile_exitprop_statement(compile_ctx_t *ctx)
+ {
+     if(!ctx->prop_end_label) {
+         FIXME("Exit Property outside Property?\n");
++        COMPILE_LOG("COMPILE FAIL: Exit Property outside Property\n");
+         return E_FAIL;
+     }
+ 
+@@ -1446,8 +1479,11 @@ static HRESULT compile_statement(compile_ctx_t *ctx, statement_ctx_t *stat_ctx,
+             hres = E_NOTIMPL;
+         }
+ 
+-        if(FAILED(hres))
++        if(FAILED(hres)) {
++            COMPILE_LOG("COMPILE FAIL: statement type=%d, loc=%u, hres=0x%08lx\n",
++                        stat->type, stat->loc, (unsigned long)hres);
+             return hres;
++        }
+         stat = stat->next;
+     }
+ 
+@@ -1533,8 +1569,10 @@ static HRESULT compile_func(compile_ctx_t *ctx, statement_t *stat, function_t *f
+     ctx->const_decls = NULL;
+     hres = compile_statement(ctx, NULL, stat);
+     ctx->func = NULL;
+-    if(FAILED(hres))
++    if(FAILED(hres)) {
++        COMPILE_LOG("compile_statement failed: hres=0x%08lx\n", (unsigned long)hres);
+         return hres;
++    }
+ 
+     if(ctx->sub_end_label)
+         label_set_addr(ctx, ctx->sub_end_label);
+@@ -1606,6 +1644,7 @@ static HRESULT create_function(compile_ctx_t *ctx, function_decl_t *decl, functi
+ 
+     if(lookup_dim_decls(ctx, decl->name) || lookup_const_decls(ctx, decl->name, FALSE)) {
+         FIXME("%s: redefinition\n", debugstr_w(decl->name));
++        COMPILE_LOG("COMPILE FAIL: Function/Sub '%ls' redefined\n", decl->name);
+         return E_FAIL;
+     }
+ 
+@@ -1647,8 +1686,10 @@ static HRESULT create_function(compile_ctx_t *ctx, function_decl_t *decl, functi
+     }
+ 
+     hres = compile_func(ctx, decl->body, func);
+-    if(FAILED(hres))
++    if(FAILED(hres)) {
++        COMPILE_LOG("COMPILE FAIL: compile_func failed for '%ls', hres=0x%08lx\n", decl->name, (unsigned long)hres);
+         return hres;
++    }
+ 
+     *ret = func;
+     return S_OK;
+@@ -1729,6 +1770,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
+     if(lookup_dim_decls(ctx, class_decl->name) || lookup_funcs_name(ctx, class_decl->name)
+             || lookup_const_decls(ctx, class_decl->name, FALSE) || lookup_class_name(ctx, class_decl->name)) {
+         FIXME("%s: redefinition\n", debugstr_w(class_decl->name));
++        COMPILE_LOG("COMPILE FAIL: Class '%ls' redefined\n", class_decl->name);
+         return E_FAIL;
+     }
+ 
+@@ -1748,6 +1790,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
+             if(func_prop_decl->is_default) {
+                 if(have_default) {
+                     FIXME("multiple default getters or methods\n");
++                    COMPILE_LOG("COMPILE FAIL: Multiple default getters/methods in class\n");
+                     return E_FAIL;
+                 }
+                 is_default = have_default = TRUE;
+@@ -1774,6 +1817,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
+         if(!wcsicmp(L"class_initialize", func_decl->name)) {
+             if(func_decl->type != FUNC_SUB) {
+                 FIXME("class initializer is not sub\n");
++                COMPILE_LOG("COMPILE FAIL: Class_Initialize is not Sub\n");
+                 return E_FAIL;
+             }
+ 
+@@ -1781,6 +1825,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
+         }else  if(!wcsicmp(L"class_terminate", func_decl->name)) {
+             if(func_decl->type != FUNC_SUB) {
+                 FIXME("class terminator is not sub\n");
++                COMPILE_LOG("COMPILE FAIL: Class_Terminate is not Sub\n");
+                 return E_FAIL;
+             }
+ 
+@@ -1802,6 +1847,7 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
+     for(prop_decl = class_decl->props, i=0; prop_decl; prop_decl = prop_decl->next, i++) {
+         if(lookup_class_funcs(class_desc, prop_decl->name)) {
+             FIXME("Property %s redefined\n", debugstr_w(prop_decl->name));
++            COMPILE_LOG("COMPILE FAIL: Property '%ls' redefined\n", prop_decl->name);
+             return E_FAIL;
+         }
+ 
+@@ -2023,30 +2069,44 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+     }
+ 
+     ctx.parser.lcid = script->lcid;
++    COMPILE_LOG("Starting parse_script...\n");
+     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
++    COMPILE_LOG("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
+     if(FAILED(hres)) {
+         if(ctx.parser.error_loc != -1)
+             ctx.loc = ctx.parser.error_loc;
++        COMPILE_LOG("Calling compile_error with loc=%d\n", ctx.loc);
+         hres = compile_error(script, &ctx, hres);
+         release_vbscode(code);
+         return hres;
+     }
+ 
++    COMPILE_LOG("Compiling main code (global scope)...\n");
+     hres = compile_func(&ctx, ctx.parser.stats, &ctx.code->main_code);
+     if(FAILED(hres)) {
++        COMPILE_LOG("compile_func (main) FAILED: hres=0x%08lx\n", (unsigned long)hres);
+         hres = compile_error(script, &ctx, hres);
+         release_compiler(&ctx);
+         return hres;
+     }
++    COMPILE_LOG("Main code compiled OK\n");
+ 
+     code->option_explicit = ctx.parser.option_explicit;
+     ctx.global_consts = ctx.const_decls;
+     code->option_explicit = ctx.parser.option_explicit;
+ 
++    {
++        int func_count = 0;
++        for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next)
++            func_count++;
++        COMPILE_LOG("Compiling %d functions...\n", func_count);
++    }
+ 
+     for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next) {
++        COMPILE_LOG("Compiling function: %ls\n", func_decl->name);
+         hres = create_function(&ctx, func_decl, &new_func);
+         if(FAILED(hres)) {
++            COMPILE_LOG("create_function FAILED for '%ls': hres=0x%08lx\n", func_decl->name, (unsigned long)hres);
+             hres = compile_error(script, &ctx, hres);
+             release_compiler(&ctx);
+             return hres;
+@@ -2055,18 +2115,23 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+         new_func->next = ctx.code->funcs;
+         ctx.code->funcs = new_func;
+     }
++    COMPILE_LOG("All functions compiled OK\n");
+ 
+     for(class_decl = ctx.parser.class_decls; class_decl; class_decl = class_decl->next) {
++        COMPILE_LOG("Compiling class: %ls\n", class_decl->name);
+         hres = compile_class(&ctx, class_decl);
+         if(FAILED(hres)) {
++            COMPILE_LOG("compile_class FAILED for '%ls': hres=0x%08lx\n", class_decl->name, (unsigned long)hres);
+             hres = compile_error(script, &ctx, hres);
+             release_compiler(&ctx);
+             return hres;
+         }
+     }
++    COMPILE_LOG("All classes compiled OK\n");
+ 
+     hres = check_script_collisions(&ctx, script);
+     if(FAILED(hres)) {
++        COMPILE_LOG("check_script_collisions FAILED: hres=0x%08lx\n", (unsigned long)hres);
+         hres = compile_error(script, &ctx, hres);
+         release_compiler(&ctx);
+         return hres;
+diff --git a/standalone/inc/wine/dlls/vbscript/global.c b/standalone/inc/wine/dlls/vbscript/global.c
+index 24609d3b0..96a024d61 100644
+--- a/standalone/inc/wine/dlls/vbscript/global.c
++++ b/standalone/inc/wine/dlls/vbscript/global.c
+@@ -2480,11 +2480,19 @@ static HRESULT Global_MsgBox(BuiltinDisp *This, VARIANT *args, unsigned args_cnt
+     if(SUCCEEDED(hres))
+         hres = show_msgbox(This->ctx, prompt, type, title, res);
+ #else
+-    if(SUCCEEDED(hres)) {
+-        char buf[2048];
+-        WideCharToMultiByte(CP_ACP, 0, prompt, -1, buf, sizeof(buf) - 1, NULL, NULL);
+-        external_log_info("MsgBox: prompt=%s", buf);
++    // Standalone: silently return positive response based on button type
++    if(res) {
++        V_VT(res) = VT_I2;
++        // Return appropriate positive response based on MsgBox type
++        // MB_YESNO=4, MB_YESNOCANCEL=3 expect IDYES; others expect IDOK
++        if((type & 0x7) == 3 || (type & 0x7) == 4)
++            V_I2(res) = IDYES;  // Return Yes for Yes/No dialogs
++        else
++            V_I2(res) = IDOK;   // Return OK for OK dialogs
+     }
++    SysFreeString(prompt);
++    SysFreeString(title);
++    return S_OK;
+ #endif
+ 
+     SysFreeString(prompt);
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index 9f81c6928..49db88f38 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -26,6 +26,21 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ 
+ static DISPID propput_dispid = DISPID_PROPERTYPUT;
+ 
++/* Simple wide string helpers for recursion tracking */
++static inline int wstr_cmp(const WCHAR *s1, const WCHAR *s2)
++{
++    while(*s1 && *s1 == *s2) { s1++; s2++; }
++    return *s1 - *s2;
++}
++
++static inline void wstr_cpy(WCHAR *dst, const WCHAR *src, int max_len)
++{
++    int i;
++    for(i = 0; i < max_len - 1 && src[i]; i++)
++        dst[i] = src[i];
++    dst[i] = 0;
++}
++
+ typedef struct {
+     vbscode_t *code;
+     instr_t *instr;
+@@ -559,6 +574,7 @@ HRESULT array_access(SAFEARRAY *array, DISPPARAMS *dp, VARIANT **ret)
+     }
+ 
+     hres = SafeArrayPtrOfIndex(array, indices, (void**)ret);
++
+     SafeArrayUnlock(array);
+     free(indices);
+     return hres;
+@@ -2575,10 +2591,61 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+     vbsop_t op;
+     HRESULT hres = S_OK;
+ 
++    /*
++     * DEBUG LOGGING FOR ANDROID/WINE VBSCRIPT (Added January 2026)
++     * 
++     * Purpose: Help diagnose infinite recursion crashes in VBScript execution.
++     * 
++     * How it works:
++     * - Tracks recursion depth of exec_script calls
++     * - Logs function name when depth exceeds 50 (early warning)
++     * - Detects if same function called repeatedly (possible infinite loop)
++     * - Aborts execution at depth 500 to prevent stack overflow crash
++     * 
++     * Log output (visible in Android logcat):
++     * - "VBSCRIPT: depth=XX func=FunctionName" - recursion building up
++     * - "VBSCRIPT: func called XX times: FunctionName" - repeated calls
++     * - "VBSCRIPT: FATAL depth=500: FunctionName" - identifies the culprit
++     * 
++     * To disable: Set recursion_depth checks to very high values or remove this block.
++     */
++    // Track recursion depth to detect infinite recursion
++    static int recursion_depth = 0;
++    static WCHAR last_func_name[256] = {0};
++    static int same_func_count = 0;
++
++    recursion_depth++;
++
++    // Log when depth is high
++    if (recursion_depth > 50) {
++        fprintf(stderr, "VBSCRIPT: depth=%d func=%ls\n", recursion_depth, func->name ? func->name : L"(null)");
++    }
++
++    // Detect same function called repeatedly
++    if (func->name && wstr_cmp(func->name, last_func_name) == 0) {
++        same_func_count++;
++        if (same_func_count > 100 && same_func_count % 100 == 0) {
++            fprintf(stderr, "VBSCRIPT: func called %d times: %ls\n", same_func_count, func->name);
++        }
++    } else {
++        if (func->name) {
++            wstr_cpy(last_func_name, func->name, 256);
++        }
++        same_func_count = 1;
++    }
++
++    // Abort if recursion is runaway
++    if (recursion_depth > 500) {
++        fprintf(stderr, "VBSCRIPT: FATAL depth=%d: %ls\n", recursion_depth, func->name ? func->name : L"(null)");
++        recursion_depth--;
++        return E_FAIL;
++    }
++
+     exec.code = func->code_ctx;
+ 
+     if(dp ? func->arg_cnt != arg_cnt(dp) : func->arg_cnt) {
+         FIXME("wrong arg_cnt %d, expected %d\n", dp ? arg_cnt(dp) : 0, func->arg_cnt);
++        recursion_depth--;
+         return E_FAIL;
+     }
+ 
+@@ -2592,6 +2659,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+         exec.args = calloc(func->arg_cnt, sizeof(VARIANT));
+         if(!exec.args) {
+             release_exec(&exec);
++            recursion_depth--;
+             return E_OUTOFMEMORY;
+         }
+ 
+@@ -2608,6 +2676,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+             }
+             if(FAILED(hres)) {
+                 release_exec(&exec);
++                recursion_depth--;
+                 return hres;
+             }
+         }
+@@ -2619,6 +2688,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+         exec.vars = calloc(func->var_cnt, sizeof(VARIANT));
+         if(!exec.vars) {
+             release_exec(&exec);
++            recursion_depth--;
+             return E_OUTOFMEMORY;
+         }
+     }else {
+@@ -2630,6 +2700,7 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+     exec.stack = malloc(exec.stack_size * sizeof(VARIANT));
+     if(!exec.stack) {
+         release_exec(&exec);
++        recursion_depth--;
+         return E_OUTOFMEMORY;
+     }
+ 
+@@ -2723,5 +2794,6 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+     }
+ 
+     release_exec(&exec);
++    recursion_depth--;
+     return hres;
+ }
+diff --git a/standalone/inc/wine/dlls/vbscript/lex.c b/standalone/inc/wine/dlls/vbscript/lex.c
+index 917ca808d..332758777 100644
+--- a/standalone/inc/wine/dlls/vbscript/lex.c
++++ b/standalone/inc/wine/dlls/vbscript/lex.c
+@@ -455,8 +455,15 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
+ 
+     switch(c) {
+     case '\n':
++        ctx->ptr++;
++        return tNL;
+     case '\r':
+         ctx->ptr++;
++        /* Handle \r\r\n and \r\n as single line ending - skip all consecutive \r */
++        while(ctx->ptr < ctx->end && *ctx->ptr == '\r')
++            ctx->ptr++;
++        if(ctx->ptr < ctx->end && *ctx->ptr == '\n')
++            ctx->ptr++;
+         return tNL;
+     case '\'':
+         return comment_line(ctx);
+diff --git a/standalone/inc/wine/dlls/vbscript/parser.y b/standalone/inc/wine/dlls/vbscript/parser.y
+index 20c30eed6..ec3362be3 100644
+--- a/standalone/inc/wine/dlls/vbscript/parser.y
++++ b/standalone/inc/wine/dlls/vbscript/parser.y
+@@ -22,6 +22,12 @@
+ #include "parse.h"
+ 
+ #include "wine/debug.h"
++#ifdef __ANDROID__
++#include <android/log.h>
++#define PARSER_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptParser", __VA_ARGS__)
++#else
++#define PARSER_LOG(...) fprintf(stderr, __VA_ARGS__)
++#endif
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ 
+@@ -91,6 +97,7 @@ static statement_t *link_statements(statement_t*,statement_t*);
+ %parse-param { parser_ctx_t *ctx }
+ %define api.prefix {parser_}
+ %define api.pure
++%define parse.error verbose
+ %start Program
+ 
+ %union {
+@@ -210,7 +217,12 @@ Statement
+     | SimpleStatement ':'                   { $$ = $1; }
+ 
+ SimpleStatement
+-    : CallExpression ArgumentList_opt       { call_expression_t *call_expr = make_call_expression(ctx, $1, $2); CHECK_ERROR;
++    : CallExpression ArgumentList_opt       { call_expression_t *call_expr = make_call_expression(ctx, $1, $2);
++                                              if(!call_expr && ctx->error_loc == (unsigned)-1) {
++                                                  ctx->error_loc = @1;
++                                                  PARSER_LOG("make_call_expression failed at offset %u\n", @1);
++                                              }
++                                              CHECK_ERROR;
+                                               $$ = new_call_statement(ctx, @$, &call_expr->expr); CHECK_ERROR; }
+     | tCALL UnaryExpression                 { $$ = new_call_statement(ctx, @$, $2); CHECK_ERROR; }
+     | CallExpression '=' Expression
+@@ -246,6 +258,8 @@ SimpleStatement
+                                             { $$ = new_select_statement(ctx, @$, $3, $5); }
+     | tWITH Expression StSep StatementsNl_opt tEND tWITH
+                                             { $$ = new_with_statement(ctx, @$, $2, $4); }
++    /* REMOVED: Orphan End If rule was causing shift-reduce conflict with End Sub/End Function */
++    /* The parser would shift tEND expecting tIF, but fail when it saw tSUB instead */
+ 
+ MemberExpression
+     : Identifier                            { $$ = new_member_expression(ctx, NULL, $1); CHECK_ERROR; }
+@@ -311,6 +325,11 @@ IfStatement
+     | tIF Expression tTHEN Statement EndIf_opt { $$ = new_if_statement(ctx, @$, $2, $4, NULL, NULL); CHECK_ERROR; }
+     | tIF Expression tTHEN Statement tELSE Statement EndIf_opt
+                                                { $$ = new_if_statement(ctx, @$, $2, $4, NULL, $6); CHECK_ERROR; }
++    /* Wine extension: Handle single-line If-Then-Else where Statement contains an expression
++       ending with ) and immediately followed by Else (no space). This is handled by making
++       SimpleStatement explicit when followed by tELSE */
++    | tIF Expression tTHEN SimpleStatement tELSE Statement EndIf_opt
++                                               { $$ = new_if_statement(ctx, @$, $2, $4, NULL, $6); CHECK_ERROR; }
+ 
+ EndIf_opt
+     : /* empty */
+@@ -556,6 +575,8 @@ static int parser_error(unsigned *loc, parser_ctx_t *ctx, const char *str)
+         ctx->error_loc = *loc;
+     if(ctx->hres == S_OK) {
+         FIXME("%s: %s\n", debugstr_w(ctx->code + *loc), debugstr_a(str));
++        /* Log parser error details for debugging */
++        PARSER_LOG("PARSER ERROR at loc %u: %s\n", *loc, str ? str : "(null)");
+         ctx->hres = E_FAIL;
+     }else {
+         WARN("%s: %08lx\n", debugstr_w(ctx->code + *loc), ctx->hres);
+@@ -734,6 +755,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
+         return new_call_expression(ctx, callee_expr, arguments);
+     if(callee_expr->type != EXPR_CALL) {
+         FIXME("Unhandled for expr type %u\n", callee_expr->type);
++        PARSER_LOG("PARSE FAIL: make_call_expression - Unhandled expr type %u\n", callee_expr->type);
+         ctx->hres = E_FAIL;
+         return NULL;
+     }
+@@ -745,6 +767,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
+ 
+     if(call_expr->args->next) {
+         FIXME("Invalid syntax: invalid use of parentheses for arguments\n");
++        PARSER_LOG("PARSE FAIL: make_call_expression - Invalid use of parentheses for arguments\n");
+         ctx->hres = E_FAIL;
+         return NULL;
+     }
+@@ -757,6 +780,7 @@ static call_expression_t *make_call_expression(parser_ctx_t *ctx, expression_t *
+ 
+     if(arguments->type != EXPR_NOARG) {
+         FIXME("Invalid syntax: missing comma\n");
++        PARSER_LOG("PARSE FAIL: make_call_expression - Missing comma\n");
+         ctx->hres = E_FAIL;
+         return NULL;
+     }
+@@ -809,6 +833,7 @@ static statement_t *new_call_statement(parser_ctx_t *ctx, unsigned loc, expressi
+         break;
+     default:
+         FIXME("Unsupported expr type %u\n", expr->type);
++        PARSER_LOG("PARSE FAIL: new_call_statement - Unsupported expr type %u\n", expr->type);
+         ctx->hres = E_NOTIMPL;
+     }
+     if(!call_expr)
+@@ -1066,6 +1091,7 @@ static function_decl_t *new_function_decl(parser_ctx_t *ctx, const WCHAR *name,
+             is_default = TRUE;
+         }else {
+             FIXME("Invalid default property\n");
++            PARSER_LOG("PARSE FAIL: new_function_decl - Invalid default property, type=%d name=%ls\n", type, name);
+             ctx->hres = E_FAIL;
+             return NULL;
+         }
+@@ -1120,6 +1146,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
+         if(!wcsicmp(iter->name, decl->name)) {
+             if(decl->type == FUNC_SUB || decl->type == FUNC_FUNCTION) {
+                 FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
++                PARSER_LOG("PARSE FAIL: add_class_function - Redefinition of %ls::%ls (sub/func)\n", class_decl->name, decl->name);
+                 ctx->hres = E_FAIL;
+                 return NULL;
+             }
+@@ -1127,6 +1154,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
+             while(1) {
+                 if(iter->type == decl->type) {
+                     FIXME("Redefinition of %s::%s\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
++                    PARSER_LOG("PARSE FAIL: add_class_function - Redefinition of %ls::%ls (same type %d)\n", class_decl->name, decl->name, decl->type);
+                     ctx->hres = E_FAIL;
+                     return NULL;
+                 }
+@@ -1151,6 +1179,7 @@ static class_decl_t *add_dim_prop(parser_ctx_t *ctx, class_decl_t *class_decl, d
+ 
+     if(storage_flags & STORAGE_IS_DEFAULT) {
+         FIXME("variant prop can't be default value\n");
++        PARSER_LOG("PARSE FAIL: add_dim_prop - variant prop can't be default value\n");
+         ctx->hres = E_FAIL;
+         return NULL;
+     }
+
+==============================================================================
+Part 2: per-commit patches (git format-patch)
+==============================================================================
+From 9d670489ea83295ef311cf0bd6bfb130d4d775a6 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Sat, 11 Apr 2026 12:57:03 +0100
+Subject: [PATCH] Android phone fixes: portrait view setup, script perf, timer
+ guards, and TODO markers
+
+- Fix ViewSetup orientation detection to use aspect ratio instead of GetSystemMetrics (returns 0 on Android)
+- Update pintable ShowDT to prevent expensive desktop-mode script paths on mobile
+- Remove ENABLE_BGFX guard around timer firing so frame pacing works consistently
+- Add TODO markers for backglass portrait aspect ratio and filesystem staging cache issues
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/scrrun/filesystem.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/scrrun/filesystem.c b/standalone/inc/wine/dlls/scrrun/filesystem.c
+index 49945bd8f..1f05738a5 100644
+--- a/standalone/inc/wine/dlls/scrrun/filesystem.c
++++ b/standalone/inc/wine/dlls/scrrun/filesystem.c
+@@ -3541,6 +3541,14 @@ static HRESULT WINAPI filesys_GetExtensionName(IFileSystem3 *iface, BSTR path,
+     return S_OK;
+ }
+ 
++// TODO: RETROEKI - This function fails on phone when table is loaded from staging cache
++// (/data/user/0/com.retroeki.pinball/cache/vpx_staging/) because:
++// 1. getcwd() may return unexpected path for the :native_process
++// 2. The for loop starts at i=3 assuming Windows C:\ style paths - breaks on deep Unix paths
++// 3. FindFirstFileW walk may fail on Android internal storage paths
++// 4. The staging cache only has the .vpx file, not UltraDMD/asset subfolders
++// Works on Odin because tables are read directly from SD card raw path
++// Phone uses SAF -> staging cache copy because scoped storage blocks raw access
+ static HRESULT WINAPI filesys_GetAbsolutePathName(IFileSystem3 *iface, BSTR path, BSTR *pbstrResult)
+ {
+     WCHAR buf[MAX_PATH], ch;
+-- 
+2.45.1.windows.1
+
+From f3639b83513403fcb25417cbe6297a9ca6f95235 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 24 Apr 2026 19:21:04 +0100
+Subject: [PATCH] Wine VBScript diagnostics, OnScriptError filter, post-audit
+ patcher pass
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- standalone/inc/wine/dlls/vbscript/vbscript.c: log every
+  report_script_error call under a new VBScriptRuntime logcat tag,
+  including scode, wCode, line/char/loc, start_line, source, description,
+  and the first ~160 chars of the erroring code block (newlines shown as
+  ¶). Combined with the pre-existing VBScriptCompile tag in compile.c,
+  this is the ground-truth oracle for whether Wine rejected a script and
+  what it threw when running — replaces guessing with hard evidence.
+- src/ui/codeview.cpp: CodeViewer::OnScriptError now filters out the
+  inner-Execute OERN noise pattern (scode=E_FAIL, line=1, char=0, empty
+  description). Wine's Execute statement runs its string argument in a
+  nested script context; an outer On Error Resume Next does not propagate
+  into it, so benign init-loop errors like Execute "Set Lights(i)=Li"
+  for unresolved Li always notify the host. Previously the host set
+  m_scriptError=true on every notification, causing Player::FinishFrame
+  to kill the player ~2s later even when the script was fine.
+  Fixes Medieval Madness Bigus MOD 3.0 and any other table with
+  OERN-guarded Execute init loops.
+- src/ui/simplescriptpatcher.{cpp,h}: full post-audit dispatcher
+  rewrite. 13 upstream-corroborated rules enabled; ~18 low/medium/dead-
+  confidence rules explicitly commented out with evidence citations.
+  Re-enables PatchControllerPause (Knight Rider line-13 runtime E_FAIL
+  on Controller.Pause = True) and PatchDuplicateVpmInit (Back to the
+  Future flipper callback corruption). Adds and then disables
+  PatchReversedRelationalOp, which today's empirical test on MM 3.0
+  disproved as load-bearing. Rationale and live state captured in
+  C:/Android/com.retroeki.pinball/crash_investigations/vpx_standalone_scripts_audit.md §7.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/vbscript.c | 47 ++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/vbscript.c b/standalone/inc/wine/dlls/vbscript/vbscript.c
+index 2975f26d7..6dc8c9dcf 100644
+--- a/standalone/inc/wine/dlls/vbscript/vbscript.c
++++ b/standalone/inc/wine/dlls/vbscript/vbscript.c
+@@ -26,6 +26,14 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ 
++#ifdef __ANDROID__
++#include <android/log.h>
++#define VBS_ERR_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptRuntime", __VA_ARGS__)
++#else
++#include <stdio.h>
++#define VBS_ERR_LOG(...) fprintf(stderr, __VA_ARGS__)
++#endif
++
+ #ifdef _WIN64
+ 
+ #define CTXARG_T DWORDLONG
+@@ -584,6 +592,45 @@ HRESULT report_script_error(script_ctx_t *ctx, const vbscode_t *code, unsigned l
+     }
+     error->character = code->source + loc - nl;
+ 
++    /* Instrumentation: log the raw EXCEPINFO Wine populated BEFORE it hands it
++     * off to the host's OnScriptError, plus the first 160 chars of the code
++     * block that errored (so we can identify WHICH script snippet is
++     * failing even when the host reports line=0/loc=0). */
++    {
++        char src[256] = {0}, desc[512] = {0}, snippet[200] = {0};
++        if (error->ei.bstrSource) {
++            int n = WideCharToMultiByte(CP_UTF8, 0, error->ei.bstrSource, -1,
++                                        src, sizeof(src) - 1, NULL, NULL);
++            if (n <= 0) src[0] = '\0';
++        }
++        if (error->ei.bstrDescription) {
++            int n = WideCharToMultiByte(CP_UTF8, 0, error->ei.bstrDescription, -1,
++                                        desc, sizeof(desc) - 1, NULL, NULL);
++            if (n <= 0) desc[0] = '\0';
++        }
++        if (code && code->source) {
++            /* Clamp to 160 wchars for WC→UTF-8 round-trip. Replace newlines with
++             * a visible marker so everything stays on one log line. */
++            WCHAR tmp[161];
++            unsigned i;
++            for (i = 0; i < 160 && code->source[i]; i++) {
++                tmp[i] = (code->source[i] == '\n' || code->source[i] == '\r')
++                         ? (WCHAR)0x00B6 /* ¶ */
++                         : code->source[i];
++            }
++            tmp[i] = 0;
++            int n = WideCharToMultiByte(CP_UTF8, 0, tmp, -1,
++                                        snippet, sizeof(snippet) - 1, NULL, NULL);
++            if (n <= 0) snippet[0] = '\0';
++        }
++        VBS_ERR_LOG("report_script_error: scode=0x%08lx wCode=0x%04x line=%u char=%u loc=%u start_line=%u source=\"%s\" description=\"%s\" snippet=\"%s\"",
++                    (unsigned long)error->ei.scode, (unsigned)error->ei.wCode,
++                    (unsigned)error->line, (unsigned)error->character,
++                    (unsigned)loc,
++                    code ? (unsigned)code->start_line : 0u,
++                    src, desc, snippet);
++    }
++
+     hres = IActiveScriptSite_OnScriptError(ctx->site, &error->IActiveScriptError_iface);
+     IActiveScriptError_Release(&error->IActiveScriptError_iface);
+     return hres == S_OK ? SCRIPT_E_REPORTED : result;
+-- 
+2.45.1.windows.1
+
+From c7f280893b5ddedf5f433b0997358648d778b286 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Thu, 7 May 2026 12:25:03 +0100
+Subject: [PATCH] Wine: skip IsValidLocale check on Android in Global_SetLocale
+
+Regression introduced when adopting upstream's full Global_SetLocale
+implementation in commit 83bfd53 (Wine 10.19 -> 11.8 upgrade). Upstream
+now validates the LCID via IsValidLocale(LCID_INSTALLED), which on
+Android always returns FALSE because our NLS-data shims (locale.c) make
+find_lcid_entry return NULL.
+
+Result: every table that calls SetLocale 1033 (the standard line in
+every VPW init) failed with VBSE_LOCALE_SETTING_NOT_SUPPORTED, which
+cascaded through vpmInit and surfaced as TYPE_MISMATCH on gBOT(s).Z
+later in the script. Affected: PinBot, Lord of the Rings VPW 1.6,
+Lethal Weapon 3 VPW 2.0, World Cup Soccer VPW v1.2, Harlem Globetrotters
+VPW 1.0 (5 of 14 tables in the 2026-05-07 crash batch).
+
+Wrap the IsValidLocale check in #ifndef __STANDALONE__ so the standalone
+build skips validation and accepts whatever LCID the script asks for.
+The lcid is still written to the script context below the check, so the
+script-visible behaviour matches the pre-upgrade B-26 shim that
+unconditionally returned S_OK.
+
+All 5 affected tables verified playable after this fix.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/global.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/global.c b/standalone/inc/wine/dlls/vbscript/global.c
+index efd316881..63a178ad2 100644
+--- a/standalone/inc/wine/dlls/vbscript/global.c
++++ b/standalone/inc/wine/dlls/vbscript/global.c
+@@ -2714,8 +2714,15 @@ static HRESULT Global_SetLocale(BuiltinDisp *This, VARIANT *args, unsigned args_
+         }
+         }
+ 
++#ifndef __STANDALONE__
+         if(!IsValidLocale(new_lcid, LCID_INSTALLED))
+             return MAKE_VBSERROR(VBSE_LOCALE_SETTING_NOT_SUPPORTED);
++#endif
++        /* On Android our NLS-data shims make IsValidLocale always return
++         * FALSE, which would reject every SetLocale 1033 call (the standard
++         * VPW init line). Skip the validation and accept whatever LCID the
++         * script asks for; the lcid is recorded into the script context
++         * below either way. */
+     }
+ 
+     This->ctx->lcid = new_lcid;
+-- 
+2.45.1.windows.1
+
+From 7080fb926d2d59944a1a033ba2ad043355607b81 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Thu, 7 May 2026 22:43:16 +0100
+Subject: [PATCH] EM tables: fix Controller binding + B2SSetData overload +
+ FormatNumber
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Standalone build was crashing on EM tables (WoZ, FORGE, etc.) at the
+first Controller method call. Five layered issues; all fixed:
+
+DynamicScript: type-aware overload resolution
+  Was matching by arg count only ("FIXME match overload on type and
+  arguments"). Two B2SSetData overloads — (int,int) and (string,int) —
+  always picked the first registered. Script call with a string arg
+  hit DISP_E_TYPEMISMATCH. Now scores each candidate by category match
+  (string→string +10, numeric→numeric +10, mismatched 0) and picks the
+  best, falling back to first-registered on ties. Affects every plugin
+  with overloaded same-arity methods, not just B2S.
+
+Wine vbscript: graceful NLS fallback in format_number_lcid /
+format_currency_lcid
+  Android's NLS shim returns 0 from GetNumberFormatW for many inputs
+  (NlsValidateLocale incomplete). Was returning DISP_E_TYPEMISMATCH;
+  now falls back to the raw to_string() result. Matches the pattern
+  already in oleaut32/vartype.c:6529.
+
+Wine vbscript: to_int leniency for whitespace/empty BSTRs
+  MS VBScript silently coerces "        " → 0; Wine errored. Buggy
+  community scripts (WoZ ExpandLine: Left(s, Space(n))) hit this.
+  Whitespace-only strings now return 0; non-whitespace garbage still
+  propagates the error so real bugs aren't masked.
+
+ScriptArrayList shim
+  System.Collections.ArrayList isn't shipped with Wine on Android.
+  Many tables CreateObject("System.Collections.ArrayList") for dynamic
+  ID lists. Implements the methods scripts actually use (Add/Item/
+  Count/Clear/Contains/IndexOf/Remove/RemoveAt/Insert/Sort/Reverse/
+  ToArray/Clone) plus IEnumVARIANT for `For Each`. Wired through
+  external_create_object in def.cpp.
+
+def.cpp::external_create_object IUnknown** fix
+  Caller passes the address of a pointer typed as `IUnknown*`. Casting
+  `&obj` only wrote to a local stack copy — the caller never saw the
+  real object on success. Cast the parameter itself back to IUnknown**.
+  Was harmless on failure paths but silently broken for ArrayList.
+
+Diagnostic gating
+  Adds external_diag_enabled() (env VPX_SCRIPT_DIAG=1) and the macros
+  EXTERNAL_LOG_DIAG / PLOGI_DIAG / PLOGE_DIAG / PLOGW_DIAG. ~20
+  [CTRL-DIAG] log sites covering Wine dispatch, plugin object creation,
+  controller.vbs flow, FormatNumber, GetTextFile resolution, and
+  B2SLegacy factory invocation are now off by default. See
+  reference_vpx_script_diag.md for usage.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/global.c   | 57 +++++++++++++++++---
+ standalone/inc/wine/dlls/vbscript/interp.c   | 52 +++++++++++++++++-
+ standalone/inc/wine/dlls/vbscript/vbscript.h |  5 ++
+ 3 files changed, 105 insertions(+), 9 deletions(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/global.c b/standalone/inc/wine/dlls/vbscript/global.c
+index 63a178ad2..7896766df 100644
+--- a/standalone/inc/wine/dlls/vbscript/global.c
++++ b/standalone/inc/wine/dlls/vbscript/global.c
+@@ -569,8 +569,29 @@ HRESULT to_int(VARIANT *v, int *ret)
+ 
+     V_VT(&r) = VT_EMPTY;
+     hres = VariantChangeType(&r, v, 0, VT_I4);
+-    if(FAILED(hres))
++    if(FAILED(hres)) {
++        // [STANDALONE FIX] MS VBScript silently coerces whitespace-only / empty BSTRs to 0,
++        // and many community scripts rely on this (e.g. WoZ ExpandLine: Left(s, Space(n))
++        // — the author wrapped the count in Space() by mistake). Wine is stricter and errors
++        // with TYPE_MISMATCH. Match MS leniency for the whitespace case only — non-whitespace
++        // garbage strings ("abc") still propagate the error so we don't mask real bugs.
++        const VARIANT *src = v;
++        if (V_VT(src) == (VT_VARIANT|VT_BYREF) && V_VARIANTREF(src))
++            src = V_VARIANTREF(src);
++        if (V_VT(src) == VT_BSTR && V_BSTR(src)) {
++            const WCHAR *p = V_BSTR(src);
++            BOOL all_ws = TRUE;
++            while (*p) {
++                if (*p != L' ' && *p != L'\t' && *p != L'\n' && *p != L'\r') { all_ws = FALSE; break; }
++                p++;
++            }
++            if (all_ws) {
++                *ret = 0;
++                return S_OK;
++            }
++        }
+         return hres;
++    }
+ 
+     *ret = V_I4(&r);
+     return S_OK;
+@@ -698,12 +719,18 @@ static IUnknown *create_object(script_ctx_t *ctx, const WCHAR *progid)
+ #else
+     if (!wcsicmp(progid, L"Scripting.FileSystemObject")) {
+         hres = FileSystem_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
++        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
++                          debugstr_w(progid), (unsigned)hres);
+     }
+     else if (!wcsicmp(progid, L"Scripting.Dictionary")) {
+         hres = Dictionary_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
++        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
++                          debugstr_w(progid), (unsigned)hres);
+     }
+     else {
+         hres = external_create_object(progid, cf, (IUnknown*)&obj);
++        external_log_info("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
++                          debugstr_w(progid), (unsigned)hres, obj);
+     }
+ #endif
+     if(FAILED(hres))
+@@ -4076,8 +4103,13 @@ static HRESULT format_number_lcid(LCID lcid, VARIANT *var, int ndigits, int nlea
+     GetLocaleInfoW(lcid, LOCALE_STHOUSAND, thousands, ARRAY_SIZE(thousands));
+ 
+     if(!GetNumberFormatW(lcid, 0, str, &fmt, buff, ARRAY_SIZE(buff))) {
+-        SysFreeString(str);
+-        return DISP_E_TYPEMISMATCH;
++        // [STANDALONE FIX] Android NLS shim returns 0 from GetNumberFormatW for some inputs
++        // (NlsValidateLocale returns NULL or get_number_format fails on incomplete NLS data).
++        // Match the graceful fallback pattern from oleaut32/vartype.c:6529 — return the raw
++        // to_string() result so the script gets a usable string instead of TYPE_MISMATCH.
++        WARN("GetNumberFormatW() failed, returning raw number string instead\n");
++        *out = str;
++        return S_OK;
+     }
+     SysFreeString(str);
+ 
+@@ -4140,8 +4172,11 @@ static HRESULT format_currency_lcid(LCID lcid, VARIANT *var, int ndigits, int nl
+     GetLocaleInfoW(lcid, LOCALE_SCURRENCY, currency, ARRAY_SIZE(currency));
+ 
+     if(!GetCurrencyFormatW(lcid, 0, str, &fmt, buff, ARRAY_SIZE(buff))) {
+-        SysFreeString(str);
+-        return DISP_E_TYPEMISMATCH;
++        // [STANDALONE FIX] Same Android NLS shim issue as format_number_lcid above —
++        // fall back to the raw to_string() result instead of TYPE_MISMATCH.
++        WARN("GetCurrencyFormatW() failed, returning raw number string instead\n");
++        *out = str;
++        return S_OK;
+     }
+     SysFreeString(str);
+ 
+@@ -4171,10 +4206,18 @@ static HRESULT Global_FormatNumber(BuiltinDisp *This, VARIANT *args, unsigned ar
+     TRACE("\n");
+     assert(1 <= args_cnt && args_cnt <= 5);
+ 
++    EXTERNAL_LOG_DIAG("[CTRL-DIAG] Global_FormatNumber called args_cnt=%u arg0_vt=0x%04x", args_cnt, V_VT(args));
+     hres = parse_format_args(args, args_cnt, a);
+-    if(FAILED(hres)) return hres;
++    if(FAILED(hres)) {
++        EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber parse_format_args FAIL hres=0x%08x", (unsigned)hres);
++        return hres;
++    }
+     hres = format_number_lcid(This->ctx->lcid, args, a[0], a[1], a[2], a[3], &str);
+-    if(FAILED(hres)) return hres;
++    if(FAILED(hres)) {
++        EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber format_number_lcid FAIL hres=0x%08x", (unsigned)hres);
++        return hres;
++    }
++    EXTERNAL_LOG_DIAG("[CTRL-DIAG] FormatNumber OK");
+     return return_bstr(res, str);
+ }
+ 
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index 4ce648efd..ddf20b717 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -690,9 +690,34 @@ static HRESULT do_icall(exec_ctx_t *ctx, VARIANT *res, BSTR identifier, unsigned
+ 
+     TRACE("%s %u\n", debugstr_w(identifier), arg_cnt);
+ 
++#ifdef __STANDALONE__
++    /* [CTRL-DIAG] Watch for the identifiers we care about in the LoadController flow. */
++    if (identifier && (
++        !wcsicmp(identifier, L"CreatePluginObject") ||
++        !wcsicmp(identifier, L"LoadController") ||
++        !wcsicmp(identifier, L"LoadEM") ||
++        !wcsicmp(identifier, L"LoadVPM") ||
++        !wcsicmp(identifier, L"LoadVPinMAME") ||
++        !wcsicmp(identifier, L"Setting"))) {
++        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_icall identifier=%s arg_cnt=%u is_call=%d", debugstr_w(identifier), arg_cnt, is_call);
++    }
++#endif
++
+     hres = lookup_identifier(ctx, identifier, VBDISP_CALLGET, &ref);
+-    if(FAILED(hres))
++    if(FAILED(hres)) {
++#ifdef __STANDALONE__
++        if (identifier && (
++            !wcsicmp(identifier, L"CreatePluginObject") ||
++            !wcsicmp(identifier, L"LoadController") ||
++            !wcsicmp(identifier, L"LoadEM") ||
++            !wcsicmp(identifier, L"LoadVPM") ||
++            !wcsicmp(identifier, L"LoadVPinMAME") ||
++            !wcsicmp(identifier, L"Setting"))) {
++            EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_icall LOOKUP FAIL identifier=%s hres=0x%08x", debugstr_w(identifier), (unsigned)hres);
++        }
++#endif
+         return hres;
++    }
+ 
+     switch(ref.type) {
+     case REF_VAR:
+@@ -873,12 +898,35 @@ static HRESULT do_mcall(exec_ctx_t *ctx, VARIANT *res)
+     DISPID id;
+     HRESULT hres;
+ 
++#ifdef __STANDALONE__
++    /* [CTRL-DIAG] Capture the receiver's variant shape before stack_pop_disp consumes it,
++       so we can distinguish Empty / Nothing / non-dispatch when the call fails. */
++    VARIANT *recv_peek = stack_top(ctx, 0);
++    VARTYPE recv_vt = recv_peek ? V_VT(recv_peek) : 0xFFFF;
++    int recv_is_byref_empty = 0;
++    int recv_is_byref_dispatch_null = 0;
++    if (recv_peek && V_VT(recv_peek) == (VT_VARIANT | VT_BYREF) && V_VARIANTREF(recv_peek)) {
++        VARTYPE rvt = V_VT(V_VARIANTREF(recv_peek));
++        if (rvt == VT_EMPTY) recv_is_byref_empty = 1;
++        if (rvt == VT_DISPATCH && V_DISPATCH(V_VARIANTREF(recv_peek)) == NULL) recv_is_byref_dispatch_null = 1;
++    }
++#endif
++
+     hres = stack_pop_disp(ctx, &obj);
+-    if(FAILED(hres))
++    if(FAILED(hres)) {
++#ifdef __STANDALONE__
++        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_mcall stack_pop_disp FAIL method=%s vt=0x%04x byref_empty=%d byref_dispnull=%d hres=0x%08x",
++            debugstr_w(identifier), recv_vt, recv_is_byref_empty, recv_is_byref_dispatch_null, (unsigned)hres);
++#endif
+         return hres;
++    }
+ 
+     if(!obj) {
+         WARN("NULL obj\n");
++#ifdef __STANDALONE__
++        EXTERNAL_LOG_DIAG("[CTRL-DIAG] do_mcall NULL obj (Nothing) method=%s vt=0x%04x byref_empty=%d byref_dispnull=%d",
++            debugstr_w(identifier), recv_vt, recv_is_byref_empty, recv_is_byref_dispatch_null);
++#endif
+         return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
+     }
+ 
+diff --git a/standalone/inc/wine/dlls/vbscript/vbscript.h b/standalone/inc/wine/dlls/vbscript/vbscript.h
+index 12d28fda2..51e1f5dac 100644
+--- a/standalone/inc/wine/dlls/vbscript/vbscript.h
++++ b/standalone/inc/wine/dlls/vbscript/vbscript.h
+@@ -38,6 +38,11 @@
+ HRESULT external_create_object(const WCHAR *progid, IClassFactory* cf, IUnknown* obj);
+ void external_log_info(const char* format, ...);
+ void external_log_debug(const char* format, ...);
++/* Returns nonzero if the [CTRL-DIAG] script-diagnostic log channel is enabled.
++   Enable at runtime by setting the env var VPX_SCRIPT_DIAG=1 before app launch.
++   Cached after first call. Default: disabled (zero logging overhead). */
++int external_diag_enabled(void);
++#define EXTERNAL_LOG_DIAG(...) do { if (external_diag_enabled()) external_log_info(__VA_ARGS__); } while (0)
+ #endif
+ 
+ typedef struct {
+-- 
+2.45.1.windows.1
+
+From b762e75233e1dd8034364983ecab2b3a19b5894d Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 8 May 2026 06:51:20 +0100
+Subject: [PATCH] Wine vbscript: support chained-call writes; retire
+ DTArray/STArray patcher
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds proper handling for `expr(args) = value` style writes when the LHS
+expression isn't a simple identifier or member access — i.e. chained
+writes like `DTArray(i)(j) = -1`. Wine bug 58056 already fixed the READ
+side via variant_call's SAFEARRAY path; this is its WRITE counterpart.
+
+The previous compile_assignment path assumed `call_expr->call_expr`
+was always EXPR_MEMBER and cast it as such. For chained writes that
+inner expression is itself an EXPR_CALL — the cast yielded garbage
+member_expression_t and the script aborted with VBSE_OBJECT_REQUIRED
+(424) at runtime.
+
+Implementation:
+  vbscript.h           — adds OP_assign_call / OP_set_call to OP_LIST
+  compile.c            — detects EXPR_CALL inner on LHS and compiles
+                         the inner expression as a normal RHS-style
+                         expression (pushes inner receiver), then emits
+                         the new opcode. Falls through to existing
+                         member/ident paths for everything else, so
+                         non-chained writes are unaffected.
+  interp.c             — do_assign_call dispatches by receiver variant
+                         type:
+                           VT_ARRAY|VT_VARIANT (BYREF or not):
+                             array_access + assign_value to the slot
+                           VT_DISPATCH:
+                             disp_propput on DISPID_VALUE
+                             (PROPERTYPUTREF for Set, PROPERTYPUT else)
+                           VT_EMPTY/VT_NULL: VBSE_OBJECT_REQUIRED
+                           else:              DISP_E_TYPEMISMATCH
+
+Patcher retirement:
+  simplescriptpatcher.cpp — PatchDTArray and PatchSTArray are now
+  unconditionally disabled. Their job was to convert original
+  `Array(Array(...))` syntax into a Class DropTarget hierarchy because
+  Wine 10.x couldn't handle Array(x)(y). Wine 11.8 + the chained-write
+  fix above let original scripts run as authored. Removing the patcher
+  also removes a class of breakage (case-sensitive regex missed
+  mixed-case call sites like AC-DC LUCI's `DTarray(i)(2)`, leaving
+  DropTarget objects being indexed → ARITY_MISMATCH on default init).
+  Case-insensitive (?i) tweaks left in PatchDTArray/PatchSTArray for
+  the day someone needs to flip them back on for a regression.
+
+Verified end-to-end: AC-DC LUCI Premium VR (chained reads + writes
+in BallSearch and DTRaise), Halloween, DUCKTALES.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/compile.c  | 24 +++++-
+ standalone/inc/wine/dlls/vbscript/interp.c   | 88 ++++++++++++++++++++
+ standalone/inc/wine/dlls/vbscript/vbscript.h |  2 +
+ 3 files changed, 113 insertions(+), 1 deletion(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/compile.c b/standalone/inc/wine/dlls/vbscript/compile.c
+index eda06c160..8f7a9fbc6 100644
+--- a/standalone/inc/wine/dlls/vbscript/compile.c
++++ b/standalone/inc/wine/dlls/vbscript/compile.c
+@@ -1188,7 +1188,29 @@ static HRESULT compile_assignment(compile_ctx_t *ctx, expression_t *left, expres
+         break;
+     case EXPR_CALL:
+         call_expr = (call_expression_t*)left;
+-#ifndef __STANDALONE__
++#ifdef __STANDALONE__
++        /* Chained-write: LHS is a CALL whose target is itself a CALL — e.g.
++         * `DTArray(i)(j) = x`. The default path below assumes call_expr->call_expr
++         * is an EXPR_MEMBER and does an unsafe cast; for chained writes that
++         * cast yields garbage and the script aborts with VBSE_OBJECT_REQUIRED.
++         * Compile the inner CALL as a normal expression (pushing the inner
++         * receiver variant on the stack), then emit the new OP_assign_call /
++         * OP_set_call opcode which dispatches at runtime based on receiver type
++         * (SAFEARRAY → array_access + assign; DISPATCH → propput on DISPID_VALUE). */
++        if (call_expr->call_expr->type == EXPR_CALL) {
++            hres = compile_expression(ctx, call_expr->call_expr);
++            if (FAILED(hres)) return hres;
++            hres = compile_expression(ctx, value_expr);
++            if (FAILED(hres)) return hres;
++            hres = compile_args(ctx, call_expr->args, &args_cnt);
++            if (FAILED(hres)) return hres;
++            hres = push_instr_uint(ctx, is_set ? OP_set_call : OP_assign_call, args_cnt);
++            if (FAILED(hres)) return hres;
++            if (!emit_catch(ctx, 0))
++                return E_OUTOFMEMORY;
++            return S_OK;
++        }
++#else
+         assert(call_expr->call_expr->type == EXPR_MEMBER);
+ #endif
+         member_expr = (member_expression_t*)call_expr->call_expr;
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index ddf20b717..7be5d7873 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -1234,6 +1234,94 @@ static HRESULT interp_set_member(exec_ctx_t *ctx)
+     return S_OK;
+ }
+ 
++#ifdef __STANDALONE__
++/* Chained-call assignment: handles `expr(args) = value` where the LHS expression
++ * isn't a simple identifier or member access. Compile pushes:
++ *     receiver-variant, value, args[0..arg_cnt-1]   (top of stack last)
++ * The receiver is whatever the inner CALL expression evaluated to — typically a
++ * VT_BYREF|VT_VARIANT pointing to a SAFEARRAY-holding slot (from variant_call's
++ * array path), or a VT_DISPATCH for object-property writes through chained calls.
++ *
++ * Without this opcode, `DTArray(i)(j) = x` style writes fail because the existing
++ * compile_assignment path only handles EXPR_MEMBER as the inner expression and
++ * casts EXPR_CALL inners as members (UB). The READ side already works via
++ * variant_call (Wine bug 58056 fix); this is its WRITE counterpart.
++ */
++static HRESULT do_assign_call(exec_ctx_t *ctx, BOOL is_set)
++{
++    const unsigned arg_cnt = ctx->instr->arg1.uint;
++    DISPPARAMS dp;
++    HRESULT hres;
++    VARIANT *recv;
++
++    TRACE("%u set=%d\n", arg_cnt, is_set);
++
++    /* receiver is below 1 value + arg_cnt args */
++    recv = stack_top(ctx, arg_cnt + 1);
++    if (V_VT(recv) == (VT_VARIANT|VT_BYREF) && V_VARIANTREF(recv))
++        recv = V_VARIANTREF(recv);
++
++    switch (V_VT(recv)) {
++    case VT_ARRAY|VT_BYREF|VT_VARIANT:
++    case VT_ARRAY|VT_VARIANT: {
++        SAFEARRAY *array = (V_VT(recv) & VT_BYREF) ? *V_ARRAYREF(recv) : V_ARRAY(recv);
++        VARIANT *dst;
++
++        vbstack_to_dp(ctx, arg_cnt, FALSE, &dp);
++        hres = array_access(array, &dp, &dst);
++        if (FAILED(hres))
++            return hres;
++
++        /* value lives at stack offset arg_cnt (just above the args) */
++        hres = assign_value(ctx, dst, stack_top(ctx, arg_cnt),
++                            is_set ? DISPATCH_PROPERTYPUTREF : 0);
++        if (FAILED(hres))
++            return hres;
++        break;
++    }
++    case VT_DISPATCH: {
++        IDispatch *obj = V_DISPATCH(recv);
++        if (!obj) {
++            WARN("NULL obj on chained-call assign\n");
++            return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
++        }
++        vbstack_to_dp(ctx, arg_cnt, TRUE, &dp);
++        hres = disp_propput(ctx->script, obj, DISPID_VALUE,
++                            is_set ? DISPATCH_PROPERTYPUTREF : DISPATCH_PROPERTYPUT,
++                            &dp);
++        if (FAILED(hres))
++            return hres;
++        break;
++    }
++    case VT_EMPTY:
++    case VT_NULL:
++        WARN("uninitialised receiver vt=0x%04x for chained assign\n", V_VT(recv));
++        return MAKE_VBSERROR(VBSE_OBJECT_REQUIRED);
++    default:
++        WARN("unsupported receiver vt=0x%04x for chained assign\n", V_VT(recv));
++        return DISP_E_TYPEMISMATCH;
++    }
++
++    stack_popn(ctx, arg_cnt + 2);
++    return S_OK;
++}
++
++static HRESULT interp_assign_call(exec_ctx_t *ctx)
++{
++    return do_assign_call(ctx, FALSE);
++}
++
++static HRESULT interp_set_call(exec_ctx_t *ctx)
++{
++    return do_assign_call(ctx, TRUE);
++}
++#else
++/* Non-standalone builds: opcode is registered in OP_LIST but never emitted by
++ * compile.c, so the runtime stub just errors. */
++static HRESULT interp_assign_call(exec_ctx_t *ctx) { FIXME("not implemented\n"); return E_NOTIMPL; }
++static HRESULT interp_set_call(exec_ctx_t *ctx)    { FIXME("not implemented\n"); return E_NOTIMPL; }
++#endif
++
+ static HRESULT interp_const(exec_ctx_t *ctx)
+ {
+     BSTR arg = ctx->instr->arg1.bstr;
+diff --git a/standalone/inc/wine/dlls/vbscript/vbscript.h b/standalone/inc/wine/dlls/vbscript/vbscript.h
+index 51e1f5dac..7f261beb4 100644
+--- a/standalone/inc/wine/dlls/vbscript/vbscript.h
++++ b/standalone/inc/wine/dlls/vbscript/vbscript.h
+@@ -262,6 +262,7 @@ typedef enum {
+ #define OP_LIST                                   \
+     X(add,            1, 0,           0)          \
+     X(and,            1, 0,           0)          \
++    X(assign_call,    1, ARG_UINT,    0)          \
+     X(assign_ident,   1, ARG_BSTR,    ARG_UINT)   \
+     X(assign_member,  1, ARG_BSTR,    ARG_UINT)   \
+     X(bool,           1, ARG_INT,     0)          \
+@@ -316,6 +317,7 @@ typedef enum {
+     X(redim_preserve, 1, ARG_BSTR,    ARG_UINT)   \
+     X(ret,            0, 0,           0)          \
+     X(retval,         1, 0,           0)          \
++    X(set_call,       1, ARG_UINT,    0)          \
+     X(set_ident,      1, ARG_BSTR,    ARG_UINT)   \
+     X(set_member,     1, ARG_BSTR,    ARG_UINT)   \
+     X(stack,          1, ARG_UINT,    0)          \
+-- 
+2.45.1.windows.1
+
+From ec324e68ab65d20333a060c1800a65f949d13b91 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 8 May 2026 07:15:03 +0100
+Subject: [PATCH] Wine vbscript: lenient out-of-bounds array reads
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Out-of-bounds READS on script-level arrays now silently return Empty
+instead of aborting the script with VBSE_OUT_OF_BOUNDS. Writes still
+propagate the error.
+
+Many community tables ship with off-by-one bugs that only land on exact
+bounds. Canonical example — AC-DC Premium 1.5 UpdateGIs:
+
+    For each bulb in GI_LowPF: bulb.Intensity = LampState ((134)*3): Next
+
+Author intent was `LampState(134) * 3` but the parens make VBScript
+parse it as `LampState((134)*3)` = `LampState(402)`, while LampState is
+`Dim LampState(200)`. The same line uses `*1.5` elsewhere which lands
+at index 195/198/201 — the *3 case is the only one that goes far enough
+out to be obviously wrong. Equivalent bugs across other tables.
+
+Two read sites updated:
+  interp.c::variant_call         — chained calls + direct array access
+                                   from script (`arr(i)`, `arr(i)(j)`)
+  vbdisp.c (PROPERTYGET path)    — dispatchable-array element reads
+
+Both intercept DISP_E_BADINDEX or MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS) and
+substitute a non-BYREF VT_EMPTY result. Empty propagates as 0 in numeric
+contexts and "" in string contexts, so the script keeps running with the
+read silently zeroed.
+
+Same "be lenient where MS appears to be" pattern used earlier this
+session for to_int (whitespace BSTRs) and format_number_lcid (NLS shim
+fallback). Writes through do_assign_call remain strict — a script
+mutating past bounds is too suspicious to silently swallow.
+
+Verified end-to-end: AC-DC Premium 1.5 (the original crash). Halloween,
+DUCKTALES, WoZ, FORGE, AC-DC LUCI unaffected (no behavior change for
+in-bounds reads).
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/interp.c | 14 ++++++++++++++
+ standalone/inc/wine/dlls/vbscript/vbdisp.c |  8 ++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index 7be5d7873..a0dadfdc4 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -677,6 +677,20 @@ static HRESULT variant_call(exec_ctx_t *ctx, VARIANT *v, unsigned arg_cnt, VARIA
+         V_VT(res) = VT_BYREF|VT_VARIANT;
+         V_BYREF(res) = v;
+     }
++#ifdef __STANDALONE__
++    else if (hres == DISP_E_BADINDEX || hres == MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS)) {
++        /* [STANDALONE FIX] Lenient out-of-bounds READ — community scripts
++         * routinely have off-by-one bugs that only land on exact bounds
++         * (AC-DC Premium 1.5: `LampState ((134)*3)` evaluates to
++         * `LampState(402)` against `Dim LampState(200)`). Returning Empty
++         * lets the script keep running with the value silently treated as 0,
++         * matching how the same scripts behave on Windows in similar contexts.
++         * Writes still propagate the error via do_assign_call so we don't
++         * mask actual mutation bugs. */
++        V_VT(res) = VT_EMPTY;
++        hres = S_OK;
++    }
++#endif
+ 
+     stack_popn(ctx, arg_cnt);
+     return hres;
+diff --git a/standalone/inc/wine/dlls/vbscript/vbdisp.c b/standalone/inc/wine/dlls/vbscript/vbdisp.c
+index 04c8d2acf..1a840bd34 100644
+--- a/standalone/inc/wine/dlls/vbscript/vbdisp.c
++++ b/standalone/inc/wine/dlls/vbscript/vbdisp.c
+@@ -175,6 +175,14 @@ static HRESULT invoke_variant_prop(script_ctx_t *ctx, VARIANT *v, WORD flags, DI
+ #ifdef __STANDALONE__
+             if (FAILED(hres = array_access(!V_ISBYREF(v) ? V_ARRAY(v) : *V_ARRAYREF(v), dp, &v)))
+             {
++                /* [STANDALONE FIX] Same lenient OOB read as interp.c::variant_call —
++                 * out-of-bounds READS return Empty rather than aborting the script.
++                 * See variant_call in interp.c for full rationale. Writes (handled in
++                 * the PROPERTYPUT path below) still propagate errors. */
++                if (hres == DISP_E_BADINDEX || hres == MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS)) {
++                    V_VT(res) = VT_EMPTY;
++                    return S_OK;
++                }
+ #else
+             if(FAILED(hres = get_array_from_variant(v, &array)))
+                 return hres;
+-- 
+2.45.1.windows.1
+
+From 339584c008a79e18c65ef0d0d0445af1af5d25ff Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 8 May 2026 08:22:08 +0100
+Subject: [PATCH] Wine vbscript: allow Sub + Property of same name in a class
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Wine 10.x silently accepted classes with both `Sub Foo(...)` and
+`Property Let Foo(...)` (or any Sub/Function paired with a Property
+accessor) because they map to different VBDISP slots. The 11.8 merge
+tightened parser.y::add_class_function to reject any Sub/Function
+appearing alongside a same-named member — but that's stricter than
+necessary. The real conflict is two members fighting for the same
+dispatch slot, not just any name overlap.
+
+Slot mapping (per compile.c::compile_func):
+  FUNC_FUNCTION / FUNC_SUB / FUNC_PROPGET  → VBDISP_CALLGET
+  FUNC_PROPLET                              → VBDISP_LET
+  FUNC_PROPSET                              → VBDISP_SET
+
+Real conflicts:
+  Sub Foo + Sub Foo                  same slot → reject
+  Sub Foo + Function Foo             same slot → reject
+  Sub Foo + Property Get Foo         same slot → reject
+  Property Let Foo + Property Let    same slot → reject
+
+Allowed (different slots, dispatcher routes by wFlags):
+  Sub Foo + Property Let Foo         CALLGET + LET
+  Sub Foo + Property Set Foo         CALLGET + SET
+  Property Get Foo + Property Let    CALLGET + LET (already worked)
+
+Replaces the early Sub/Function early-out with a slot-equality check
+that walks the next_prop_func chain. Also skips check_property_args
+when one side is Sub/Function — that helper's arg-count rule is for
+PropGet-vs-PropLet/Set semantics, irrelevant for Sub/Function combos.
+
+The Lampz framework (used by Elvis MOD 2.0 and others) legitimately
+defines Sub MassAssign(a,b) and Property Let MassAssign(a,b) in the
+same class. Different invocation syntax dispatches to each:
+  obj.MassAssign x, y       -> Sub call (DISPATCH_METHOD)
+  obj.MassAssign(x) = y     -> Property Let (DISPATCH_PROPERTYPUT)
+
+Guarded with __STANDALONE__; non-standalone keeps upstream's strict
+behavior. parser.tab.c is regenerated from parser.y by bison.
+
+Verified: Elvis MOD 2.0 now compiles past line 4931 and reaches
+gameplay. No regressions on previously-tested tables.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/parser.y | 47 ++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/parser.y b/standalone/inc/wine/dlls/vbscript/parser.y
+index ec67cde22..562c41b34 100644
+--- a/standalone/inc/wine/dlls/vbscript/parser.y
++++ b/standalone/inc/wine/dlls/vbscript/parser.y
+@@ -1309,6 +1309,52 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
+             return NULL;
+         }
+         if(!wcsicmp(iter->name, decl->name)) {
++#ifdef __STANDALONE__
++            /* Wine 10.x silently accepted classes with both `Sub Foo` and
++             * `Property Let Foo` (or similar Sub/Function + Property combos)
++             * because they map to different VBDISP slots: Sub/Function/PropGet
++             * → VBDISP_CALLGET, PropLet → VBDISP_LET, PropSet → VBDISP_SET.
++             * Wine 11.8's parser tightened the check to reject any Sub/Function
++             * appearing alongside any same-named member, but that's stricter
++             * than necessary — same-slot conflicts are the real error. The
++             * Lampz/Elvis MOD framework legitimately defines both
++             * `Sub MassAssign(a,b)` and `Property Let MassAssign(a,b)` in one
++             * class; reject only when the new decl collides on the *same*
++             * dispatch slot as something already chained. */
++            #define FUNCDECL_SLOT(t) \
++                ((t) == FUNC_PROPLET ? 1 : ((t) == FUNC_PROPSET ? 2 : 0))
++
++            while(1) {
++                if(FUNCDECL_SLOT(iter->type) == FUNCDECL_SLOT(decl->type)) {
++                    WARN("%s::%s redefined (same dispatch slot)\n",
++                        debugstr_w(class_decl->name), debugstr_w(decl->name));
++                    ctx->error_loc = iter->name_loc;
++                    ctx->hres = MAKE_VBSERROR(VBSE_NAME_REDEFINED);
++                    return NULL;
++                }
++                if(!iter->next_prop_func)
++                    break;
++                iter = iter->next_prop_func;
++            }
++
++            #undef FUNCDECL_SLOT
++
++            /* check_property_args is meaningful for PropGet vs PropLet/Set
++             * (arg count differs by 1). For Sub/Function + PropLet/Set both
++             * sides take the same arg count, which is the default-return
++             * branch. Skip the call when one side is Sub/Function — its
++             * arg-count semantics are unrelated to property arg-count rules. */
++            if(iter->type != FUNC_SUB && iter->type != FUNC_FUNCTION
++                    && decl->type != FUNC_SUB && decl->type != FUNC_FUNCTION) {
++                if(!check_property_args(iter, decl)) {
++                    ctx->error_loc = decl->loc;
++                    ctx->hres = MAKE_VBSERROR(VBSE_PROPERTY_ARG_COUNT_MISMATCH);
++                    return NULL;
++                }
++            }
++            iter->next_prop_func = decl;
++            return class_decl;
++#else
+             if(decl->type == FUNC_SUB || decl->type == FUNC_FUNCTION
+                     || iter->type == FUNC_SUB || iter->type == FUNC_FUNCTION) {
+                 WARN("%s::%s redefined\n", debugstr_w(class_decl->name), debugstr_w(decl->name));
+@@ -1336,6 +1382,7 @@ static class_decl_t *add_class_function(parser_ctx_t *ctx, class_decl_t *class_d
+             }
+             iter->next_prop_func = decl;
+             return class_decl;
++#endif
+         }
+     }
+ 
+-- 
+2.45.1.windows.1
+
+From e2e1d4249d0fb1b15da4da18e90fcdaa0ad11f53 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Sun, 17 May 2026 11:32:01 +0100
+Subject: [PATCH] Wine vbscript: gate redefined/CreateObject info logs behind
+ EXTERNAL_LOG_DIAG
+
+Switches the noisy "name redefined" and CreateObject() info lines from
+external_log_info to EXTERNAL_LOG_DIAG so they only fire when
+VPX_SCRIPT_DIAG=1, matching the rest of the script-diag logging.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/compile.c | 4 ++--
+ standalone/inc/wine/dlls/vbscript/global.c  | 6 +++---
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/compile.c b/standalone/inc/wine/dlls/vbscript/compile.c
+index 8f7a9fbc6..62802db1f 100644
+--- a/standalone/inc/wine/dlls/vbscript/compile.c
++++ b/standalone/inc/wine/dlls/vbscript/compile.c
+@@ -2206,7 +2206,7 @@ static HRESULT check_script_collisions(compile_ctx_t *ctx, script_ctx_t *script)
+     for(i = 0; i < var_cnt; i++) {
+         if(lookup_script_identifier(ctx, script, vars[i].name)) {
+ #ifdef __STANDALONE__
+-            external_log_info("%s redefined", debugstr_w(vars[i].name));
++            EXTERNAL_LOG_DIAG("%s redefined", debugstr_w(vars[i].name));
+ #else
+             return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
+ #endif
+@@ -2216,7 +2216,7 @@ static HRESULT check_script_collisions(compile_ctx_t *ctx, script_ctx_t *script)
+     for(class = ctx->code->classes; class; class = class->next) {
+         if(lookup_script_identifier(ctx, script, class->name)) {
+ #ifdef __STANDALONE__
+-            external_log_info("%s redefined", debugstr_w(class->name));
++            EXTERNAL_LOG_DIAG("%s redefined", debugstr_w(class->name));
+ #else
+             return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
+ #endif
+diff --git a/standalone/inc/wine/dlls/vbscript/global.c b/standalone/inc/wine/dlls/vbscript/global.c
+index 7896766df..042a5bf81 100644
+--- a/standalone/inc/wine/dlls/vbscript/global.c
++++ b/standalone/inc/wine/dlls/vbscript/global.c
+@@ -719,17 +719,17 @@ static IUnknown *create_object(script_ctx_t *ctx, const WCHAR *progid)
+ #else
+     if (!wcsicmp(progid, L"Scripting.FileSystemObject")) {
+         hres = FileSystem_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
+-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
++        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x (FSO)",
+                           debugstr_w(progid), (unsigned)hres);
+     }
+     else if (!wcsicmp(progid, L"Scripting.Dictionary")) {
+         hres = Dictionary_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
+-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
++        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x (Dictionary)",
+                           debugstr_w(progid), (unsigned)hres);
+     }
+     else {
+         hres = external_create_object(progid, cf, (IUnknown*)&obj);
+-        external_log_info("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
++        EXTERNAL_LOG_DIAG("CreateObject(\"%s\") -> hres=0x%08x obj=%p",
+                           debugstr_w(progid), (unsigned)hres, obj);
+     }
+ #endif
+-- 
+2.45.1.windows.1
+
+From 10d4e146751191bd1a92ecbeb8cc43addd38a9c9 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Sat, 23 May 2026 20:37:42 +0100
+Subject: [PATCH] Misc Android fixes: web server reconnect, BGFX shutdown
+ safety, ResURIResolver stale-this guard, log noise
+
+Web server: skip down / link-local interfaces in GetIPAddress (IFF_RUNNING +
+IFF_UP + 169.254/16 filter so airplane-mode cached wlan0 IPs and unrouteable
+addresses no longer surface as the server URL). Adds WebServer::RefreshUrl
+and the VPinballRefreshWebServer host API (C + JNI) so the host can re-emit
+VPINBALL_EVENT_WEB_SERVER after a Wi-Fi reconnect without restarting the
+server. The listening socket is bound to 0.0.0.0 so it survives DHCP renewal;
+only m_url goes stale.
+
+Plugin ResURIResolver: track live instances in a static s_liveResolvers set;
+each callback (OnDisplaySrcChanged et al.) checks it before dereferencing
+userData. Works around MsgPluginManager::UnsubscribeMsg matching by callback
+function pointer only - with multiple resolvers (Player, B2SRenderer,
+ScoreView, B2SLegacy::Form) sharing the same static callbacks, an unsubscribe
+can erase the wrong subscription, leaving a freed `this` in the subscriber
+list. Observed crash: FlexDMD dtor broadcasts OnDmdSrcChanged at table-exit,
+fans out to a Player-owned resolver that has already been freed.
+
+Renderer: introduce std::atomic<bool> g_bgfxIsAlive in RenderDevice.cpp, false
+before bgfx::init / after bgfx::shutdown. Sampler::~Sampler returns early
+when clear so the BGFX-handle destroy is skipped on samplers whose owners
+outlived the context (m_pendingTextureUploads, RenderTarget samplers,
+Shader::m_samplers cache, plugin caches). Eliminates the
+pthread_mutex_lock @ NULL+0x1c0 SIGSEGV on app exit. bgfx::isValid does not
+catch this because it only compares the handle to kInvalidHandle.
+
+Crash handler (vpinball_sigsegv_handler): walk the stack via _Unwind_Backtrace
+after recording the ucontext PC, so the watchdog gets the caller chain
+instead of just pthread_mutex_lock / memcpy / similar terminal frames.
+
+Logger: drop the vpinball.log RollingFileAppender on Android. The host
+crash reporter pulls from logcat (VPinballCrashReportCapture.kt) and no
+in-app code reads the file, so the per-call disk flush was pure overhead.
+
+Input: register staged-flipper touch regions alongside the primary flippers
+(left + right zones now fire both Left/Right + StagedLeft/StagedRight, so
+tables that read staged inputs work in touch mode). Collapse the
+per-touch-device PLOGI into one summary line at startup. Demote
+PushTouchEvent and SDL_FINGER per-event logs to PLOGD.
+
+Audio: demote AudioDiag PLOGI lines to PLOGD across SDL + AAudio backends
+(only useful with diag enabled). Demote the AudioStreamPlayer "stream sync
+lost and reseted" line. Demote startup "Audio device initialized" boilerplate.
+
+Misc log noise: MsgPluginManager plugin-loaded success boilerplate, ScoreView
+per-layout parse line, simplescriptpatcher banner separators - all PLOGI to
+PLOGD. Cuts Android startup log volume noticeably.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/compile.c | 28 +++++++++++++--------
+ 1 file changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/compile.c b/standalone/inc/wine/dlls/vbscript/compile.c
+index 62802db1f..51c16aef8 100644
+--- a/standalone/inc/wine/dlls/vbscript/compile.c
++++ b/standalone/inc/wine/dlls/vbscript/compile.c
+@@ -26,9 +26,15 @@
+ 
+ #ifdef __ANDROID__
+ #include <android/log.h>
+-#define COMPILE_LOG(...) __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
++/* COMPILE_LOG is reserved for compile failures and stays at ERROR severity so it
++ * surfaces in error-filtered logcat views. Routine progress (function/class
++ * compile, parse_script success, etc.) goes through COMPILE_INFO so it doesn't
++ * masquerade as 17+ false errors before every real one. */
++#define COMPILE_LOG(...)  __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
++#define COMPILE_INFO(...) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__)
+ #else
+-#define COMPILE_LOG(...) fprintf(stderr, __VA_ARGS__)
++#define COMPILE_LOG(...)  fprintf(stderr, __VA_ARGS__)
++#define COMPILE_INFO(...) fprintf(stderr, __VA_ARGS__)
+ #endif
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+@@ -2327,9 +2333,9 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+     }
+ 
+     ctx.parser.lcid = script->lcid;
+-    COMPILE_LOG("Starting parse_script...\n");
++    COMPILE_INFO("Starting parse_script...\n");
+     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
+-    COMPILE_LOG("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
++    COMPILE_INFO("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
+     if(FAILED(hres)) {
+         if(ctx.parser.error_loc != -1)
+             ctx.loc = ctx.parser.error_loc;
+@@ -2339,7 +2345,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+         return hres;
+     }
+ 
+-    COMPILE_LOG("Compiling main code (global scope)...\n");
++    COMPILE_INFO("Compiling main code (global scope)...\n");
+     hres = compile_func(&ctx, ctx.parser.stats, &ctx.code->main_code);
+     if(FAILED(hres)) {
+         COMPILE_LOG("compile_func (main) FAILED: hres=0x%08lx\n", (unsigned long)hres);
+@@ -2347,7 +2353,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+         release_compiler(&ctx);
+         return hres;
+     }
+-    COMPILE_LOG("Main code compiled OK\n");
++    COMPILE_INFO("Main code compiled OK\n");
+ 
+     code->option_explicit = ctx.parser.option_explicit;
+     ctx.global_consts = ctx.const_decls;
+@@ -2357,11 +2363,11 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+         int func_count = 0;
+         for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next)
+             func_count++;
+-        COMPILE_LOG("Compiling %d functions...\n", func_count);
++        COMPILE_INFO("Compiling %d functions...\n", func_count);
+     }
+ 
+     for(func_decl = ctx.func_decls; func_decl; func_decl = func_decl->next) {
+-        COMPILE_LOG("Compiling function: %ls\n", func_decl->name);
++        COMPILE_INFO("Compiling function: %ls\n", func_decl->name);
+         hres = create_function(&ctx, func_decl, &new_func);
+         if(FAILED(hres)) {
+             COMPILE_LOG("create_function FAILED for '%ls': hres=0x%08lx\n", func_decl->name, (unsigned long)hres);
+@@ -2373,10 +2379,10 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+         new_func->next = ctx.code->funcs;
+         ctx.code->funcs = new_func;
+     }
+-    COMPILE_LOG("All functions compiled OK\n");
++    COMPILE_INFO("All functions compiled OK\n");
+ 
+     for(class_decl = ctx.parser.class_decls; class_decl; class_decl = class_decl->next) {
+-        COMPILE_LOG("Compiling class: %ls\n", class_decl->name);
++        COMPILE_INFO("Compiling class: %ls\n", class_decl->name);
+         hres = compile_class(&ctx, class_decl);
+         if(FAILED(hres)) {
+             COMPILE_LOG("compile_class FAILED for '%ls': hres=0x%08lx\n", class_decl->name, (unsigned long)hres);
+@@ -2385,7 +2391,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+             return hres;
+         }
+     }
+-    COMPILE_LOG("All classes compiled OK\n");
++    COMPILE_INFO("All classes compiled OK\n");
+ 
+     hres = check_script_collisions(&ctx, script);
+     if(FAILED(hres) && !skip_collisions) {
+-- 
+2.45.1.windows.1
+
+From 07dd82b62186bda67863f1a807b2466d6ed692cd Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Tue, 16 Jun 2026 09:10:09 +0100
+Subject: [PATCH] feat(scoreview): reel/segment classifier + ReelDmd composite
+ refinements
+
+Checkpoint of in-progress scoreview-reels-and-segments work prior to adding
+custom character/segment display support (DragonFire-style led* collections):
+- ReelClassifier (.h/.cpp): role classification refinements
+- ReelDmd (.h/.cpp): composite/render reworking (bulk of the change)
+- ScoreView.cpp, DMDUtilPlugin.cpp, Renderer.cpp, VPinballLib.cpp: supporting changes
+- standalone vbscript interp.c; tests/test-reel-classifier.cpp updates
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/interp.c | 28 +++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index a0dadfdc4..49bb1be0b 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -24,6 +24,15 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ 
++#ifdef __STANDALONE__
++#include <android/log.h>
++/* DIAGNOSTIC (TEMPORARY - service-menu UAF crash hunt). Revert after capture.
++   g_dbg_member_ident carries the current "obj.member = value" member name into
++   stack_assume_disp so the byref AddRef log can name the crashing member. */
++#define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
++static const WCHAR *g_dbg_member_ident = NULL;
++#endif
++
+ static DISPID propput_dispid = DISPID_PROPERTYPUT;
+ static const unsigned max_call_depth = 1024;
+ 
+@@ -557,8 +566,22 @@ static HRESULT stack_assume_disp(exec_ctx_t *ctx, unsigned n, IDispatch **disp)
+ 
+         V_VT(v) = V_VT(ref);
+         V_UNKNOWN(v) = V_UNKNOWN(ref);
+-        if(V_UNKNOWN(v))
++        if(V_UNKNOWN(v)) {
++#ifdef __STANDALONE__
++            /* DIAGNOSTIC (TEMPORARY): about to AddRef an object reached via ByRef
++               (e.g. an array element such as gBOT(kk)). If that points at a freed
++               wrapper this SIGSEGVs inside IUnknown_AddRef; the LAST line logged
++               here before the crash names the crashing member + dangling pointer. */
++            {
++                char _idb[96]; int _i; const WCHAR *_id = g_dbg_member_ident;
++                for(_i = 0; _i < 95 && _id && _id[_i]; _i++) _idb[_i] = (char)_id[_i];
++                _idb[_i] = 0;
++                VBS_DBG_LOG("[assume-disp] byref AddRef member=%s disp=%p vt=%d",
++                            _idb[0] ? _idb : "?", (void*)V_UNKNOWN(v), (int)V_VT(v));
++            }
++#endif
+             IUnknown_AddRef(V_UNKNOWN(v));
++        }
+     }
+ 
+     if(disp)
+@@ -1191,6 +1214,9 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
+ 
+     TRACE("%s\n", debugstr_w(identifier));
+ 
++#ifdef __STANDALONE__
++    g_dbg_member_ident = identifier; /* DIAGNOSTIC (TEMPORARY): carry member name into stack_assume_disp */
++#endif
+     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
+     if(FAILED(hres))
+         return hres;
+-- 
+2.45.1.windows.1
+
+From 8d81b6638ba02c2446a68ae4651c03d8fbf39033 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 19 Jun 2026 04:35:43 +0100
+Subject: [PATCH] checkpoint: scoreview/reel rendering, PUP, per-table patcher
+ WIP
+
+Snapshot of in-progress work on the scoreview-reels-and-segments branch
+before starting 16 KB page-size build changes:
+- ReelDmd / ReelClassifier / ScoreView score-display rendering
+- PUP plugin updates (PUPManager/PUPScreen/PUPLabel/PUPPinDisplay/common.h)
+- FlexDMD + ResURIResolver plugin tweaks
+- per-table script patcher (tablepatches.cpp) + simplescriptpatcher
+- surface friction propagation; Texture changes
+- vbscript interp.c
+- script-patcher corpus harness + extraction/test tooling
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/interp.c | 38 ++++++++++++++++------
+ 1 file changed, 28 insertions(+), 10 deletions(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index 49bb1be0b..89acbad9e 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -26,12 +26,22 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ 
+ #ifdef __STANDALONE__
+ #include <android/log.h>
+-/* DIAGNOSTIC (TEMPORARY - service-menu UAF crash hunt). Revert after capture.
+-   g_dbg_member_ident carries the current "obj.member = value" member name into
+-   stack_assume_disp so the byref AddRef log can name the crashing member. */
++/* DIAGNOSTIC (VBScript crash-hunt on Android). OFF by default to keep the logcat
++   clean; set VBS_ANDROID_DBG_LOG to 1 (or build with -DVBS_ANDROID_DBG_LOG=1) and
++   rebuild to re-enable. Covers two leftover crash-hunt traces:
++     - the byref AddRef in stack_assume_disp (service-menu UAF): VBS_DBG_LOG plus
++       g_dbg_member_ident name the crashing "obj.member = value" member + pointer;
++     - the recursion-depth tracer in exec_script (runaway-recursion crash hunt).
++   The depth>500 abort guard in exec_script stays active regardless; only its log
++   is gated. */
++#ifndef VBS_ANDROID_DBG_LOG
++#define VBS_ANDROID_DBG_LOG 0
++#endif
++#if VBS_ANDROID_DBG_LOG
+ #define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
+ static const WCHAR *g_dbg_member_ident = NULL;
+ #endif
++#endif
+ 
+ static DISPID propput_dispid = DISPID_PROPERTYPUT;
+ static const unsigned max_call_depth = 1024;
+@@ -567,8 +577,8 @@ static HRESULT stack_assume_disp(exec_ctx_t *ctx, unsigned n, IDispatch **disp)
+         V_VT(v) = V_VT(ref);
+         V_UNKNOWN(v) = V_UNKNOWN(ref);
+         if(V_UNKNOWN(v)) {
+-#ifdef __STANDALONE__
+-            /* DIAGNOSTIC (TEMPORARY): about to AddRef an object reached via ByRef
++#if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
++            /* DIAGNOSTIC: about to AddRef an object reached via ByRef
+                (e.g. an array element such as gBOT(kk)). If that points at a freed
+                wrapper this SIGSEGVs inside IUnknown_AddRef; the LAST line logged
+                here before the crash names the crashing member + dangling pointer. */
+@@ -1214,8 +1224,8 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
+ 
+     TRACE("%s\n", debugstr_w(identifier));
+ 
+-#ifdef __STANDALONE__
+-    g_dbg_member_ident = identifier; /* DIAGNOSTIC (TEMPORARY): carry member name into stack_assume_disp */
++#if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
++    g_dbg_member_ident = identifier; /* DIAGNOSTIC: carry member name into stack_assume_disp */
+ #endif
+     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
+     if(FAILED(hres))
+@@ -3045,12 +3055,14 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+      * - Detects if same function called repeatedly (possible infinite loop)
+      * - Aborts execution at depth 500 to prevent stack overflow crash
+      * 
+-     * Log output (visible in Android logcat):
++     * Log output (gated behind VBS_ANDROID_DBG_LOG, off by default; set it to 1 to
++     * surface these in Android logcat):
+      * - "VBSCRIPT: depth=XX func=FunctionName" - recursion building up
+      * - "VBSCRIPT: func called XX times: FunctionName" - repeated calls
+      * - "VBSCRIPT: FATAL depth=500: FunctionName" - identifies the culprit
+-     * 
+-     * To disable: Set recursion_depth checks to very high values or remove this block.
++     *
++     * The depth>500 abort guard stays active regardless of the switch (it prevents a
++     * stack-overflow crash); only the logging above is gated.
+      */
+     // Track recursion depth to detect infinite recursion
+     static int recursion_depth = 0;
+@@ -3061,14 +3073,18 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+ 
+     // Log when depth is high
+     if (recursion_depth > 50) {
++#if VBS_ANDROID_DBG_LOG
+         fprintf(stderr, "VBSCRIPT: depth=%d func=%ls\n", recursion_depth, func->name ? func->name : L"(null)");
++#endif
+     }
+ 
+     // Detect same function called repeatedly
+     if (func->name && wstr_cmp(func->name, last_func_name) == 0) {
+         same_func_count++;
+         if (same_func_count > 100 && same_func_count % 100 == 0) {
++#if VBS_ANDROID_DBG_LOG
+             fprintf(stderr, "VBSCRIPT: func called %d times: %ls\n", same_func_count, func->name);
++#endif
+         }
+     } else {
+         if (func->name) {
+@@ -3079,7 +3095,9 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
+ 
+     // Abort if recursion is runaway
+     if (recursion_depth > 500) {
++#if VBS_ANDROID_DBG_LOG
+         fprintf(stderr, "VBSCRIPT: FATAL depth=%d: %ls\n", recursion_depth, func->name ? func->name : L"(null)");
++#endif
+         recursion_depth--;
+         return E_FAIL;
+     }
+-- 
+2.45.1.windows.1
+
+From 93e498fdc00e43cce123030f4cdfc7af2d181d71 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Fri, 26 Jun 2026 18:48:56 +0100
+Subject: [PATCH] perf: gate and rate-limit hot-path diagnostic logging
+
+Verbose diagnostics that fire during play (per-switch PinMAME bridge traces, RT
+audio per-buffer timing, FlexDMD/PUP render-source queries, Wine Eval/Execute
+re-compile progress) were paying string-format and I/O cost on every event, much
+of it on the realtime audio thread or once per frame.
+
+- PinMAME, audio RT timing: gate behind compile-time macros, default off
+  (PINMAME_DEBUG_LOG, VPX_AUDIO_RT_DIAG); Android now uses the stock miniaudio
+  callback instead of the diagnostic wrapper.
+- alphadmd / FlexDMD / Font: rate-limit one-shot diagnostics to the first N hits.
+- PUP / AudioStreamPlayer: demote per-event LOGI/LOGD to LOGD_DBG / PLOGD so they
+  drop in release; libdmdutil/libDOF DEBUG relays return early in release before
+  the double vsnprintf.
+- vbscript compile.c: cap COMPILE_INFO progress logs to the first 5 compile cycles
+  per process (keeps the load-time oracle, silences runtime Execute/Eval repeats);
+  COMPILE_LOG failures stay unconditional.
+- LayeredINIPropertyStore / pintable: comment out TableOption / get_Option traces.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/compile.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/compile.c b/standalone/inc/wine/dlls/vbscript/compile.c
+index 51c16aef8..c95a73d36 100644
+--- a/standalone/inc/wine/dlls/vbscript/compile.c
++++ b/standalone/inc/wine/dlls/vbscript/compile.c
+@@ -31,12 +31,21 @@
+  * compile, parse_script success, etc.) goes through COMPILE_INFO so it doesn't
+  * masquerade as 17+ false errors before every real one. */
+ #define COMPILE_LOG(...)  __android_log_print(ANDROID_LOG_ERROR, "VBScriptCompile", __VA_ARGS__)
+-#define COMPILE_INFO(...) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__)
++#define COMPILE_INFO(...) do { if (g_vbsCompileInfoCycle <= VBS_COMPILE_INFO_MAX_CYCLES) __android_log_print(ANDROID_LOG_INFO,  "VBScriptCompile", __VA_ARGS__); } while(0)
+ #else
+ #define COMPILE_LOG(...)  fprintf(stderr, __VA_ARGS__)
+-#define COMPILE_INFO(...) fprintf(stderr, __VA_ARGS__)
++#define COMPILE_INFO(...) do { if (g_vbsCompileInfoCycle <= VBS_COMPILE_INFO_MAX_CYCLES) fprintf(stderr, __VA_ARGS__); } while(0)
+ #endif
+ 
++/* The COMPILE_INFO progress logs ("Starting parse_script", "Compiling function: X", ...)
++ * are the VBScript-compile diagnostic oracle, valuable at table load. But tables that call
++ * Eval/Execute/ExecuteGlobal re-enter compile_script at runtime (~1/sec for some), spamming
++ * ~7 INFO lines per call during play. Cap the progress logs to the first few compile cycles
++ * per process: keeps the load-time oracle, silences the runtime Execute/Eval repeats.
++ * COMPILE_LOG (compile failures, ERROR severity) stays unconditional. */
++#define VBS_COMPILE_INFO_MAX_CYCLES 5
++static int g_vbsCompileInfoCycle = 0;
++
+ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ WINE_DECLARE_DEBUG_CHANNEL(vbscript_disas);
+ 
+@@ -2333,6 +2342,7 @@ HRESULT compile_script(script_ctx_t *script, const WCHAR *src, const WCHAR *item
+     }
+ 
+     ctx.parser.lcid = script->lcid;
++    ++g_vbsCompileInfoCycle;
+     COMPILE_INFO("Starting parse_script...\n");
+     hres = parse_script(&ctx.parser, code->source, delimiter, flags);
+     COMPILE_INFO("parse_script returned: hres=0x%08lx, error_loc=%d\n", (unsigned long)hres, ctx.parser.error_loc);
+-- 
+2.45.1.windows.1
+
+From 12d716901c11d0969233a067b267c6ba8b5c0637 Mon Sep 17 00:00:00 2001
+From: "Zenolith\\zen" <johnnyzen@gmail.com>
+Date: Thu, 2 Jul 2026 08:03:26 +0100
+Subject: [PATCH] fix(android): render-frame UAF fixes + VBScript crash
+ breadcrumb
+
+Clear deferred begin/end-of-frame commands when a prepared frame is parked or discarded, so lambdas capturing Ball*/RenderDevice* by pointer cannot run after those objects are freed (SIGSEGV 92bf7bb9). Null-guard BlitRenderTarget and AddRenderTargetDependency against null render targets (e6d86bd6). Crash watchdog appends the last VBScript 'obj.member=' assignment target (from interp.c) to attribute the COM-lifetime UAF family.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ standalone/inc/wine/dlls/vbscript/interp.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/standalone/inc/wine/dlls/vbscript/interp.c b/standalone/inc/wine/dlls/vbscript/interp.c
+index 89acbad9e..d931d492f 100644
+--- a/standalone/inc/wine/dlls/vbscript/interp.c
++++ b/standalone/inc/wine/dlls/vbscript/interp.c
+@@ -41,6 +41,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+ #define VBS_DBG_LOG(...) __android_log_print(ANDROID_LOG_INFO, "VBScriptRuntime", __VA_ARGS__)
+ static const WCHAR *g_dbg_member_ident = NULL;
+ #endif
++
++/* Always-on (very cheap) capture of the most recent VBScript "obj.member = ..." assignment
++   target, surfaced into the native crash breadcrumb by the crash watchdog. The COM-lifetime
++   SIGSEGV family (stack_assume_disp / release_exec) lands in Crashlytics with no script
++   context; this names the offending member without needing a logcat or a local repro. It is
++   independent of VBS_ANDROID_DBG_LOG (which only prints to logcat). */
++static char g_vbsLastMemberAssign[96] = { 0 };
++static void vbs_record_member_assign(const WCHAR *id)
++{
++    int i = 0;
++    if (id)
++        for (; i < 95 && id[i]; i++) g_vbsLastMemberAssign[i] = (char)id[i];
++    g_vbsLastMemberAssign[i] = 0;
++}
++#ifdef __cplusplus
++extern "C"
++#endif
++const char *vbs_get_last_member_assign(void) { return g_vbsLastMemberAssign; }
+ #endif
+ 
+ static DISPID propput_dispid = DISPID_PROPERTYPUT;
+@@ -1226,6 +1244,9 @@ static HRESULT interp_assign_member(exec_ctx_t *ctx)
+ 
+ #if defined(__STANDALONE__) && VBS_ANDROID_DBG_LOG
+     g_dbg_member_ident = identifier; /* DIAGNOSTIC: carry member name into stack_assume_disp */
++#endif
++#ifdef __STANDALONE__
++    vbs_record_member_assign(identifier); /* record for the native crash breadcrumb (always on) */
+ #endif
+     hres = stack_assume_disp(ctx, arg_cnt+1, &obj);
+     if(FAILED(hres))
+-- 
+2.45.1.windows.1
+

@@ -30,18 +30,18 @@
 #define VPXPI_NAMESPACE "VPX" // Namespace used for all VPX message definition
 
 // Core VPX messages
-#define VPXPI_MSG_GET_API               "GetAPI"              // Get the main VPX plugin API
+#define VPXPI_MSG_GET_API               "GetAPI:1"              // Get the main VPX plugin API
 
 // Core VPX events
-#define VPXPI_EVT_ON_GAME_START         "OnGameStart"         // Broadcasted during player creation, before script initialization
-#define VPXPI_EVT_ON_GAME_END           "OnGameEnd"           // Broadcasted during player shutdown
-#define VPXPI_EVT_ON_PREPARE_FRAME      "OnPrepareFrame"      // Broadcasted when player starts preparing a new frame
-#define VPXPI_EVT_ON_UPDATE_PHYSICS     "OnUpdatePhysics"     // Broadcasted when player update physics (happens often, so must be used with care)
-#define VPXPI_EVT_ON_ACTION_CHANGED     "OnActionChanged"     // Broadcasted when an action state change, event data is an VPXActionEvent whose isPressed field can be modified by plugins
+#define VPXPI_EVT_ON_GAME_START         "OnGameStart:1"         // Broadcasted during player creation, before script initialization
+#define VPXPI_EVT_ON_GAME_END           "OnGameEnd:1"           // Broadcasted during player shutdown
+#define VPXPI_EVT_ON_PREPARE_FRAME      "OnPrepareFrame:1"      // Broadcasted when player starts preparing a new frame
+#define VPXPI_EVT_ON_UPDATE_PHYSICS     "OnUpdatePhysics:1"     // Broadcasted when player update physics (happens often, so must be used with care)
+#define VPXPI_EVT_ON_ACTION_CHANGED     "OnActionChanged:1"     // Broadcasted when an action state change, event data is an VPXActionEvent whose isPressed field can be modified by plugins
 
 // Ancillary window rendering
-#define VPXPI_MSG_GET_AUX_RENDERER      "GetAuxRenderer"      // Broadcasted with a GetAncillaryRendererMsg to discover ancillary window renderer implemented in plugins
-#define VPXPI_EVT_AUX_RENDERER_CHG      "AuxRendererChanged"  // Broadcasted when an ancillary renderer is added or removed
+#define VPXPI_MSG_GET_AUX_RENDERER      "GetAuxRenderer:1"      // Broadcasted with a GetAncillaryRendererMsg to discover ancillary window renderer implemented in plugins
+#define VPXPI_EVT_AUX_RENDERER_CHG      "AuxRendererChanged:1"  // Broadcasted when an ancillary renderer is added or removed
 
 typedef void* VPXTexture;
 
@@ -79,6 +79,9 @@ typedef enum
    VPXDMDStyle_YellowLED,
    VPXDMDStyle_GenPlasma,
    VPXDMDStyle_GenLED,
+   VPXDMDStyle_Pixelated,
+   VPXDMDStyle_Smoothed,
+   VPXDMDStyle_CRT,
 } VPXDisplayRenderStyle;
 
 typedef enum
@@ -220,7 +223,7 @@ typedef enum
    VPXACTION_Lockbar,
    VPXACTION_Pause,
    VPXACTION_PerfOverlay,
-   VPXACTION_ExitInteractive,
+   VPXACTION_OpenInGameUI,
    VPXACTION_ExitGame,
    VPXACTION_InGameUI,
    VPXACTION_VolumeDown,
@@ -234,29 +237,47 @@ typedef struct VPXActionEvent
 {
    VPXAction action;
    int isPressed;
+   int enableVPXProcessing;
 } VPXActionEvent;
+
+typedef struct VPXInputState
+{
+   uint64_t actionMask;
+   uint64_t actionState;
+   uint16_t stateMask; // Bit 0 for plunger position, bit 1 for plunger velocity, bit 2 for nudge (both acceleration & displacement)
+   float plungerPosition;
+   float plungerVelocity;
+   float nudgeAccelerationX;
+   float nudgeAccelerationY;
+   float nudgeDisplacementX;
+   float nudgeDisplacementY;
+} VPXInputState;
 
 typedef struct VPXPluginAPI
 {
-   // General information API
+   int version; // Must be 1. Included to allow extending the API with new functions at a later point in time
+
+   // --- General information API
    void (MSGPIAPI *GetVpxInfo)(VPXInfo* info);
    void (MSGPIAPI *GetTableInfo)(VPXTableInfo* info);
 
-   // User Interface
+   // --- User Interface
    unsigned int (MSGPIAPI *PushNotification)(const char* msg, const int lengthMs);
    void (MSGPIAPI *UpdateNotification)(const unsigned int handle, const char* msg, const int lengthMs);
 
-   // View management
+   // --- View management
    void (MSGPIAPI *DisableStaticPrerendering)(const int /* bool */ disable);
    void (MSGPIAPI *GetActiveViewSetup)(VPXViewSetupDef* view);
    void (MSGPIAPI *SetActiveViewSetup)(VPXViewSetupDef* view);
 
-   // Input management
-   void(MSGPIAPI* SetActionState)(const VPXAction actionId, const int isPressed);
-   void(MSGPIAPI* SetNudgeState)(const int stateMask, const float nudgeAccelerationX, const float nudgeAccelerationY); // Bit 0 = override state
-   void(MSGPIAPI* SetPlungerState)(const int stateMask, const float plungerPos, const float plungerSpeed); // Bit 0 = override state, bit 1 = hasSpeedSensor
+   // --- Input management
+   void(MSGPIAPI* GetInputState)(VPXInputState* state);
+   void(MSGPIAPI* SetInputState)(VPXInputState* state);
 
-   // Rendering
+   // --- Game state
+   double(MSGPIAPI* GetGameTime)(); // Game time in seconds
+
+   // --- Rendering
    
    // Create a texture from encoded data (Webp, Exr, ...).
    // Texture must be destroyed by the caller using DeleteTexture.
@@ -275,5 +296,8 @@ typedef struct VPXPluginAPI
    // Destroy a texture created through this API.
    // Thread safe
    void(MSGPIAPI* DeleteTexture)(VPXTexture texture);
+
+   // --- Scripting
+   void(MSGPIAPI* RunScript)(const char* script);
 
 } VPXPluginAPI;

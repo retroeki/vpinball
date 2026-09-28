@@ -12,7 +12,7 @@
  * Uses Google RE2 for regex operations (much faster than std::regex)
  */
 
-#include "stdafx.h"
+#include "core/stdafx.h"
 
 #ifdef __STANDALONE__
 

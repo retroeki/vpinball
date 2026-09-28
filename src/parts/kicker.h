@@ -4,14 +4,20 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+
+class MeshBuffer;
+class Texture;
 
 class KickerData final : public BaseProperty
 {
 public:
    Vertex2D m_vCenter;
    float m_radius;
-   TimerDataRoot m_tdr;
    string m_szSurface;
    KickerType m_kickertype;
    float m_hitAccuracy; // kicker hit grabbing object height ... default ballsize*0.7
@@ -32,21 +38,21 @@ class Kicker :
    public EventProxy<Kicker, &DIID_IKickerEvents>,
    public IConnectionPointContainerImpl<Kicker>,
    public IProvideClassInfo2Impl<&CLSID_Kicker, &DIID_IKickerEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
-   public Hitable,
+   public IHitable,
+   public IRenderable,
    public IScriptable,
    public IFireEvents,
    public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Kicker();
+   Kicker() { }
    virtual ~Kicker();
 
    BEGIN_COM_MAP(Kicker)
@@ -58,31 +64,26 @@ public:
       COM_INTERFACE_ENTRY(IProvideClassInfo)
       COM_INTERFACE_ENTRY(IProvideClassInfo2)
    END_COM_MAP()
-   //DECLARE_NOT_AGGREGATABLE(Kicker) 
-   // Remove the comment from the line above if you don't want your object to 
+   //DECLARE_NOT_AGGREGATABLE(Kicker)
+   // Remove the comment from the line above if you don't want your object to
    // support aggregation.
 
    BEGIN_CONNECTION_POINT_MAP(Kicker)
       CONNECTION_POINT_ENTRY(DIID_IKickerEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Kicker, eItemKicker, KICKER, VIEW_PLAYFIELD)
+   STANDARD_EDITABLE_DECLARES(Kicker, eItemKicker, KICKER)
 
    DECLARE_REGISTRY_RESOURCEID(IDR_KICKER)
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
 
    void SetDefaultPhysics(const bool fromMouseClick) final;
    void ExportMesh(ObjLoader& loader) final;
-
-   ItemTypeEnum HitableGetItemType() const final { return eItemKicker; }
-   void UpdateStatusBarInfo() final;
 
    void WriteRegDefaults() final;
 
@@ -93,9 +94,7 @@ public:
 private:
    void GenerateMesh(Vertex3D_NoTex2 *const buf) const;
 
-   PinTable *m_ptable = nullptr;
-
-   RenderDevice* m_rd = nullptr;
+   Renderer* m_renderer = nullptr;
    std::shared_ptr<MeshBuffer> m_plateMeshBuffer;
    std::shared_ptr<MeshBuffer> m_meshBuffer;
    std::shared_ptr<MeshBuffer> m_plateMeshEdgeBuffer;

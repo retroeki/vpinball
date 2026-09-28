@@ -30,19 +30,21 @@ process_shader() {
     local defines=("$@")
 
     local outputs=(
-        'mtl '
+        'mtl'
         'essl'
         'glsl'
-        'dx11'
-        'spv '
+        'dxbc'
+        'dxil'
+        'spv'
     )
 
     local targets=(
-        '--platform osx     -p metal -O 3'
-        '--platform windows -p 320_es    '
-        '--platform windows -p 440       '
-        '--platform windows -p s_5_0 -O 3'
-        '--platform windows -p spirv     '
+        '--platform osx     -p metal21-11' # Metal
+        '--platform android -p 320_es    ' # OpenGL ES
+        '--platform linux   -p 440       ' # OpenGL
+        '--platform windows -p s_5_0 -O 3' # DirectX 11
+        '--platform windows -p s_6_0 -O 3' # DirectX 12
+        '--platform linux   -p spirv     ' # Vulkan
     )
 
     local shaderc="./shaderc"
@@ -138,7 +140,8 @@ if [ "$gen_dmd" = true ]; then
         process_shader "vs_dmd.sc" "dmd.h" "vs_dmd_world_${variant3_lower}_" "vertex" "WORLD" "$variant3"
         process_shader "vs_dmd.sc" "dmd.h" "vs_dmd_world_${variant3_lower}_st_" "vertex" "WORLD" "STEREO" "$variant3"
         process_shader "fs_dmd.sc" "dmd.h" "fs_dmd_${variant3_lower}_" "fragment" "DMD" "$variant3"
-        for variant2 in "DMD" "SEG" "CRT"; do
+        # CRTNUANCE is a second CRT permutation using the other filter, see fs_display.sc
+        for variant2 in "DMD" "SEG" "CRT" "CRTNUANCE"; do
             variant2_lower=$(echo "$variant2" | tr '[:upper:]' '[:lower:]')
             process_shader "fs_display.sc" "dmd.h" "fs_display_${variant2_lower}_${variant3_lower}_" "fragment" "$variant2" "$variant3"
         done
@@ -204,8 +207,10 @@ fi
 if [ "$gen_postprocess" = true ]; then
     echo -e "\n>>>>>>>>>>>>>>>> Post process shaders"
     echo "// Postprocess Shaders" > "../bgfx_postprocess.h"
+    process_shader "fs_pp_passthrough.sc" "postprocess.h" "fs_pp_passthrough_" "fragment" "${stereo[1]}"
     for k in 0 1; do
         process_shader "vs_postprocess.sc" "postprocess.h" "vs_postprocess${st_output[$k]}" "vertex" "${stereo[$k]}"
+        process_shader "fs_pp_msaa_depth.sc" "postprocess.h" "fs_pp_msaa_depth${st_output[$k]}" "fragment" "${stereo[$k]}"
         process_shader "fs_pp_mirror.sc" "postprocess.h" "fs_pp_mirror${st_output[$k]}" "fragment" "${stereo[$k]}"
         process_shader "fs_pp_copy.sc" "postprocess.h" "fs_pp_copy${st_output[$k]}" "fragment" "${stereo[$k]}"
         process_shader "fs_pp_bloom.sc" "postprocess.h" "fs_pp_bloom${st_output[$k]}" "fragment" "${stereo[$k]}"
@@ -230,7 +235,7 @@ if [ "$gen_antialiasing" = true ]; then
         process_shader "fs_pp_nfaa.sc" "antialiasing.h" "fs_pp_nfaa${st_output[$k]}" "fragment" "${stereo[$k]}"
         process_shader "fs_pp_dlaa_edge.sc" "antialiasing.h" "fs_pp_dlaa_edge${st_output[$k]}" "fragment" "${stereo[$k]}"
         process_shader "fs_pp_dlaa.sc" "antialiasing.h" "fs_pp_dlaa${st_output[$k]}" "fragment" "${stereo[$k]}"
-        process_shader "fs_pp_faaa.sc" "antialiasing.h" "fs_pp_dlaa${st_output[$k]}" "fragment" "${stereo[$k]}"
+        process_shader "fs_pp_faaa.sc" "antialiasing.h" "fs_pp_faaa${st_output[$k]}" "fragment" "${stereo[$k]}"
         for variant in "FXAA1" "FXAA2" "FXAA3"; do
             variant_lower=$(echo "$variant" | tr '[:upper:]' '[:lower:]')
             process_shader "fs_pp_fxaa.sc" "antialiasing.h" "fs_pp_${variant_lower}${st_output[$k]}" "fragment" "${stereo[$k]}" "$variant"

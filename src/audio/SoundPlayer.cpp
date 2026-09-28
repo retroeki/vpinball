@@ -3,6 +3,11 @@
 #include "core/stdafx.h"
 #include "SoundPlayer.h"
 
+#include "plugins/MsgPluginManager.h"
+#include "core/VPXPluginAPIImpl.h"
+#include "parts/pintable.h"
+#include "utils/denormals.h"
+
 #define MA_ENABLE_ONLY_SPECIFIC_BACKENDS
 #define MA_ENABLE_CUSTOM
 #include "miniaudio/miniaudio.h"
@@ -166,11 +171,10 @@ static ma_node_vtable vpx_node_vtable = { vpx_node_process_pcm_frames, nullptr, 
 
 MA_API ma_result vpx_node_init(ma_node_graph* pNodeGraph, const vpx_node_config* pConfig, const ma_allocation_callbacks* pAllocationCallbacks, vpx_node* pNode)
 {
-   ma_node_config baseConfig;
    if (pNode == nullptr)
       return MA_INVALID_ARGS;
    memset(pNode, 0, sizeof(vpx_node));
-   baseConfig = pConfig->nodeConfig;
+   ma_node_config baseConfig = pConfig->nodeConfig;
    baseConfig.vtable = &vpx_node_vtable;
    baseConfig.pInputChannels = &pConfig->inChannels;
    baseConfig.pOutputChannels = &pConfig->outChannels;
@@ -209,12 +213,16 @@ SoundPlayer::SoundPlayer(const AudioPlayer* audioPlayer, const string& filename)
    : m_audioPlayer(audioPlayer)
    , m_outputTarget(SoundOutTypes::SNDOUT_BACKGLASS)
    , m_commandQueue(1)
+   , m_callbackId(""s) // Music: no callback information as there is at most one music playing
 {
    m_commandQueue.enqueue([this, filename]()
    {
       SetThreadName("VPX.SoundPlayer ["s.append(filename).append(1, ']'));
+      set_denormals_flush_to_zero(); // FPU mode is per thread
 
       ma_engine* engine = m_audioPlayer->GetEngine(m_outputTarget);
+      if (engine == nullptr)
+         return;
 
       // Add custom node for channel mixing
       m_vpxMixNode = std::make_unique<vpx_node>();
@@ -259,12 +267,17 @@ SoundPlayer::SoundPlayer(const AudioPlayer* audioPlayer, Sound* sound)
    : m_audioPlayer(audioPlayer)
    , m_outputTarget(sound->GetOutputTarget())
    , m_commandQueue(1)
+   , m_callbackId(sound->GetName())
 {
-   m_commandQueue.enqueue([this, sound]()
+   m_commandQueue.enqueue(
+      [this, sound]()
    {
       SetThreadName("VPX.SoundPlayer ["s.append(sound->GetName()).append(1, ']'));
+      set_denormals_flush_to_zero(); // FPU mode is per thread
 
       ma_engine* engine = m_audioPlayer->GetEngine(m_outputTarget);
+      if (engine == nullptr)
+         return;
 
       // Add custom node for channel mixing
       m_vpxMixNode = std::make_unique<vpx_node>();
@@ -326,6 +339,7 @@ SoundPlayer::~SoundPlayer()
    m_commandQueue.wait_until_nothing_in_flight();
    if (m_sound)
    {
+      m_sound->endCallback = nullptr;
       ma_sound_stop(m_sound.get());
       ma_sound_uninit(m_sound.get());
    }
@@ -350,7 +364,7 @@ void SoundPlayer::ApplyVolume()
 {
    if (m_sound)
    {
-      const float totalvolume = clamp(m_soundVolume * m_mainVolume, 0.0f, 1.0f);
+      const float totalvolume = saturate(m_soundVolume * m_mainVolume);
       // VP legacy conversion:
       // const float decibelvolume = (totalvolume == 0.0f) ? -100.f : max(logf(totalvolume) * (float)(10.0 / log(10.0)) - 20.0f, -100.f);
       // const float decibelvolume = logf(totalvolume) * (float)(10.0 / log(10.0)) - 20.0f; // as we don't need to handle silence separately with linear volume
@@ -480,7 +494,29 @@ void SoundPlayer::OnSoundEnd(void* pUserData, ma_sound* pSound)
 {
    SoundPlayer* me = static_cast<SoundPlayer*>(pUserData);
    if (me->m_loopCount == 0)
+   {
+      if (g_pplayer)
+         g_pplayer->m_pluginManager.GetMsgAPI().RunOnMainThread(
+            g_pplayer->m_pluginAPI.GetVPXEndPointId(), 0.0,
+            [](void* callbackInfo)
+            {
+               string* callbackId = static_cast<string*>(callbackInfo);
+               if (g_pplayer != nullptr)
+               {
+                  if (callbackId->empty())
+                     g_pplayer->m_ptable->FireVoidEvent(DISPID_GameEvents_MusicDone);
+                  else
+                  {
+                     CComVariant rgvar[1] = { CComVariant(callbackId->c_str()) };
+                     DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+                     g_pplayer->m_ptable->FireDispID(DISPID_GameEvents_SoundDone, &dispparams);
+                  }
+               }
+               delete callbackId;
+            },
+            new string(me->m_callbackId));
       return;
+   }
    if (me->m_loopCount > 0)
       me->m_loopCount--;
    // Dispatch through the command queue since we can not restart the sound from the callback as the sound is still playing and command would be discarded

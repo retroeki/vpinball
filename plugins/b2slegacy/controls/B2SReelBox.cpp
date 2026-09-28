@@ -8,23 +8,9 @@ namespace B2SLegacy {
 B2SReelBox::B2SReelBox(VPXPluginAPI* vpxApi, B2SData* pB2SData)
    : B2SBaseBox(vpxApi, pB2SData)
 {
-   m_led = false;
-   m_length = 1;
-   m_initValue = "0"s;
-   m_szReelIndex.clear();
-   m_intermediates = -1;
-   m_intermediates2go = 0;
-   m_szSoundName.clear();
-   m_pSound = nullptr;
-   m_scoreType = eScoreType_NotUsed;
-   m_szGroupName.clear();
-   m_illuminated = false;
-   m_value = 0;
-   m_currentText = 0;
-   m_text = 0;
-   m_rollingInterval = cTimerInterval;
-   m_pTimer = new Timer(m_rollingInterval, std::bind(&B2SReelBox::ReelAnimationTimerTick, this, std::placeholders::_1));
-   m_firstintermediatecount = 1;
+   m_pTimer = new Timer(m_rollingInterval / (((m_intermediates == -1) ? 3 : m_intermediates) + 2), std::bind(&B2SReelBox::ReelAnimationTimerTick, this, std::placeholders::_1));
+
+   Invalidate();
 }
 
 B2SReelBox::~B2SReelBox()
@@ -35,22 +21,21 @@ B2SReelBox::~B2SReelBox()
 void B2SReelBox::OnPaint(VPXRenderContext2D* const ctx)
 {
    if (IsVisible()) {
-      if (!m_szReelIndex.empty()) {
+      if (IsInvalidated() && !m_szReelIndex.empty()) {
          GenericDictionaryIgnoreCase<VPXTexture>* pImages = (m_illuminated ? m_pB2SData->GetReelIlluImages() : m_pB2SData->GetReelImages());
          GenericDictionaryIgnoreCase<VPXTexture>* pIntImages = (m_illuminated ? m_pB2SData->GetReelIntermediateIlluImages() : m_pB2SData->GetReelIntermediateImages());
-         SDL_Rect rect = GetRect();
 
          if (m_intermediates == -1 && m_pTimer->IsEnabled()) {
             const auto& img = pIntImages->find(m_szReelType + '_' + m_szReelIndex + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()) + '_' + std::to_string(m_firstintermediatecount));
             if (img != pIntImages->end()) {
-               VPXGraphics::DrawImage(m_vpxApi, ctx, img->second, nullptr, &rect);
+               m_pCurrentImage = img->second;
                m_firstintermediatecount++;
                m_intermediates2go = 2;
             }
             else {
-               const auto& img = pImages->find(m_szReelType + '_' + ConvertText(m_currentText + 1) + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()));
-               if (img != pImages->end())
-                  VPXGraphics::DrawImage(m_vpxApi, ctx, img->second, nullptr, &rect);
+               const auto& img2 = pImages->find(m_szReelType + '_' + ConvertText(m_currentText + 1) + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()));
+               if (img2 != pImages->end())
+                  m_pCurrentImage = img2->second;
                m_intermediates = m_firstintermediatecount - 1;
                m_intermediates2go = 1;
             }
@@ -58,17 +43,18 @@ void B2SReelBox::OnPaint(VPXRenderContext2D* const ctx)
          else if (m_intermediates2go > 0) {
             const auto& img = pIntImages->find(m_szReelType + '_' + m_szReelIndex + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()) + '_' + std::to_string(m_intermediates - m_intermediates2go + 1));
             if (img != pIntImages->end())
-               VPXGraphics::DrawImage(m_vpxApi, ctx, img->second, nullptr, &rect);
+               m_pCurrentImage = img->second;
          }
          else {
-            GenericDictionaryIgnoreCase<VPXTexture>::iterator img;
-            if (m_intermediates2go == 0 && m_intermediates > 0)
-               img = pImages->find(m_szReelType + '_' + ConvertText(m_currentText + 1) + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()));
-            else
-               img = pImages->find(m_szReelType + '_' + m_szReelIndex + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()));
+            const auto& img = pImages->find(m_szReelType + '_' + m_szReelIndex + (m_setID > 0 && m_illuminated ? '_' + std::to_string(m_setID) : string()));
             if (img != pImages->end())
-               VPXGraphics::DrawImage(m_vpxApi, ctx, img->second, nullptr, &rect);
+               m_pCurrentImage = img->second;
          }
+      }
+
+      if (m_pCurrentImage) {
+         SDL_Rect rect = GetRect();
+         VPXGraphics::DrawImage(m_vpxApi, ctx, m_pCurrentImage, nullptr, &rect);
       }
    }
 
@@ -111,9 +97,8 @@ void B2SReelBox::ReelAnimationTimerTick(Timer* pTimer)
          // maybe stop timer
          m_intermediates2go = m_intermediates;
          if (m_currentText == m_text || m_text >= 10) {
-             m_pTimer->Stop();
-             m_pTimer->SetInterval(cTimerInterval);
-             m_intermediates2go = -1;
+            m_pTimer->Stop();
+            m_pTimer->SetInterval(m_rollingInterval / (((m_intermediates == -1) ? 3 : m_intermediates) + 2));
          }
       }
    }
@@ -130,23 +115,20 @@ void B2SReelBox::SetRollingInterval(int rollingInterval)
 
 void B2SReelBox::SetReelType(const string& szReelType)
 {
-   string value;
-   if (szReelType.back() == '_') {
+   string value = szReelType;
+   m_szReelIndex = "0"sv;
+   if (value.back() == '_') {
       m_length = 2;
-      m_szReelIndex = "00"s;
-      value = szReelType.substr(0, szReelType.length() - 1);
+      m_szReelIndex = "00"sv;
+      value = value.substr(0, value.length() - 1);
    }
-   else {
-      m_szReelIndex = "0"s;
-      value = szReelType;
-   }
-   if (string_starts_with_case_insensitive(szReelType, "led"s) || string_starts_with_case_insensitive(szReelType, "importedled"s)) {
+   if (string_starts_with_case_insensitive(value, "led"s) || string_starts_with_case_insensitive(value, "importedled"s)) {
       m_led = true;
-      m_szReelIndex = "Empty"s;
-      m_initValue = "Empty"s;
-      SetText(-1);
+      m_szReelIndex = "Empty"sv;
+      m_initValue = "Empty"sv;
+      m_text = -1;
    }
-    m_szReelType = value;
+   m_szReelType = value;
 }
 
 void B2SReelBox::SetIlluminated(bool illuminated)
@@ -194,20 +176,20 @@ string B2SReelBox::ConvertValue(int value) const
    // map value
    switch (value) {
          // 7-segment stuff
-         case 63: ret = "0"s; break;
-         case 6:  ret = "1"s; break;
-         case 91: ret = "2"s; break;
-         case 79: ret = "3"s; break;
-         case 102:ret = "4"s; break;
-         case 109:ret = "5"s; break;
-         case 125:ret = "6"s; break;
-         case 7:  ret = "7"s; break;
-         case 127:ret = "8"s; break;
-         case 111:ret = "9"s; break;
+         case 63: ret = "0"sv; break;
+         case 6:  ret = "1"sv; break;
+         case 91: ret = "2"sv; break;
+         case 79: ret = "3"sv; break;
+         case 102:ret = "4"sv; break;
+         case 109:ret = "5"sv; break;
+         case 125:ret = "6"sv; break;
+         case 7:  ret = "7"sv; break;
+         case 127:ret = "8"sv; break;
+         case 111:ret = "9"sv; break;
          //additional 10-segment stuff
-         case 768:ret = "1"s; break;
-         case 124:ret = "6"s; break;
-         case 103:ret = "9"s; break;
+         case 768:ret = "1"sv; break;
+         case 124:ret = "6"sv; break;
+         case 103:ret = "9"sv; break;
          default: ret = m_initValue; break;
       }
    if(m_length == 2)

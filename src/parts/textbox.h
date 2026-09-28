@@ -4,7 +4,13 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "physics/hitable.h"
+#include "plugins/ResURIResolver.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
+#include "utils/fileio.h"
 
 #ifdef __STANDALONE__
 #include <SDL3_ttf/SDL_ttf.h>
@@ -18,11 +24,11 @@ public:
    COLORREF m_fontcolor;
    float m_intensity_scale;
    string m_text;
-   TimerDataRoot m_tdr;
    TextAlignment m_talign;
    bool m_transparent;
    bool m_visible;
    bool m_isDMD;
+   FontDesc m_font;
 };
 
 class Textbox :
@@ -34,20 +40,20 @@ class Textbox :
    public EventProxy<Textbox, &DIID_ITextboxEvents>,
    public IConnectionPointContainerImpl<Textbox>,
    public IProvideClassInfo2Impl<&CLSID_Textbox, &DIID_ITextboxEvents, &LIBID_VPinballLib>,
-   public ISelect,
    public IEditable,
    public IScriptable,
    public IFireEvents,
-   public Hitable
+   public IHitable, // only used for UI picking
+   public IRenderable
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
-   Textbox();
+   Textbox() { m_desktopBackdrop = true; } // Textbox is always located on backdrop
    virtual ~Textbox();
 
    BEGIN_COM_MAP(Textbox)
@@ -58,22 +64,19 @@ public:
       COM_INTERFACE_ENTRY(IProvideClassInfo2)
       //COM_INTERFACE_ENTRY(ISupportErrorInfo)
    END_COM_MAP()
-   //DECLARE_NOT_AGGREGATABLE(Textbox) 
-   // Remove the comment from the line above if you don't want your object to 
+   //DECLARE_NOT_AGGREGATABLE(Textbox)
+   // Remove the comment from the line above if you don't want your object to
    // support aggregation.
 
    BEGIN_CONNECTION_POINT_MAP(Textbox)
       CONNECTION_POINT_ENTRY(DIID_ITextboxEvents)
    END_CONNECTION_POINT_MAP()
 
-   STANDARD_EDITABLE_DECLARES(Textbox, eItemTextbox, TEXTBOX, VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES(Textbox, eItemTextbox, TEXTBOX)
 
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final { return m_d.m_v1; }
-   void PutCenter(const Vertex2D& pv) final;
-   ItemTypeEnum HitableGetItemType() const final { return eItemTextbox; }
 
    void WriteRegDefaults() final;
 
@@ -81,31 +84,24 @@ public:
    // ISupportsErrorInfo
    STDMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
-   string GetFontName();
-   HFONT GetFont();
-
-   IFont *m_pIFont = nullptr;
-#ifdef __STANDALONE__
-   bool m_fontItalic;
-   bool m_fontUnderline;
-   bool m_fontStrikeThrough;
-   bool m_fontBold;
-   float m_fontSize;
-   string m_fontName;
-#endif
+   const string& GetFontName() const;
 
    TextboxData m_d;
 
 private:
-   PinTable *m_ptable = nullptr;
-   
-   RenderDevice *m_rd = nullptr;
+   Renderer *m_renderer = nullptr;
    bool m_textureDirty = true;
    std::shared_ptr<BaseTexture> m_texture = nullptr;
+
+   // Identity of the frame last uploaded to m_texture when the textbox is used as a DMD, to avoid a full copy plus a GPU re-upload every frame
+   DisplaySrcId m_uploadedSrc {};
+   unsigned int m_uploadedFrameId = 0;
+   bool m_hasUploadedFrame = false;
    IFont *m_pIFontPlay = nullptr; // Our font, scaled to match play window resolution
 
 #ifdef __STANDALONE__
    TTF_Font* LoadFont();
+   TTF_Font* m_pFont = nullptr; // Lazily loaded by LoadFont, kept for the play session
 #endif
 
 public:
@@ -129,7 +125,6 @@ public:
    STDMETHOD(get_Width)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_Width)(/*[in]*/ float newVal);
    STDMETHOD(get_Font)(/*[out, retval]*/ IFontDisp **pVal);
-   STDMETHOD(put_Font)(/*[in]*/ IFontDisp *newVal);
    STDMETHOD(putref_Font)(IFontDisp* pFont);
    STDMETHOD(get_Text)(/*[out, retval]*/ BSTR *pVal);
    STDMETHOD(put_Text)(/*[in]*/ BSTR newVal);

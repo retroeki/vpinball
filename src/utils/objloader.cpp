@@ -1,8 +1,13 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
-#include "utils/hash.h"
 #include "objloader.h"
+
+#include "parts/Material.h"
+#include "parts/primitive.h"
+#include "utils/color.h"
+#include "utils/hash.h"
+
 
 // not thread safe!
 
@@ -57,11 +62,25 @@ static void NormalizeNormals()
 }
 #endif
 
-bool ObjLoader::Load(const string& filename, const bool flipTv, const bool convertToLeftHanded)
+bool ObjLoader::Load(const string& filename, const MeshUnits units)
 {
    FILE* f;
    if ((fopen_s(&f, filename.c_str(), "r") != 0) || !f)
       return false;
+
+   // Convert from the file's convention to VPX's (left-handed, X to the right, Y toward the player, Z up, in VP units)
+   const auto convertAxes = [units](Vertex3Ds& v)
+   {
+      if (units == MeshUnits::VPUnits)
+         v.z = -v.z;
+      else // MeshUnits::Meters
+      {
+         const float y = v.y;
+         v.y = v.z;
+         v.z = y;
+      }
+   };
+   const float unitsToVpu = (units == MeshUnits::Meters) ? MTOVPU(1.f) : 1.f;
 
    m_tmpVerts.clear();
    m_tmpTexel.clear();
@@ -80,7 +99,7 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
       char lineHeader[256];
       const int res = fscanf_s(f, "\n%s", lineHeader
 #ifndef __STANDALONE__
-      ,static_cast<unsigned int>(sizeof(lineHeader))
+      ,static_cast<unsigned int>(std::size(lineHeader))
 #endif
       );
       if (res == EOF)
@@ -89,7 +108,7 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
          break;
       }
 
-      if (lineHeader == "v"s)
+      if (lineHeader == "v"sv)
       {
          Vertex3Ds tmp;
          if (fscanf_s(f, "%f %f %f\n", &tmp.x, &tmp.y, &tmp.z) != 3)
@@ -97,11 +116,11 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
             ShowError("Error parsing `v`");
             goto Error;
          }
-         if (convertToLeftHanded)
-            tmp.z = -tmp.z;
+         convertAxes(tmp);
+         tmp *= unitsToVpu;
          m_tmpVerts.push_back(tmp);
       }
-      else if (lineHeader == "vt"s)
+      else if (lineHeader == "vt"sv)
       {
          Vertex2D tmp;
          if (fscanf_s(f, "%f %f", &tmp.x, &tmp.y) != 2)
@@ -109,11 +128,11 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
             ShowError("Error parsing `vt`");
             goto Error;
          }
-         if (flipTv || convertToLeftHanded)
-            tmp.y = 1.f - tmp.y;
+         // Wavefront UV origin is bottom-left while VPX uses top-left
+         tmp.y = 1.f - tmp.y;
          m_tmpTexel.push_back(tmp);
       }
-      else if (lineHeader == "vn"s)
+      else if (lineHeader == "vn"sv)
       {
          Vertex3Ds tmp;
          if (fscanf_s(f, "%f %f %f\n", &tmp.x, &tmp.y, &tmp.z) != 3)
@@ -121,11 +140,10 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
             ShowError("Error parsing `vn`");
             goto Error;
          }
-         if (convertToLeftHanded)
-            tmp.z = -tmp.z;
+         convertAxes(tmp);
          m_tmpNorms.push_back(tmp);
       }
-      else if (lineHeader == "f"s)
+      else if (lineHeader == "f"sv)
       {
          if (m_tmpVerts.empty())
          {
@@ -166,8 +184,8 @@ bool ObjLoader::Load(const string& filename, const bool flipTv, const bool conve
             goto Error;
          }
 
-         if (convertToLeftHanded)
-            std::ranges::reverse(faceVerts.begin(), faceVerts.end());
+         // Both supported file conventions are right-handed: reverse winding to compensate for the axis conversion
+         std::ranges::reverse(faceVerts.begin(), faceVerts.end());
 
          // triangulate the face (assumes convex face)
          MyPoly tmpFace;
@@ -274,7 +292,7 @@ Error:
    return false;
 }
 
-void ObjLoader::Save(const string& filename, const string& description, const Mesh& mesh)
+void ObjLoader::Save(const string& filename, const string& description, const Mesh& mesh, const MeshUnits units)
 {
    /*
    f = fopen(filename.c_str(), "wt");
@@ -312,7 +330,7 @@ void ObjLoader::Save(const string& filename, const string& description, const Me
       fprintf_s(m_fHandle, "# Visual Pinball OBJ file\n");
       fprintf_s(m_fHandle, "# numVerts: %u numFaces: %u\n", (unsigned int)mesh.NumVertices(), (unsigned int)mesh.NumIndices());
       WriteObjectName(description);
-      WriteVertexInfo(mesh.m_vertices.data(), (unsigned int)mesh.m_vertices.size());
+      WriteVertexInfo(mesh.m_vertices.data(), (unsigned int)mesh.m_vertices.size(), units);
       WriteFaceInfoLong(mesh.m_indices);
       ExportEnd();
    }
@@ -335,14 +353,12 @@ void ObjLoader::Save(const string& filename, const string& description, const Me
             vertsTmp[t].ny = vi.ny;
             vertsTmp[t].nz = vi.nz;
          }
-         char number[16] = {};
-         sprintf_s(number, sizeof(number), "%05u", i);
-         const string fname = name + '_' + number + ".obj";
+         const string fname = name + '_' + std::format("{:05}", i) + ".obj";
          ExportStart(fname);
          fprintf_s(m_fHandle, "# Visual Pinball OBJ file\n");
          fprintf_s(m_fHandle, "# numVerts: %u numFaces: %u\n", (unsigned int)mesh.NumVertices(), (unsigned int)mesh.NumIndices());
          WriteObjectName(description);
-         WriteVertexInfo(vertsTmp.data(), (unsigned int)mesh.m_vertices.size());
+         WriteVertexInfo(vertsTmp.data(), (unsigned int)mesh.m_vertices.size(), units);
          WriteFaceInfoLong(mesh.m_indices);
          ExportEnd();
       }
@@ -368,29 +384,50 @@ bool ObjLoader::ExportStart(const string& filename)
    return true;
 }
 
-void ObjLoader::WriteVertexInfo(const Vertex3D_NoTex2* verts, unsigned int numVerts)
+void ObjLoader::WriteVertexInfo(const Vertex3D_NoTex2* verts, unsigned int numVerts, const MeshUnits units)
 {
+   // Convert from VPX's convention (left-handed, X to the right, Y toward the player, Z up, in VP units) to the file's one
+   const auto convertAxes = [units](Vertex3Ds& v)
+   {
+      if (units == MeshUnits::VPUnits)
+         v.z = -v.z;
+      else // MeshUnits::Meters
+      {
+         const float y = v.y;
+         v.y = v.z;
+         v.z = y;
+      }
+   };
+   const float vpuToUnits = (units == MeshUnits::Meters) ? VPUTOM(1.f) : 1.f;
+
    for (unsigned i = 0; i < numVerts; i++)
    {
-      fprintf_s(m_fHandle, "v %f %f %f\n", verts[i].x, verts[i].y, -verts[i].z);
+      Vertex3Ds v(verts[i].x, verts[i].y, verts[i].z);
+      convertAxes(v);
+      v *= vpuToUnits;
+      fprintf_s(m_fHandle, "v %f %f %f\n", v.x, v.y, v.z);
    }
    for (unsigned i = 0; i < numVerts; i++)
    {
       float tu = verts[i].tu;
       float tv = 1.f - verts[i].tv;
-      if (infNaN(tu)) tu = 0.0f;
-      if (infNaN(tv)) tv = 0.0f;
+      if (infNaN(tu))
+         tu = 0.0f;
+      if (infNaN(tv))
+         tv = 0.0f;
       fprintf_s(m_fHandle, "vt %f %f\n", tu, tv);
    }
    for (unsigned i = 0; i < numVerts; i++)
    {
-      float nx = verts[i].nx;
-      float ny = verts[i].ny;
-      float nz = verts[i].nz;
-      if (infNaN(nx)) nx = 0.0f;
-      if (infNaN(ny)) ny = 0.0f;
-      if (infNaN(nz)) nz = 0.0f;
-      fprintf_s(m_fHandle, "vn %f %f %f\n", nx, ny, -nz);
+      Vertex3Ds n(verts[i].nx, verts[i].ny, verts[i].nz);
+      if (infNaN(n.x))
+         n.x = 0.0f;
+      if (infNaN(n.y))
+         n.y = 0.0f;
+      if (infNaN(n.z))
+         n.z = 0.0f;
+      convertAxes(n);
+      fprintf_s(m_fHandle, "vn %f %f %f\n", n.x, n.y, n.z);
    }
 }
 
@@ -435,19 +472,19 @@ bool ObjLoader::LoadMaterial(const string& filename, Material* const mat)
    while (true)
    {
       char lineHeader[256];
-      const int res = fscanf_s(f, "\n%s", lineHeader, static_cast<unsigned int>(sizeof(lineHeader)));
+      const int res = fscanf_s(f, "\n%s", lineHeader, static_cast<unsigned int>(std::size(lineHeader)));
       if (res == EOF)
       {
          fclose(f);
          return true;
       }
-      if (lineHeader == "newmtl"s)
+      if (lineHeader == "newmtl"sv)
       {
          char buf[MAXSTRING];
          fscanf_s(f, "%s\n", buf, MAXSTRING);
          mat->m_name = buf;
       }
-      else if (lineHeader == "Ns"s)
+      else if (lineHeader == "Ns"sv)
       {
          float tmp;
          fscanf_s(f, "%f\n", &tmp);
@@ -463,12 +500,12 @@ bool ObjLoader::LoadMaterial(const string& filename, Material* const mat)
          if (mat->m_fRoughness < 0.01f)
             mat->m_fRoughness = 0.01f;
       }
-      else if (lineHeader == "Ka"s)
+      else if (lineHeader == "Ka"sv)
       {
          Vertex3Ds tmp;
          fscanf_s(f, "%f %f %f\n", &tmp.x, &tmp.y, &tmp.z);
       }
-      else if (lineHeader == "Kd"s)
+      else if (lineHeader == "Kd"sv)
       {
          Vertex3Ds tmp;
          fscanf_s(f, "%f %f %f\n", &tmp.x, &tmp.y, &tmp.z);
@@ -477,7 +514,7 @@ bool ObjLoader::LoadMaterial(const string& filename, Material* const mat)
          const uint32_t b = (uint32_t)(tmp.z * 255.f);
          mat->m_cBase = RGB(r, g, b);
       }
-      else if (lineHeader == "Ks"s)
+      else if (lineHeader == "Ks"sv)
       {
          Vertex3Ds tmp;
          fscanf_s(f, "%f %f %f\n", &tmp.x, &tmp.y, &tmp.z);
@@ -486,12 +523,12 @@ bool ObjLoader::LoadMaterial(const string& filename, Material* const mat)
          const uint32_t b = (uint32_t)(tmp.z * 255.f);
          mat->m_cGlossy = RGB(r, g, b);
       }
-      else if (lineHeader == "Ni"s)
+      else if (lineHeader == "Ni"sv)
       {
          float tmp;
          fscanf_s(f, "%f\n", &tmp);
       }
-      else if (lineHeader == "d"s)
+      else if (lineHeader == "d"sv)
       {
          float tmp;
          fscanf_s(f, "%f\n", &tmp);

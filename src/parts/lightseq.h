@@ -4,16 +4,18 @@
 
 #pragma once
 
-#include "ui/resource.h"
+#include "core/resourceid.h"
+#include "parts/pintable.h"
+#include "renderer/Renderable.h"
+#include "utils/eventproxy.h"
 
 class LightSeqData final
 {
 public:
    Vertex2D      m_v; // UI position
    Vertex2D      m_vCenter; // Center position used to compute light animations
-   std::basic_string<WCHAR> m_wzCollection;
+   std::wstring  m_wzCollection;
    int           m_updateinterval;
-   TimerDataRoot m_tdr;
 };
 
 struct LightSeqQueueData
@@ -70,19 +72,18 @@ class LightSeq :
    public IConnectionPointContainerImpl<LightSeq>,
    public IProvideClassInfo2Impl<&CLSID_LightSeq, &DIID_ILightSeqEvents, &LIBID_VPinballLib>,
    public EventProxy<LightSeq, &DIID_ILightSeqEvents>,
-   public ISelect,
    public IEditable,
    public IScriptable,
    public IFireEvents,
-   public Hitable,
-   public IPerPropertyBrowsing     // Ability to fill in dropdown(s) in property browser
-   //public EditableImpl<LightSeq>
+   //public Hitable, // FIXME implement UI picking
+   public IRenderable,
+   public IPerPropertyBrowsing // Ability to fill in dropdown(s) in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
    LightSeq() { }
@@ -104,20 +105,13 @@ public:
       CONNECTION_POINT_ENTRY(DIID_ILightSeqEvents)
    END_CONNECTION_POINT_MAP()
 
-   void RenderOutline(Sur * const psur);
-
-   void MoveOffset(const float dx, const float dy) final;
-   void SetObjectPos() final;
+   void Translate(const Vertex2D &offset) final;
    // Multi-object manipulation
    Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D& pv) final;
-
-   void RenderBlueprint(Sur *psur, const bool solid) final { } // Renders the image onto the Blueprint, but we don't want light seqs on the blue print as it is non-essensial
-   ItemTypeEnum HitableGetItemType() const final { return eItemLightSeq; }
 
    void WriteRegDefaults() final;
 
-   STANDARD_EDITABLE_DECLARES(LightSeq, eItemLightSeq, LIGHTSEQ, VIEW_PLAYFIELD | VIEW_BACKGLASS)
+   STANDARD_EDITABLE_DECLARES_NO_HITABLE(LightSeq, eItemLightSeq, LIGHTSEQ)
 
    //DECLARE_NOT_AGGREGATABLE(LightSeq)
    // Remove the comment from the line above if you don't want your object to
@@ -131,8 +125,8 @@ private:
    uint32_t       m_timeNextUpdate;
    float          m_GridXCenter;
    float          m_GridYCenter;
-   int            m_lightSeqGridHeight;
-   int            m_lightSeqGridWidth;
+   int            m_lightSeqGridHeight = 0;
+   int            m_lightSeqGridWidth = 0;
    int            m_GridXCenterAdjust;
    int            m_GridYCenterAdjust;
    _tracer        m_th1, m_th2, m_tt1, m_tt2;
@@ -164,7 +158,8 @@ public:
    float    GetX() const { return m_d.m_vCenter.x; }
    void     SetX(const float value)
    {
-       if ((value < 0.f) || (value >= (float)EDITOR_BG_WIDTH))
+       const float maxX = (m_ptable != nullptr) ? (m_ptable->m_right - m_ptable->m_left) : (float)EDITOR_BG_WIDTH;
+       if ((value < 0.f) || (value >= maxX))
            return;
 
        m_d.m_vCenter.x = value;
@@ -175,7 +170,8 @@ public:
    float    GetY() const { return m_d.m_vCenter.y; }
    void     SetY(const float value)
    {
-       if ((value < 0.f) || (value >= (float)(2 * EDITOR_BG_WIDTH)))
+       const float maxY = (m_ptable != nullptr) ? (m_ptable->m_bottom - m_ptable->m_top) : (float)(2 * EDITOR_BG_WIDTH);
+       if ((value < 0.f) || (value >= maxY))
            return;
 
        m_d.m_vCenter.y = value;
@@ -190,8 +186,6 @@ public:
    LightSeqData m_d;
 
 private:
-   PinTable *m_ptable;
-
    void     SetupTracers(const SequencerState Animation, int TailLength, int Repeat, int Pause);
    bool     ProcessTracer(_tracer * const pTracer, const LightState State);
    void     SetAllLightsToState(const LightState State);

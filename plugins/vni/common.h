@@ -22,15 +22,11 @@ using std::string;
 
 namespace Vni {
 
-// retroeki: this fork's LoggingPlugin.h ships only the printf-style LPI_*
-// helpers (no _CPP std::string variants the upstream VNI plugin expects). Wrap
-// each call so the plugin's std::string / std::format log arguments forward
-// through "%s". Commas inside std::format(...) stay grouped by its parens.
-LPI_USE();
-#define LOGD(s) LPI_LOGD("%s", std::string(s).c_str())
-#define LOGI(s) LPI_LOGI("%s", std::string(s).c_str())
-#define LOGW(s) LPI_LOGW("%s", std::string(s).c_str())
-#define LOGE(s) LPI_LOGE("%s", std::string(s).c_str())
+LPI_USE_CPP();
+#define LOGD Vni::LPI_LOGD_CPP
+#define LOGI Vni::LPI_LOGI_CPP
+#define LOGW Vni::LPI_LOGW_CPP
+#define LOGE Vni::LPI_LOGE_CPP
 
 void SetThreadName(const std::string& name);
 std::filesystem::path find_case_insensitive_file_path(const std::filesystem::path& searchedFile);

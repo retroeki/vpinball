@@ -8,6 +8,7 @@
 
 #include "../include/vpinball/VPinballLib_C.h"
 #include "VPinballLib.h"
+#include "ZipUtils.h"
 #include "plugins/MsgPluginManager.h"
 
 #include <dlfcn.h>  // VPinballGenerateNVRAM: dlopen libpinmame.so for headless NVRAM gen
@@ -40,9 +41,9 @@ VPINBALLAPI const char* VPinballGetVersionStringFull()
    return version.c_str();
 }
 
-VPINBALLAPI void VPinballInit(VPinballEventCallback callback)
+VPINBALLAPI void VPinballInit(VPinballEventCallback eventCallback, VPinballRumbleCallback rumbleCallback)
 {
-   VPinballLib::VPinballLib::Instance().Init(callback);
+   VPinballLib::VPinballLib::Instance().Init(eventCallback, rumbleCallback);
 }
 
 VPINBALLAPI void VPinballInitHeadless(VPinballEventCallback callback)
@@ -69,11 +70,6 @@ VPINBALLAPI void VPinballLog(VPINBALL_LOG_LEVEL level, const char* pMessage)
 {
    if (pMessage != nullptr)
       VPinballLib::VPinballLib::Instance().Log(level, pMessage);
-}
-
-VPINBALLAPI void VPinballResetLog()
-{
-   VPinballLib::VPinballLib::Instance().ResetLog();
 }
 
 VPINBALLAPI int VPinballLoadValueInt(const char* pSectionName, const char* pKey, int defaultValue)
@@ -162,6 +158,13 @@ VPINBALLAPI void VPinballRefreshWebServer()
    VPinballLib::VPinballLib::Instance().RefreshWebServer();
 }
 
+VPINBALLAPI const char* VPinballGetPath(VPINBALL_PATH pathType)
+{
+   thread_local string path;
+   path = VPinballLib::VPinballLib::Instance().GetPath(pathType).string();
+   return path.c_str();
+}
+
 VPINBALLAPI VPINBALL_STATUS VPinballLoadTable(const char* pPath)
 {
    if (pPath == nullptr)
@@ -175,9 +178,12 @@ VPINBALLAPI void VPinballCancelLoading()
    VPinballLib::VPinballLib::Instance().CancelLoading();
 }
 
-VPINBALLAPI VPINBALL_STATUS VPinballExtractTableScript()
+VPINBALLAPI VPINBALL_STATUS VPinballExtractTableScript(const char* pPath)
 {
-   return VPinballLib::VPinballLib::Instance().ExtractTableScript();
+   if (pPath == nullptr)
+      return VPINBALL_STATUS_FAILURE;
+
+   return VPinballLib::VPinballLib::Instance().ExtractTableScript(pPath);
 }
 
 VPINBALLAPI VPINBALL_STATUS VPinballPlay()
@@ -376,7 +382,7 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetMusicVolume(int volume)
    return SDL_RunOnMainThread([](void* userdata) {
       int vol = *static_cast<int*>(userdata);
       if (g_pplayer) {
-         g_pplayer->m_MusicVolume = vol;
+         g_pplayer->m_backglassVolume = dequantizeUnsignedPercent(vol);
          g_pplayer->UpdateVolume();
       }
    }, &clampedVolume, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
@@ -391,7 +397,7 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetSoundVolume(int volume)
    return SDL_RunOnMainThread([](void* userdata) {
       int vol = *static_cast<int*>(userdata);
       if (g_pplayer) {
-         g_pplayer->m_SoundVolume = vol;
+         g_pplayer->m_playfieldVolume = dequantizeUnsignedPercent(vol);
          g_pplayer->UpdateVolume();
       }
    }, &clampedVolume, true) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
@@ -401,14 +407,14 @@ VPINBALLAPI int VPinballGetMusicVolume()
 {
    if (!g_pplayer)
       return 100;
-   return g_pplayer->m_MusicVolume;
+   return (int)quantizeUnsignedPercent(clamp(g_pplayer->m_backglassVolume, 0.f, 1.f));
 }
 
 VPINBALLAPI int VPinballGetSoundVolume()
 {
    if (!g_pplayer)
       return 100;
-   return g_pplayer->m_SoundVolume;
+   return (int)quantizeUnsignedPercent(clamp(g_pplayer->m_playfieldVolume, 0.f, 1.f));
 }
 
 VPINBALLAPI VPINBALL_STATUS VPinballSetPinmameVolume(int volume)
@@ -447,6 +453,12 @@ VPINBALLAPI const char* VPinballGetTableVersion()
    return tableVersion.c_str();
 }
 
+// Plugins are owned by the player's plugin manager and only live during a play session.
+static const MsgPluginAPI* GetPlayerMsgAPI()
+{
+   return g_pplayer ? &g_pplayer->m_pluginManager.GetMsgAPI() : nullptr;
+}
+
 // Payload shape must match the PinMAME plugin's PinMAMENvramQuery struct.
 namespace {
 struct VPinballNvramQuery {
@@ -461,7 +473,9 @@ VPINBALLAPI int VPinballGetNVRAM(uint8_t* buffer, int maxBytes, int* isNvramTabl
 {
    if (isNvramTable) *isNvramTable = 0;
    if (!buffer || maxBytes <= 0) return 0;
-   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const MsgPluginAPI* const pMsgApi = GetPlayerMsgAPI();
+   if (!pMsgApi) return 0;
+   const MsgPluginAPI& msgApi = *pMsgApi;
    const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "GET_NVRAM");
    VPinballNvramQuery q { buffer, maxBytes, 0, 0 };
    msgApi.BroadcastMsg(0, msgId, &q);
@@ -747,7 +761,10 @@ struct VPinballSwitchSet {
 
 VPINBALLAPI VPINBALL_STATUS VPinballSetSwitch(int switchNum, int state)
 {
-   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const MsgPluginAPI* const pMsgApi = GetPlayerMsgAPI();
+   if (!pMsgApi)
+      return VPINBALL_STATUS_FAILURE;
+   const MsgPluginAPI& msgApi = *pMsgApi;
    const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "SET_SWITCH");
    VPinballSwitchSet s { switchNum, state, 0 };
    msgApi.BroadcastMsg(0, msgId, &s);
@@ -766,7 +783,10 @@ struct VPinballSwitchGet {
 
 VPINBALLAPI int VPinballGetSwitch(int switchNum)
 {
-   auto& msgApi = MsgPI::MsgPluginManager::GetInstance().GetMsgAPI();
+   const MsgPluginAPI* const pMsgApi = GetPlayerMsgAPI();
+   if (!pMsgApi)
+      return -1;
+   const MsgPluginAPI& msgApi = *pMsgApi;
    const unsigned int msgId = msgApi.GetMsgID("VPINBALL", "GET_SWITCH");
    VPinballSwitchGet g { switchNum, 0, 0 };
    msgApi.BroadcastMsg(0, msgId, &g);
@@ -774,3 +794,32 @@ VPINBALLAPI int VPinballGetSwitch(int switchNum)
    return g.handled ? g.value : -1;
 }
 
+VPINBALLAPI VPINBALL_STATUS VPinballZipCreate(const char* pSourcePath, const char* pDestPath, VPinballZipCallback callback)
+{
+   if (pSourcePath == nullptr || pDestPath == nullptr)
+      return VPINBALL_STATUS_FAILURE;
+
+   ZipUtils::ProgressCallback progressCallback = nullptr;
+   if (callback) {
+      progressCallback = [callback](int current, int total, const char* filename) {
+         callback(current, total, filename);
+      };
+   }
+
+   return ZipUtils::Zip(pSourcePath, pDestPath, progressCallback) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}
+
+VPINBALLAPI VPINBALL_STATUS VPinballZipExtract(const char* pSourcePath, const char* pDestPath, VPinballZipCallback callback)
+{
+   if (pSourcePath == nullptr || pDestPath == nullptr)
+      return VPINBALL_STATUS_FAILURE;
+
+   ZipUtils::ProgressCallback progressCallback = nullptr;
+   if (callback) {
+      progressCallback = [callback](int current, int total, const char* filename) {
+         callback(current, total, filename);
+      };
+   }
+
+   return ZipUtils::Unzip(pSourcePath, pDestPath, progressCallback) ? VPINBALL_STATUS_SUCCESS : VPINBALL_STATUS_FAILURE;
+}

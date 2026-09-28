@@ -7,7 +7,7 @@
 // Antialiasing quality setting. Higher values result in higher quality
 // of antialiasing applied to detected edges. Default: 5 (high quality)
 // Range: From 1 (fastest) to 9 (highest quality).
-#define FAAA_QUALITY 4 // was 5 in original FAAA
+#define FAAA_QUALITY 9 // was 5 in original FAAA
 
 /*============================================================================
 	Settings - from FXAA3 QUALITY VERSION LOW DITHER SETTINGS
@@ -154,8 +154,8 @@ float3 faaa(const float2 u)
 	if( horzSpan) posN.y += lengthSign * 0.5;
 	float2 posP = posN;
 	float2 offNP = offs;
-	if(!horzSpan) offNP.x = 0;
-	if( horzSpan) offNP.y = 0;
+	if(!horzSpan) offNP.x = 0.0;
+	if( horzSpan) offNP.y = 0.0;
 	posP += offNP * FAAAOffMult[0];
 	posN -= offNP * FAAAOffMult[0];
 	float lumaEndP = luma(texStereoNoLod(tex_fb_filtered, posP).xyz);

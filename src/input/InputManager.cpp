@@ -1,8 +1,16 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include "InputManager.h"
+
+#include "core/player.h"
+#include "core/TournamentFile.h"
+#include "core/VPApp.h"
 #include "core/VPXPluginAPIImpl.h"
+#include "input/PlungerHandler.h"
+#include "physics/cabinet/NudgeHandler.h"
 #include "renderer/VRDevice.h"
+#include "ui/live/LiveUI.h"
 
 #include "ScanCodes.h"
 
@@ -17,12 +25,14 @@
 #endif
 
 
-InputManager::InputManager()
-   : m_onActionEventMsgId(VPXPluginAPIImpl::GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_ACTION_CHANGED))
+InputManager::InputManager(Player* player, Settings& appSettings)
+   : m_player(player)
+   , m_appSettings(appSettings)
+   , m_onActionEventMsgId(m_player->m_pluginAPI.GetMsgID(VPXPI_NAMESPACE, VPXPI_EVT_ON_ACTION_CHANGED))
    , m_keyboardDeviceId(RegisterDevice("Key"s, InputManager::DeviceType::Keyboard, "Keyboards"s)) // Base device: merge inputs from all connected keyboards
    , m_mouseDeviceId(RegisterDevice("Mouse"s, InputManager::DeviceType::Mouse, "Mouse"s)) // Base device: merge inputs from all connected mice
 {
-   const Settings& settings = g_pvp->m_settings;
+   const Settings& settings = m_appSettings;
 
    m_inputDevices[m_keyboardDeviceId].m_connected = true;
    m_inputDevices[m_mouseDeviceId].m_connected = true;
@@ -31,6 +41,7 @@ InputManager::InputManager()
 
    // Touch screen support — collect all device names into a single summary
    // line rather than one PLOGI per device (4-5 lines per startup on phones).
+   m_supportsTouch = false;
    int nTouchDevices;
    SDL_TouchID* touchDevices = SDL_GetTouchDevices(&nTouchDevices);
    std::string touchDeviceSummary;
@@ -65,7 +76,7 @@ InputManager::InputManager()
       addTouchRegion(RECT { 33, 0, 67, 10 }, GetExtraBallBuyInActionId());
       // Top-right zone opens the Android app settings dialog (fires VPINBALL_EVENT_MENU_PRESSED via InGameUI action).
       // Coin-door toggle is now available as an action inside the settings dialog itself.
-      addTouchRegion(RECT { 67, 0, 100, 10 }, GetInGameUIActionId());
+      addTouchRegion(RECT { 67, 0, 100, 10 }, GetOpenInGameUIActionId());
       addTouchRegion(RECT { 0, 10, 50, 30 }, GetLeftMagnaActionId());
       addTouchRegion(RECT { 50, 10, 100, 30 }, GetRightMagnaActionId());
       addTouchRegion(RECT { 0, 30, 50, 60 }, GetLeftNudgeActionId());
@@ -82,42 +93,24 @@ InputManager::InputManager()
    }
    m_touchRegionHold.assign(m_touchRegionMap.size(), 0);
 
-   // Analog sensors for plunger and nudge
-   for (int i = 0; i < 2; i++)
-   {
-      m_nudgeXSensor[i] = std::make_unique<PhysicsSensor>(this, "NudgeX" + std::to_string(i + 1), "Sensor " + std::to_string(i + 1) + " - Nudge Side", SensorMapping::Type::Acceleration);
-      m_nudgeYSensor[i] = std::make_unique<PhysicsSensor>(this, "NudgeY" + std::to_string(i + 1), "Sensor " + std::to_string(i + 1) + " - Nudge Front", SensorMapping::Type::Acceleration);
-      m_nudgeFilter[i] = !settings.GetPlayer_NudgeFilter(i);
-      SetNudgeFiltered(i, !m_nudgeFilter[i]);
-   }
-   m_plungerPositionSensor = std::make_unique<PhysicsSensor>(this, "PlungerPos"s, "Plunger Position"s, SensorMapping::Type::Position);
-   m_plungerVelocitySensor = std::make_unique<PhysicsSensor>(this, "PlungerVel"s, "Plunger Velocity"s, SensorMapping::Type::Velocity);
-   m_plungerPositionSensor->SetFilter(std::make_unique<PlungerPositionFilter>());
-
-   m_exitPressTimestamp = 0;
-   m_exitAppPressLengthMs = settings.GetPlayer_Exitconfirm() * 1000 / 60;
-
-   m_rumbleMode = g_pvp->m_settings.GetPlayer_RumbleMode();
+   m_rumbleMode = m_appSettings.GetPlayer_RumbleMode();
+   m_rumbleFlipperContact = m_appSettings.GetPlayer_RumbleFlipperContact();
+   m_rumbleBumper = m_appSettings.GetPlayer_RumbleBumper();
+   m_rumbleSlingshot = m_appSettings.GetPlayer_RumbleSlingshot();
+   m_rumblePlunger = m_appSettings.GetPlayer_RumblePlunger();
+   m_rumbleFlipperButton = m_appSettings.GetPlayer_RumbleFlipperButton();
+   m_rumbleNudge = m_appSettings.GetPlayer_RumbleNudge();
+   m_rumbleBallBall = m_appSettings.GetPlayer_RumbleBallBall();
 
    // Load settings
-   {
-      LoadDevicesFromSettings();
+   LoadDevicesFromSettings();
 
-      for (const auto& action : m_inputActions)
-         action->LoadMapping(settings);
+   for (const auto& action : m_inputActions)
+      action->LoadMapping(settings);
 
-      m_plungerPositionSensor->LoadMapping(settings);
-      m_plungerVelocitySensor->LoadMapping(settings);
-      for (int i = 0; i < 2; i++)
-      {
-         m_nudgeXSensor[i]->LoadMapping(settings);
-         m_nudgeYSensor[i]->LoadMapping(settings);
-         m_nudgeOrientation[i] = ANGTORAD(settings.GetPlayer_NudgeOrientation(i));
-      }
+   m_nudgeHandler = std::make_unique<VPX::Physics::NudgeHandler>(this, m_appSettings);
 
-      m_linearPlunger = settings.GetPlayer_PlungerLinearSensor();
-      m_plunger_retract = settings.GetPlayer_PlungerRetract();
-   }
+   m_plungerHandler = std::make_unique<PlungerHandler>(this, m_appSettings);
 
    // Initialize device handlers
    m_inputHandlers.push_back(std::make_unique<SDLInputHandler>(*this));
@@ -166,8 +159,11 @@ InputManager::~InputManager()
       PLOGE << "Failed to persist input devices in settings";
    }
    m_inputHandlers.clear();
+   m_inputActions.clear();
+   m_nudgeHandler = nullptr;
+   m_plungerHandler = nullptr;
    m_sdlHandler = nullptr;
-   VPXPluginAPIImpl::ReleaseMsgID(m_onActionEventMsgId);
+   m_player->m_pluginAPI.ReleaseMsgID(m_onActionEventMsgId);
 
    #ifdef _WIN32
       if (m_hKeyboardHook)
@@ -176,7 +172,19 @@ InputManager::~InputManager()
    #endif
 }
 
+void InputManager::AddInputHandler(std::unique_ptr<InputHandler> handler)
+{
+   m_inputHandlers.push_back(std::move(handler));
+}
 
+std::unique_ptr<InputManager::InputHandler> InputManager::RemoveInputHandler(InputHandler* handler)
+{
+   const auto& it = std::ranges::find_if(m_inputHandlers, [handler](const auto& ih) { return ih.get() == handler; });
+   assert(it != m_inputHandlers.end());
+   std::unique_ptr<InputManager::InputHandler> ownedHandler = std::move(*it);
+   m_inputHandlers.erase(it);
+   return ownedHandler;
+}
 
 
 #pragma region Device and Element Management
@@ -191,10 +199,11 @@ uint16_t InputManager::RegisterDevice(const string& settingsId, InputManager::De
    m_inputDevices[deviceId].m_name = name;
    m_inputDevices[deviceId].m_type = type;
    m_inputDevices[deviceId].m_connected = true;
-   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>("Input"s, "Device." + settingsId + ".Name", "Device Name"s, ""s, true, name));
-   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::EnumPropertyDef>(
-      "Input"s, "Device." + settingsId + ".Type", "Device Type"s, ""s, true, 0, (int)type, vector { "Unknown"s, "Keyboard"s, "Joystick"s, "Mouse"s, "VRController"s, "OpenPinDev"s }));
-   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>("Input"s, "Device." + settingsId + ".NoAutoLayout", "Disable Automatic Layout"s, ""s, false, false));
+   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>("Input"s, std::format("Device.{}.Name", settingsId), "Device Name"s, ""s, true, name));
+   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::EnumPropertyDef>("Input"s, std::format("Device.{}.Type", settingsId), "Device Type"s, ""s, true, 0, (int)type,
+      vector { "Unknown"s, "Keyboard"s, "Joystick"s, "Mouse"s, "VRController"s, "OpenPinDev"s }));
+   Settings::GetRegistry().Register(std::make_unique<VPX::Properties::BoolPropertyDef>("Input"s, std::format("Device.{}.NoAutoLayout", settingsId), "Disable Automatic Layout"s,
+      "Disable proposing to overwrite settings with the default layout for this device in upcoming sessions."s, true, false));
    return deviceId;
 }
 
@@ -212,97 +221,72 @@ void InputManager::RegisterElementName(uint16_t deviceId, bool isAxis, uint16_t 
    m_inputDevices[deviceId].m_buttonOrAxisNames[buttonOrAxisId] = { isAxis, name };
 }
 
-void InputManager::RegisterDefaultMapping(uint16_t deviceId,
-   const std::function<bool( // Function to either apply or evaluate applying the default mapping of the given controller
-      std::function<bool(const vector<ButtonMapping>&, unsigned int)>, // Map Button
-      std::function<bool(const SensorMapping&, SensorMapping::Type, bool)>, // Map plunger
-      std::function<bool(const SensorMapping&, const SensorMapping&)> // Map nudge
-      )>& mapper)
+void InputManager::ClearDeviceMappings(uint16_t deviceId)
+{
+   for (const auto& action : m_inputActions)
+   {
+      action->UnmapDevice(deviceId);
+      action->SaveMapping(m_appSettings);
+   }
+   m_plungerHandler->UnmapDevice(deviceId);
+   m_nudgeHandler->UnmapDevice(deviceId);
+}
+
+void InputManager::SetDeviceDefaultMapping(uint16_t deviceId, const std::function<void(MappingSetupHandler&)>& mapper)
 {
    assert(deviceId < m_inputDevices.size());
-   // Register device for auto layout, performed after all buttons/axis have been registered and when user interaction is possible, which may happen after device is registered
    m_inputDevices[deviceId].m_defaultMapping = mapper;
-   auto isButtonMapped = [this](const vector<ButtonMapping>& mapping, unsigned int actionId)
+
+   // Evaluate if we have a default layout pending that should be proposed to the user
+   class ValidateMapping : public MappingSetupHandler
    {
-      return m_inputActions[actionId]->HasMapping(mapping);
-   };
-   auto isPlungerMapped = [this](const SensorMapping& sensorPos, SensorMapping::Type type, bool isLinear)
-   {
-      const std::unique_ptr<PhysicsSensor>& plungerPos = type == SensorMapping::Type::Position ? GetPlungerPositionSensor() : GetPlungerVelocitySensor();
-      return plungerPos->IsMapped() && plungerPos->GetMapping().IsSame(sensorPos);
-   };
-   auto isNudgeMapped = [this](const SensorMapping& sensorX, const SensorMapping& sensorY)
-   {
-      for (int i = 0; i < 2; i++)
+   public:
+      ValidateMapping(InputManager& manager)
+         : m_manager(manager)
       {
-         const std::unique_ptr<PhysicsSensor>& nudgeX = GetNudgeXSensor(i);
-         const std::unique_ptr<PhysicsSensor>& nudgeY = GetNudgeYSensor(i);
-         if (nudgeX->IsMapped() && nudgeX->GetMapping().IsSame(sensorX) && nudgeY->IsMapped() && nudgeY->GetMapping().IsSame(sensorY))
-            return true;
       }
-      return false;
+      void MapAction(const vector<ButtonMapping>& input, unsigned int action) override { m_isAlreadyMapped &= m_manager.m_inputActions[action]->HasMapping(input); }
+      void MapPlunger(std::unique_ptr<PlungerSensor> sensor) override { m_isAlreadyMapped &= m_manager.m_plungerHandler->HasSensor(sensor); }
+      void MapNudge(std::unique_ptr<VPX::Physics::NudgeSensor> sensor) override { m_isAlreadyMapped &= m_manager.m_nudgeHandler->HasSensor(sensor); }
+      InputManager& m_manager;
+      bool m_isAlreadyMapped = true;
    };
-   m_inputDevices[deviceId].m_hasPendingLayoutApply |= !mapper(isButtonMapped, isPlungerMapped, isNudgeMapped);
-   m_hasPendingLayoutApply |= m_inputDevices[deviceId].m_hasPendingLayoutApply;
+   ValidateMapping validate(*this);
+   mapper(validate);
+   if (!validate.m_isAlreadyMapped)
+   {
+      m_inputDevices[deviceId].m_hasPendingLayoutApply = true;
+      m_hasPendingLayoutApply = true;
+   }
 }
 
 void InputManager::ApplyDefaultDeviceMapping(uint16_t deviceId)
 {
    assert(deviceId < m_inputDevices.size());
-   auto mapButton = [this](const vector<ButtonMapping>& mapping, unsigned int actionId)
+   class ApplyMapping : public MappingSetupHandler
    {
-      m_inputActions[actionId]->AddMapping(mapping);
-      return true;
-   };
-   auto mapPlunger = [this](const SensorMapping& sensorPos, SensorMapping::Type type, bool isLinear)
-   {
-      const std::unique_ptr<PhysicsSensor>& plungerPos = type == SensorMapping::Type::Position ? GetPlungerPositionSensor() : GetPlungerVelocitySensor();
-      plungerPos->SetMapping(sensorPos);
-      return true;
-   };
-   auto mapNudge = [this](const SensorMapping& sensorX, const SensorMapping& sensorY)
-   {
-      int map = -1;
-      for (int i = 0; i < 2; i++)
+   public:
+      ApplyMapping(InputManager& manager)
+         : m_manager(manager)
       {
-         const std::unique_ptr<PhysicsSensor>& nudgeX = GetNudgeXSensor(i);
-         const std::unique_ptr<PhysicsSensor>& nudgeY = GetNudgeYSensor(i);
-         if (nudgeX->IsMapped() && nudgeY->IsMapped())
-         {
-            if (nudgeX->GetMapping().IsSame(sensorX) && nudgeY->GetMapping().IsSame(sensorY))
-               return true;
-         }
-         else if (map == -1)
-            map = i;
       }
-      if (map == -1)
-         return false; // No free nudge sensor available
-      const std::unique_ptr<PhysicsSensor>& nudgeX = GetNudgeXSensor(map);
-      const std::unique_ptr<PhysicsSensor>& nudgeY = GetNudgeYSensor(map);
-      nudgeX->SetMapping(sensorX);
-      nudgeY->SetMapping(sensorY);
-      return true;
+      void MapAction(const vector<ButtonMapping>& input, unsigned int action) override
+      {
+         m_manager.m_inputActions[action]->AddMapping(input);
+         m_manager.m_inputActions[action]->SaveMapping(m_manager.m_appSettings);
+      }
+      void MapPlunger(std::unique_ptr<PlungerSensor> sensor) override { m_manager.m_plungerHandler->AddSensor(sensor); }
+      void MapNudge(std::unique_ptr<VPX::Physics::NudgeSensor> sensor) override { m_manager.m_nudgeHandler->AddSensor(sensor); }
+      InputManager& m_manager;
    };
-   m_inputDevices[deviceId].m_defaultMapping(mapButton, mapPlunger, mapNudge);
-
-   // Save mapping after applying them
-   Settings& settings = g_pvp->m_settings;
-   for (const auto& action : m_inputActions)
-      action->SaveMapping(settings);
-
-   m_plungerPositionSensor->SaveMapping(settings);
-   m_plungerVelocitySensor->SaveMapping(settings);
-   for (int i = 0; i < 2; i++)
-   {
-      m_nudgeXSensor[i]->SaveMapping(settings);
-      m_nudgeYSensor[i]->SaveMapping(settings);
-      settings.SetPlayer_NudgeOrientation(i, RADTOANG(m_nudgeOrientation[i]), false);
-   }
+   ApplyMapping apply(*this);
+   ClearDeviceMappings(deviceId);
+   m_inputDevices[deviceId].m_defaultMapping(apply);
 }
 
 void InputManager::LoadDevicesFromSettings()
 {
-   const Settings& settings = g_pvp->m_settings;
+   const Settings& settings = m_appSettings;
    std::istringstream deviceStream(settings.GetInput_Devices());
    std::string deviceSettingId;
    while (std::getline(deviceStream, deviceSettingId, ';'))
@@ -319,7 +303,7 @@ void InputManager::LoadDevicesFromSettings()
       const auto typePropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::EnumPropertyDef>(
          "Input"s, "Device." + deviceSettingId + ".Type", "Device Type"s, ""s, true, 0, 0, vector { "Unknown"s, "Keyboard"s, "Joystick"s, "Mouse"s, "VRController"s, "OpenPinDev"s }));
       Settings::GetRegistry().Register(
-         std::make_unique<VPX::Properties::BoolPropertyDef>("Input"s, "Device." + deviceSettingId + ".NoAutoLayout", "Disable Automatic Layout"s, ""s, false, false));
+         std::make_unique<VPX::Properties::BoolPropertyDef>("Input"s, "Device." + deviceSettingId + ".NoAutoLayout", "Disable Automatic Layout"s, ""s, true, false));
       device.m_name = settings.GetString(namePropId);
       device.m_type = static_cast<InputManager::DeviceType>(settings.GetInt(typePropId));
 
@@ -346,18 +330,18 @@ void InputManager::LoadDevicesFromSettings()
 
 void InputManager::SaveDevicesToSettings() const
 {
-   Settings& settings = g_pvp->m_settings;
+   Settings& settings = m_appSettings;
    std::stringstream deviceList;
-   for (size_t i = 0; i < m_inputDevices.size(); ++i)
-   {
-      if (i > 0)
-         deviceList << ';';
-      deviceList << m_inputDevices[i].m_settingsId;
-   }
-   settings.SetInput_Devices(deviceList.str(), false);
-
+   bool first = true;
    for (const auto& device : m_inputDevices)
    {
+      if (!IsDeviceMapped(device.m_id))
+         continue;
+      if (!first)
+         deviceList << ';';
+      first = false;
+      deviceList << device.m_settingsId;
+
       const auto namePropId
          = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::StringPropertyDef>("Input"s, "Device." + device.m_settingsId + ".Name", "Device Name"s, ""s, true, ""s));
       const auto typePropId = Settings::GetRegistry().Register(std::make_unique<VPX::Properties::EnumPropertyDef>(
@@ -366,7 +350,7 @@ void InputManager::SaveDevicesToSettings() const
       settings.Set(namePropId, device.m_name, false);
       settings.Set(typePropId, static_cast<int>(device.m_type), false);
       int index = 0;
-      for (auto& [button, def] : device.m_buttonOrAxisNames)
+      for (const auto& [button, def] : device.m_buttonOrAxisNames)
       {
          const auto elementPropId = Settings::GetRegistry().Register(
             std::make_unique<VPX::Properties::StringPropertyDef>("Input"s, "Device." + device.m_settingsId + ".Element" + std::to_string(index), ""s, ""s, false, ""s));
@@ -374,6 +358,7 @@ void InputManager::SaveDevicesToSettings() const
          index++;
       }
    }
+   settings.SetInput_Devices(deviceList.str(), false);
 }
 
 uint16_t InputManager::GetDeviceId(const string& settingsId)
@@ -397,6 +382,20 @@ const string& InputManager::GetDeviceName(uint16_t deviceId) const
    return m_inputDevices[deviceId].m_name;
 }
 
+bool InputManager::IsDeviceConnected(uint16_t deviceId) const
+{
+   assert(deviceId < m_inputDevices.size());
+   return m_inputDevices[deviceId].m_connected;
+}
+
+bool InputManager::IsDeviceMapped(uint16_t deviceId) const {
+   assert(deviceId < m_inputDevices.size());
+   for (const auto& action : m_inputActions)
+      if (action->IsMappedToDevice(deviceId))
+         return true;
+   return m_plungerHandler->IsMappedToDevice(deviceId) || m_nudgeHandler->IsMappedToDevice(deviceId);
+}
+
 string InputManager::GetDeviceElementName(uint16_t deviceId, uint16_t buttonOrAxisId) const
 {
    assert(deviceId < m_inputDevices.size());
@@ -412,14 +411,21 @@ InputManager::DeviceType InputManager::GetDeviceType(uint16_t deviceId) const
    return m_inputDevices[deviceId].m_type;
 }
 
+vector<uint16_t> InputManager::GetAllDevices() const
+{
+   vector<uint16_t> devices;
+   for (const auto& device : m_inputDevices)
+      devices.push_back(device.m_id);
+   return devices;
+}
+
 vector<uint32_t> InputManager::GetAllAxis() const
 {
    vector<uint32_t> axis;
    for (const auto& device : m_inputDevices)
-      if (device.m_connected)
-         for (const auto& [axisOrButtonId, elementDef] : device.m_buttonOrAxisNames)
-            if (elementDef.isAxis)
-               axis.push_back(device.m_id << 16 | axisOrButtonId);
+      for (const auto& [axisOrButtonId, elementDef] : device.m_buttonOrAxisNames)
+         if (elementDef.isAxis)
+            axis.push_back(device.m_id << 16 | axisOrButtonId);
    return axis;
 }
 
@@ -432,17 +438,19 @@ vector<uint32_t> InputManager::GetAllAxis() const
 
 void InputManager::ProcessInput()
 {
-   if (!g_pplayer || !g_pplayer->m_ptable)
+   if (!m_player || !m_player->m_ptable)
       return; // only if player is running
-   g_pplayer->m_logicProfiler.OnProcessInput();
+   m_player->m_logicProfiler.OnProcessInput();
 
    // Gather input from all handlers
    for (const auto& handler : m_inputHandlers)
       handler->Update();
 
+   UpdateRumble();
+
    // Handle automatic start
-   if (g_pplayer->m_ptable->m_tblAutoStartEnabled)
-      Autostart(g_pplayer->m_ptable->m_tblAutoStart, g_pplayer->m_ptable->m_tblAutoStartRetry);
+   if (m_player->m_ptable->m_tblAutoStartEnabled)
+      Autostart(m_player->m_ptable->m_tblAutoStart, m_player->m_ptable->m_tblAutoStartRetry);
    if (m_autoStartTimestamp == 0) // Check if we've been initialized.
       m_autoStartTimestamp = msec();
 
@@ -492,33 +500,56 @@ void InputManager::ProcessInput()
    }
 
    // Perform pending device auto detection (deferred until in game UI is available)
-   if (m_hasPendingLayoutApply && g_pplayer->m_liveUI)
+   if (m_hasPendingLayoutApply)
    {
       m_hasPendingLayoutApply = false;
       for (auto& device : m_inputDevices)
       {
+         if (!device.m_hasPendingLayoutApply)
+            continue;
+         const auto noAutoLayoutId = Settings::GetRegistry().GetPropertyId("Input"s, "Device." + device.m_settingsId + ".NoAutoLayout").value();
+         if (m_appSettings.GetBool(noAutoLayoutId))
+            device.m_hasPendingLayoutApply = false;
+         else if (device.m_type == DeviceType::VRController)
+         {
+            // The propose-layout dialog isn't reachable in the headset before the VR controller is registered, so auto-apply
+            ApplyDefaultDeviceMapping(device.m_id);
+            device.m_hasPendingLayoutApply = false;
+         }
+         else
+            m_hasPendingLayoutApply = true;
+      }
+   }
+   // RETROEKI: Disabled controller detector dialog - we hardcode our own controls
+   static constexpr bool proposeInputLayout = false;
+   if (proposeInputLayout && m_hasPendingLayoutApply && m_player->m_liveUI && !m_player->m_liveUI->IsOpened())
+   {
+      for (auto& device : m_inputDevices)
+      {
          if (device.m_hasPendingLayoutApply)
          {
-            const auto noAutoLayoutId = Settings::GetRegistry().GetPropertyId("Input"s, "Device." + device.m_settingsId + ".NoAutoLayout").value();
-            if (g_pvp->m_settings.GetBool(noAutoLayoutId))
-            {
-               device.m_hasPendingLayoutApply = false;
-               continue;
-            }
             const uint16_t deviceId = device.m_id;
-            if (g_pplayer->m_liveUI->ProposeInputLayout(device.m_name,
+            const auto noAutoLayoutId = Settings::GetRegistry().GetPropertyId("Input"s, "Device." + device.m_settingsId + ".NoAutoLayout").value();
+            if (m_player->m_liveUI->m_inGameUI.ProposeInputLayout(device.m_name,
                    [this, deviceId, noAutoLayoutId](bool isOk, bool isDontAskAnymore)
                    {
                       if (isOk)
                          ApplyDefaultDeviceMapping(deviceId);
                       if (isDontAskAnymore)
-                         g_pvp->m_settings.Set(noAutoLayoutId, true, false);
+                         m_appSettings.Set(noAutoLayoutId, true, false);
+                      m_hasPendingLayoutApply = false;
+                      for (auto& device : m_inputDevices)
+                      {
+                         if (device.m_id != deviceId)
+                            m_hasPendingLayoutApply |= device.m_hasPendingLayoutApply;
+                         else
+                            device.m_hasPendingLayoutApply = false;
+                      }
                    }))
             {
-               device.m_hasPendingLayoutApply = false;
-               m_hasPendingLayoutApply = true; // As only one UI interaction may be done at a given time
-               break;
+               m_hasPendingLayoutApply = false;
             }
+            break;
          }
       }
    }
@@ -528,9 +559,11 @@ void InputManager::HandleSDLEvent(const SDL_Event& e) { m_sdlHandler->HandleSDLE
 
 void InputManager::PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_t timestampNs, bool isPressed)
 {
-   // Diagnostic: trace keyboard events only to avoid flooding the log with axis/joystick noise.
-   // Noisy enough to be behind a flag if it ever hits main; for now we keep it always-on so
-   // the Android service-menu overlay can be diagnosed without a custom build.
+   // Discard input events until the player has been running for a few frames to avoid triggering actions during table startup
+   // (during initial table load, the loading UI is displayed and interactive, so events must flow)
+   if (m_player->m_overall_frames < 5 && !m_player->m_isLoading)
+      return;
+
    // Discard keyboard events when the UI is capturing the keyboard (e.g. for control input)
    if (deviceId == m_keyboardDeviceId && ImGui::GetIO().WantCaptureKeyboard)
       return;
@@ -541,14 +574,14 @@ void InputManager::PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_
          mapping->SetPressed(isPressed);
 
    // Special handling for keyboard events to trigger custom KeyDown/KeyUp events in the script based on Windows DirectInput key codes
-   if (deviceId == m_keyboardDeviceId && !g_pplayer->m_liveUI->IsInGameUIOpened())
+   if (deviceId == m_keyboardDeviceId && !m_player->m_liveUI->IsInGameUIOpened())
    {
       const unsigned char dik = GetDirectInputKeyFromSDLScancode(static_cast<SDL_Scancode>(buttonId));
       if (dik != 0)
       {
          CComVariant rgvar[1] = { CComVariant(dik) };
          DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-         g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+         m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
       }
    }
 
@@ -571,6 +604,11 @@ void InputManager::PushButtonEvent(uint16_t deviceId, uint16_t buttonId, uint64_
 void InputManager::PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t timestampNs, float position)
 {
    assert(-1.f <= position && position <= 1.f);
+
+   // Discard input events until the player has been running for a few frames to avoid triggering actions during table startup
+   // (during initial table load, the loading UI is displayed and interactive, so events must flow)
+   if (m_player->m_overall_frames < 5 && !m_player->m_isLoading)
+      return;
 
    uint32_t id = deviceId << 16 | axisId;
    if (auto it = m_sensorMappings.find(id); it != m_sensorMappings.end())
@@ -629,37 +667,50 @@ void InputManager::PushAxisEvent(uint16_t deviceId, uint16_t axisId, uint64_t ti
 
 void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float relativeY, uint64_t timestampNs, bool isPressed)
 {
+   // Discard input events until the player has been running for a few frames to avoid triggering actions during table startup
+   // (during initial table load, the loading UI is displayed and interactive, so events must flow)
+   if (m_player->m_overall_frames < 5 && !m_player->m_isLoading)
+      return;
+
+   if (m_player->IsVR())
+      return;
+
    POINT point;
-   point.x = (int)((float)g_pplayer->m_playfieldWnd->GetWidth() * relativeX);
-   point.y = (int)((float)g_pplayer->m_playfieldWnd->GetHeight() * relativeY);
+   point.x = (int)((float)m_player->m_playfieldWnd->GetWidth() * relativeX);
+   point.y = (int)((float)m_player->m_playfieldWnd->GetHeight() * relativeY);
    PLOGD << "PushTouchEvent: finger=" << fingerId << " rel=" << relativeX << "," << relativeY << " px=" << point.x << "," << point.y << " pressed=" << isPressed << " regions=" << m_touchRegionMap.size();
 
-   // EM/original start-key compat (mirrors the Credit1 path in CreateInputActions, same
-   // Standalone/EmCreditDualSend gate). EM tables that hard-code the legacy "1" start key
-   // (DirectInput DIK_1) ignore the Start zone's 0x10000|actionId value, so touch-start
-   // never registers (e.g. Band Wagon, Star Knights). When flagged non-PinMAME, deliver
-   // the DInput "1" scancode on the touch-start edges. TOUCH-ONLY: controller/keyboard "1"
-   // already reaches the script via the raw-keyboard DIK path (PushButtonEvent), so doing
-   // this in the Start action handler instead would double-fire and consume two credits.
-   auto fireEmStartDIK = [](bool isPressed) {
-      if (!g_pvp->m_settings.GetStandalone_EmCreditDualSend() || g_pplayer->m_liveUI->IsInGameUIOpened())
+   // EM/original start & credit key compat (Standalone/EmCreditDualSend gate). EM tables that hard-code
+   // the legacy "1" start key / "5" coin key (DirectInput DIK_1 / DIK_5) ignore the Start/Credit zones'
+   // 0x10000|actionId value, so touch-start/credit never registers (e.g. Band Wagon, Star Knights). When
+   // flagged non-PinMAME, deliver the DInput scancode on the touch edges. TOUCH-ONLY: controller/keyboard
+   // "1"/"5" already reach the script via the raw-keyboard DIK path (PushButtonEvent), so doing this in
+   // the Start/Credit action handlers instead would double-fire and consume two credits.
+   auto fireEmLegacyDIK = [this](unsigned int actionId, bool isPressed) {
+      SDL_Scancode scancode;
+      if (actionId == GetStartActionId())
+         scancode = SDL_SCANCODE_1;
+      else if (actionId == GetAddCreditActionId(0))
+         scancode = SDL_SCANCODE_5;
+      else
          return;
-      const unsigned char dik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_1);
+      if (!m_appSettings.GetStandalone_EmCreditDualSend() || m_player->m_liveUI->IsInGameUIOpened())
+         return;
+      const unsigned char dik = GetDirectInputKeyFromSDLScancode(scancode);
       CComVariant rgvar[1] = { CComVariant(dik) };
       DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-      g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+      m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
    };
 
    // Decrement a region's hold count and release the zone once no finger is holding it.
-   auto releaseRegion = [this, &fireEmStartDIK](size_t i) {
+   auto releaseRegion = [this, &fireEmLegacyDIK](size_t i) {
       if (i >= m_touchRegionMap.size() || m_touchRegionHold[i] <= 0)
          return;
       if (--m_touchRegionHold[i] == 0)
       {
          const auto& region = m_touchRegionMap[i];
          m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, false);
-         if (region.actionId == GetStartActionId())
-            fireEmStartDIK(false);
+         fireEmLegacyDIK(region.actionId, false);
       }
    };
 
@@ -677,15 +728,14 @@ void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float 
       for (size_t i = 0; i < m_touchRegionMap.size(); ++i)
       {
          const auto& region = m_touchRegionMap[i];
-         if (!Intersect(region.region, g_pplayer->m_playfieldWnd->GetWidth(), g_pplayer->m_playfieldWnd->GetHeight(), point,
-                fmodf(g_pplayer->m_ptable->GetViewSetup().mViewportRotation, 360.0f) != 0.f))
+         if (!Intersect(region.region, m_player->m_playfieldWnd->GetWidth(), m_player->m_playfieldWnd->GetHeight(), point,
+                fmodf(m_player->m_ptable->GetViewSetup().mViewportRotation, 360.0f) != 0.f))
             continue;
          held.push_back(i);
          if (++m_touchRegionHold[i] == 1)
          {
             m_inputActions[region.actionId]->SetDirectState(region.directStateSlot, true);
-            if (region.actionId == GetStartActionId())
-               fireEmStartDIK(true);
+            fireEmLegacyDIK(region.actionId, true);
          }
       }
    }
@@ -709,18 +759,40 @@ void InputManager::PushTouchEvent(SDL_FingerID fingerId, float relativeX, float 
 void InputManager::CreateInputActions()
 {
 
-   auto keyMapping = [](const SDL_Scancode sdlScancode) { return "Key;" + std::to_string(static_cast<int>(sdlScancode)); };
+   auto keyMapping = [](const SDL_Scancode sdlScancode) { return sdlScancode == SDL_SCANCODE_UNKNOWN ? ""s : ("Key;"s + std::to_string(static_cast<int>(sdlScancode))); };
 
    auto addKeyAction = [this, keyMapping](const string& settingId, const string& label, const SDL_Scancode sdlScancode)
    {
       auto newAction = AddAction(std::make_unique<InputAction>(this, settingId, label, sdlScancode == SDL_SCANCODE_UNKNOWN ? ""s : keyMapping(sdlScancode),
-         [](const InputAction& action, bool, bool isPressed)
+         [this](const InputAction& action, bool, bool isPressed)
          {
-            if (g_pplayer->m_liveUI->IsInGameUIOpened())
-               return;
-            CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
-            DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+            if (m_player->m_liveUI->IsInGameUIOpened())
+            {
+               if (isPressed)
+               {
+                  if (action.GetActionId() == m_uiUpActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUIUpAction();
+                  else if (action.GetActionId() == m_uiDownActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUIDownAction();
+                  else if (action.GetActionId() == m_uiLeftActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUILeftAction();
+                  else if (action.GetActionId() == m_uiRightActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUIRightAction();
+                  // Somewhat hacky direct UI action mapping (inherited from legacy POV adjustment mode, could benefit from some additional cleanups)
+                  else if (action.GetActionId() == m_launchBallActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUIResetToDefaults();
+                  else if (action.GetActionId() == m_addCreditActionId[0])
+                     m_player->m_liveUI->m_inGameUI.OnUICancelChanges();
+                  else if (action.GetActionId() == m_startActionId)
+                     m_player->m_liveUI->m_inGameUI.OnUISaveChanges();
+               }
+            }
+            else
+            {
+               CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
+               DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+               m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+            }
          }));
       return newAction->GetActionId();
    };
@@ -728,20 +800,48 @@ void InputManager::CreateInputActions()
    auto addFlipperKeyAction = [this, keyMapping](const string& settingId, const string& label, const SDL_Scancode sdlScancode)
    {
       auto newAction = AddAction(std::make_unique<InputAction>(this, settingId, label, keyMapping(sdlScancode),
-         [this](const InputAction& action, bool, bool isPressed)
+         [this](const InputAction& action, bool prev, bool isPressed)
          {
-            if (g_pplayer->m_liveUI->IsInGameUIOpened())
+            if (m_player->m_liveUI->IsInGameUIOpened())
                return;
-            if (isPressed)
-            {
-               g_pplayer->m_pininput.PlayRumble(0.f, 0.2f, 150);
-               // Debug only, for testing parts of the flipper input lag (note that it excludes device lag, device to computer lag, OS lag, and VPX polling lag)
-               m_leftkey_down_usec = usec();
-               m_leftkey_down_frame = g_pplayer->m_overall_frames;
-            }
+            if (isPressed && m_player->IsPlaying())
+               SDL_HideCursor();
+         
+            if (action.GetActionId() == m_leftFlipperActionId)
+               m_leftFlipperLastChangePollDelay = m_player->m_logicProfiler.GetPrev(FrameProfiler::ProfileSection::PROFILE_INPUT_POLL_PERIOD);
+
             CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
             DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+            m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+         }));
+      return newAction->GetActionId();
+   };
+
+   auto addNudgeKeyAction = [this, keyMapping](const string& settingId, const string& label, const SDL_Scancode sdlScancode)
+   {
+      auto newAction = AddAction(std::make_unique<InputAction>(this, settingId, label, keyMapping(sdlScancode),
+         [this](const InputAction& action, bool prev, bool isPressed)
+         {
+            if (m_player->m_liveUI->IsInGameUIOpened())
+               return;
+            const int prevIndex = m_nudgeHandler->GetKeyboardNudgeIndex();
+            CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
+            DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+            m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+            // Nudge used to be performed through script (digital only), then sensor support was added and later integrated into the core physics engine.
+            // To support legacy tables we check if a script nudge was performed and if so, discard default nudge handling
+            if (isPressed && (prevIndex == m_nudgeHandler->GetKeyboardNudgeIndex()))
+            {
+               constexpr float baseForce = 2.f;
+               const float angle = (rand_mt_01() - 0.5f) * 15.f * baseForce;
+               const float force = (0.6f + rand_mt_01() * 0.8f) * baseForce;
+               if (action.GetActionId() == m_leftNudgeActionId)
+                  m_nudgeHandler->ApplyKeyboardImpulse(75.f + angle, force);
+               else if (action.GetActionId() == m_rightNudgeActionId)
+                  m_nudgeHandler->ApplyKeyboardImpulse(285.f + angle, force);
+               else if (action.GetActionId() == m_centerNudgeActionId)
+                  m_nudgeHandler->ApplyKeyboardImpulse(angle, force);
+            }
          }));
       return newAction->GetActionId();
    };
@@ -752,40 +852,18 @@ void InputManager::CreateInputActions()
    m_stagedRightFlipperActionId = addFlipperKeyAction("RightStagedFlipper"s, "Right Staged Flipper"s, SDL_SCANCODE_RSHIFT); // SDL_SCANCODE_RALT
    m_leftMagnaActionId = addKeyAction("LeftMagna"s, "Left Magna"s, SDL_SCANCODE_LCTRL);
    m_rightMagnaActionId = addKeyAction("RightMagna"s, "Right Magna"s, SDL_SCANCODE_RCTRL);
+   m_uiUpActionId = addKeyAction("UIUp"s, "UI: Next Item"s, SDL_SCANCODE_LCTRL);
+   m_uiDownActionId = addKeyAction("UIDown"s, "UI: Previous Item"s, SDL_SCANCODE_RCTRL);
+   m_uiLeftActionId = addKeyAction("UILeft"s, "UI: Decrease/Cancel"s, SDL_SCANCODE_LSHIFT);
+   m_uiRightActionId = addKeyAction("UIRight"s, "UI: Increase/Confirm"s, SDL_SCANCODE_RSHIFT);
    m_launchBallActionId = addKeyAction("LaunchBall"s, "Launch Ball"s, SDL_SCANCODE_RETURN);
-   m_leftNudgeActionId = addKeyAction("LeftNudge"s, "Left Nudge"s, SDL_SCANCODE_Z);
-   m_rightNudgeActionId = addKeyAction("RightNudge"s, "Right Nudge"s, SDL_SCANCODE_SLASH);
-   m_centerNudgeActionId = addKeyAction("CenterNudge"s, "Center Nudge"s, SDL_SCANCODE_SPACE);
+   m_leftNudgeActionId = addNudgeKeyAction("LeftNudge"s, "Left Nudge"s, SDL_SCANCODE_Z);
+   m_rightNudgeActionId = addNudgeKeyAction("RightNudge"s, "Right Nudge"s, SDL_SCANCODE_SLASH);
+   m_centerNudgeActionId = addNudgeKeyAction("CenterNudge"s, "Center Nudge"s, SDL_SCANCODE_SPACE);
    m_tiltActionId = addKeyAction("Tilt"s, "Tilt"s, SDL_SCANCODE_T);
-   // Credit1 ("3"): standard add-credit action, with an EM/original-table compat path.
-   // Touch's credit zone and the host's "3"-based Add Credit button both fire THIS action,
-   // delivering the modern 0x10000|actionId named-key value (and, for the keyboard route,
-   // DIK_3). EM tables that hard-code the legacy "5" coin key (DirectInput DIK_5) for credit
-   // ignore both, so credit never registers and the game can't start (e.g. Band Wagon,
-   // Star Knights). When the host flags the table as non-PinMAME via Standalone/EmCreditDualSend,
-   // additionally deliver the DInput "5" scancode so the legacy KeyDown handler fires. Gated so
-   // PinMAME tables (which treat "5" as coin slot 3) never get a second coin. Physical "5"
-   // presses are unaffected — they reach the script via the raw-keyboard DIK path, not this action.
-   m_addCreditActionId[0] = AddAction(std::make_unique<InputAction>(this, "Credit1"s, "Credit (1)"s, keyMapping(SDL_SCANCODE_3),
-      [](const InputAction& action, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened())
-            return;
-         CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
-         DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-         g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
-         if (g_pvp->m_settings.GetStandalone_EmCreditDualSend())
-         {
-            // Mirror the raw-keyboard DIK delivery exactly (see PushButtonEvent): same
-            // unsigned-char DInput scancode the script sees from a physical "5" press.
-            const unsigned char emdik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_5);
-            CComVariant emvar[1] = { CComVariant(emdik) };
-            DISPPARAMS emparams = { emvar, nullptr, 1, 0 };
-            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &emparams);
-         }
-      }))->GetActionId();
+   m_addCreditActionId[0] = addKeyAction("Credit1"s, "Credit (1)"s, SDL_SCANCODE_5);
    m_addCreditActionId[1] = addKeyAction("Credit2"s, "Credit (2)"s, SDL_SCANCODE_4);
-   m_addCreditActionId[2] = addKeyAction("Credit3"s, "Credit (3)"s, SDL_SCANCODE_5);
+   m_addCreditActionId[2] = addKeyAction("Credit3"s, "Credit (3)"s, SDL_SCANCODE_3);
    m_addCreditActionId[3] = addKeyAction("Credit4"s, "Credit (4)"s, SDL_SCANCODE_6);
    m_startActionId = addKeyAction("Start"s, "Start"s, SDL_SCANCODE_1);
    m_extraBallActionId = addKeyAction("ExtraBall"s, "Extra Ball"s, SDL_SCANCODE_B);
@@ -797,110 +875,88 @@ void InputManager::CreateInputActions()
    // path (PushButtonEvent), so binding "2" here too would double-fire. The action is driven only by
    // its top-middle touch region's direct state (see the touch zone registration above).
    m_extraBallBuyInActionId = AddAction(std::make_unique<InputAction>(this, "BuyIn"s, "Buy-In"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened())
+         if (m_player->m_liveUI->IsInGameUIOpened())
             return;
          const unsigned char dik = GetDirectInputKeyFromSDLScancode(SDL_SCANCODE_2);
          CComVariant rgvar[1] = { CComVariant(dik) };
          DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-         g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+         m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
       }))->GetActionId();
    m_lockbarActionId = addKeyAction("Lockbar"s, "Lockbar"s, SDL_SCANCODE_LALT);
 
    auto pause = AddAction(std::make_unique<InputAction>(this, "Pause"s, "Pause Game"s, keyMapping(SDL_SCANCODE_P),
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
-         if (!isPressed)
-            return;
-         g_pplayer->SetPlayState(!g_pplayer->IsPlaying());
+         if (isPressed)
+            m_player->SetPlayState(!m_player->IsPlaying());
       }));
 
    auto perfOverlay = AddAction(std::make_unique<InputAction>(this, "PerfOverlay"s, "Toggle Perf. Overlay"s, keyMapping(SDL_SCANCODE_F11),
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
-         if (!isPressed)
-            return;
-         g_pplayer->m_liveUI->ToggleFPS();
+         if (isPressed)
+            m_player->m_liveUI->ToggleFPS();
       }));
-
-   auto exitAction = AddAction(std::make_unique<InputAction>(this, "ExitInteractive"s, "Interactive Exit"s, keyMapping(SDL_SCANCODE_ESCAPE),
-      [this](const InputAction&, bool wasPressed, bool isPressed)
-      {
-         if (!isPressed)
-         {
-            m_exitPressTimestamp = 0; // Discard long press exit
-            return;
-         }
-         else if (wasPressed // Is this a repeat event (long press)?
-            && m_exitPressTimestamp // Exit has not been discarded
-            && (g_pplayer->m_time_msec > 1000) // Game has been played at least 1 second
-            && ((msec() - m_exitPressTimestamp) > m_exitAppPressLengthMs)) // Exit button has been pressed continuously long enough
-         { // Close app if pressed long enough
-            g_pvp->QuitPlayer(Player::CloseState::CS_CLOSE_APP);
-         }
-         else if (g_pplayer->m_liveUI->IsOpened())
-         {
-            // Discard event as the UI is already opened and will process it
-         }
-         else if (!wasPressed)
-         { // Open interactive UI
-            m_exitPressTimestamp = msec();
-            g_pplayer->SetCloseState(Player::CS_USER_INPUT);
-         }
-      }));
-   exitAction->SetRepeatPeriod(0);
-   m_exitInteractiveActionId = exitAction->GetActionId();
-
+   
    m_exitGameActionId = AddAction(
-      std::make_unique<InputAction>(this, "ExitGame"s, "Exit Game"s, keyMapping(SDL_SCANCODE_Q),
-         [](const InputAction& action, bool, bool isPressed)
+      std::make_unique<InputAction>(this, "ExitGame"s, "Exit Game"s, keyMapping(SDL_SCANCODE_ESCAPE),
+         [this](const InputAction& action, bool, bool isPressed)
          {
-            // Discard event as the UI is already opened and will process it, except while on the Exit splash where this action is still sensible
-            if (g_pplayer->m_liveUI->IsOpened() && !g_pplayer->m_liveUI->m_inGameUI.IsOpened("exit"s))
-               return;
-            CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
-            DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
-            #ifdef __STANDALONE__
-               g_pplayer->SetCloseState(Player::CS_CLOSE_APP);
-            #else
-               g_pplayer->SetCloseState(Player::CS_STOP_PLAY);
-            #endif
+            if (isPressed && !m_player->m_liveUI->IsOpened())
+            {
+               CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
+               DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
+               m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+#ifdef __STANDALONE__
+               m_player->SetCloseState(g_isMobile ? Player::CS_CLOSE_CAPTURE_SCREENSHOT : Player::CS_CLOSE_APP);
+#else
+               m_player->SetCloseState(Player::CS_STOP_PLAY);
+#endif
+            }
+            else if (isPressed && m_player->m_liveUI->IsInGameUIOpened())
+            {
+               m_player->m_liveUI->m_inGameUI.OnUINavigateBack();
+            }
          }))->GetActionId();
 
 #ifdef __LIBVPINBALL__
    // On Android, this action is surfaced as the top-right touch zone labelled "Settings".
    // Display name is shown by the Show Controls overlay.
-   auto inGameUI = AddAction(std::make_unique<InputAction>(this, "InGameUI"s, "Settings"s, keyMapping(SDL_SCANCODE_F12),
+   m_openInGameUIActionId = AddAction(
+      std::make_unique<InputAction>(this, "InGameUI"s, "Settings"s, keyMapping(SDL_SCANCODE_F12),
+         [](const InputAction&, bool, bool isPressed)
+         {
+            // On Android, fire event to Java to open native settings menu
+            if (isPressed)
+               VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_MENU_PRESSED, nullptr);
+         }))->GetActionId();
 #else
-   auto inGameUI = AddAction(std::make_unique<InputAction>(this, "InGameUI"s, "Toggle InGame UI"s, keyMapping(SDL_SCANCODE_F12),
+   m_openInGameUIActionId = AddAction(
+      std::make_unique<InputAction>(this, "InGameUI"s, "Toggle InGame UI"s, keyMapping(SDL_SCANCODE_F12),
+         [this](const InputAction&, bool, bool isPressed)
+         {
+            if (isPressed && !m_player->m_liveUI->IsOpened())
+            {
+               m_player->m_liveUI->OpenInGameUI();
+            }
+            else if (isPressed && m_player->m_liveUI->IsInGameUIOpened())
+            {
+               m_player->m_liveUI->m_inGameUI.OnUINavigateBack();
+            }
+         }))->GetActionId();
 #endif
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (!isPressed)
-            return;
-#ifdef __LIBVPINBALL__
-         // On Android, fire event to Java to open native settings menu
-         VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_MENU_PRESSED, nullptr);
-#else
-         if (g_pplayer->m_liveUI->IsInGameUIOpened())
-            g_pplayer->m_liveUI->HideUI();
-         else
-            g_pplayer->m_liveUI->OpenInGameUI();
-#endif
-      }));
-   m_inGameUIActionId = inGameUI->GetActionId();
 
    auto volumeDown = AddAction(std::make_unique<InputAction>(this, "VolumeDown"s, "Volume Down"s, keyMapping(SDL_SCANCODE_MINUS),
       [this](const InputAction&, bool, bool isPressed)
       {
          if (!isPressed)
             return;
-         g_pplayer->m_MusicVolume = clamp(g_pplayer->m_MusicVolume - 1, 0, 100);
-         g_pplayer->m_SoundVolume = clamp(g_pplayer->m_SoundVolume - 1, 0, 100);
-         g_pplayer->UpdateVolume();
-         m_volumeNotificationId = g_pplayer->m_liveUI->PushNotification("Volume: " + std::to_string(g_pplayer->m_MusicVolume) + '%', 500, m_volumeNotificationId);
+         m_player->m_backglassVolume = clamp(m_player->m_backglassVolume - 0.01f, 0.f, 1.f);
+         m_player->m_playfieldVolume = clamp(m_player->m_playfieldVolume - 0.01f, 0.f, 1.f);
+         m_player->UpdateVolume();
+         m_volumeNotificationId = m_player->m_liveUI->PushNotification(std::format("Volume: {:3.0f}%", m_player->m_backglassVolume * 100.f), 500, m_volumeNotificationId);
       }));
    volumeDown->SetRepeatPeriod(75);
    m_volumeDownActionId = volumeDown->GetActionId();
@@ -910,157 +966,145 @@ void InputManager::CreateInputActions()
       {
          if (!isPressed)
             return;
-         g_pplayer->m_MusicVolume = clamp(g_pplayer->m_MusicVolume + 1, 0, 100);
-         g_pplayer->m_SoundVolume = clamp(g_pplayer->m_SoundVolume + 1, 0, 100);
-         g_pplayer->UpdateVolume();
-         m_volumeNotificationId = g_pplayer->m_liveUI->PushNotification("Volume: " + std::to_string(g_pplayer->m_MusicVolume) + '%', 500, m_volumeNotificationId);
+         m_player->m_backglassVolume = clamp(m_player->m_backglassVolume + 0.01f, 0.f, 1.f);
+         m_player->m_playfieldVolume = clamp(m_player->m_playfieldVolume + 0.01f, 0.f, 1.f);
+         m_player->UpdateVolume();
+         m_volumeNotificationId = m_player->m_liveUI->PushNotification(std::format("Volume: {:3.0f}%", m_player->m_backglassVolume * 100.f), 500, m_volumeNotificationId);
       }));
    volumeUp->SetRepeatPeriod(75);
    m_volumeUpActionId = volumeUp->GetActionId();
 
    auto showRules = AddAction(std::make_unique<InputAction>(this, "ShowRules"s, "Show Rules"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
          if (!isPressed)
             return;
-         if (g_pplayer->m_liveUI->m_inGameUI.IsOpened("table/rules"s))
-            g_pplayer->m_liveUI->HideUI();
+         if (m_player->m_liveUI->m_inGameUI.IsOpened("table/rules"s))
+            m_player->m_liveUI->HideUI();
          else
          {
-            g_pplayer->m_liveUI->HideUI();
-            g_pplayer->m_liveUI->OpenInGameUI("table/rules"s);
+            m_player->m_liveUI->HideUI();
+            m_player->m_liveUI->OpenInGameUI("table/rules"s);
          }
       }));
 
    m_slamTiltActionId = addKeyAction("SlamTilt"s, "Slam Tilt"s, SDL_SCANCODE_HOME);
    m_coinDoorActionId = addKeyAction("CoinDoor"s, "Coin Door"s, SDL_SCANCODE_END);
    m_resetActionId = addKeyAction("Reset"s, "Reset"s, SDL_SCANCODE_F3);
-   static constexpr SDL_Scancode serviceKeys[8] = { SDL_SCANCODE_7, SDL_SCANCODE_8, SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_6, SDL_SCANCODE_PAGEUP, SDL_SCANCODE_MINUS, SDL_SCANCODE_UNKNOWN };
+   static constexpr SDL_Scancode serviceKeys[8]
+      = { SDL_SCANCODE_7, SDL_SCANCODE_8, SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_PAGEUP, SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_UNKNOWN };
    for (int i = 0; i < 8; ++i)
       m_serviceActionId[i] = addKeyAction("Service" + std::to_string(i + 1), "Service Button #" + std::to_string(i + 1), serviceKeys[i]);
 
    auto vrCenter = AddAction(std::make_unique<InputAction>(this, "VRCenter"s, "Align VR view"s, keyMapping(SDL_SCANCODE_KP_5),
-      [](const InputAction&, bool, bool isPressed)
+      [this](InputAction& action, bool wasPressed, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
-            return;
-         if (g_pplayer->m_vrDevice)
-            g_pplayer->m_vrDevice->RecenterTable();
+         if (!isPressed || !m_player->IsVR())
+            action.SetRepeatPeriod(-1);
+         else
+         {
+            m_player->m_vrDevice->RecenterTable();
+            action.SetRepeatPeriod(wasPressed ? 5 : 250); // Single recenter then continuous if kept pressed
+         }
       }));
-
-   auto vrUp = AddAction(std::make_unique<InputAction>(this, "VRUp"s, "Move VR view up"s, keyMapping(SDL_SCANCODE_KP_8),
-      [](const InputAction&, bool, bool isPressed)
+   auto addVRPositionAction = [this, keyMapping](const string& settingId, const string& label, const SDL_Scancode sdlScancode, vec3 direction)
+   {
+      auto newAction = AddAction(std::make_unique<InputAction>(this, settingId, label, keyMapping(sdlScancode),
+         [this, direction](InputAction& action, bool wasPressed, bool isPressed)
+         {
+            if (!isPressed || !m_player->IsVR())
+               action.SetRepeatPeriod(-1);
+            else
+            {
+               const float scale = wasPressed ? 0.1f : 1.f;
+               m_player->m_vrDevice->OffsetTable(scale * direction.x, scale * direction.y, scale * direction.z);
+               action.SetRepeatPeriod(wasPressed ? 5 : 250); // Single step then continuous slow move if kept pressed
+            }
+         }));
+      return newAction->GetActionId();
+   };
+   auto vrUp = addVRPositionAction("VRUp"s, "Move VR view up"s, SDL_SCANCODE_KP_8, vec3(0.f, 0.f, 1.f));
+   auto vrDown = addVRPositionAction("VRDown"s, "Move VR view down"s, SDL_SCANCODE_KP_2, vec3(0.f, 0.f, -1.f));
+   auto vrFront = addVRPositionAction("VRFront"s, "Move VR view to the front"s, SDL_SCANCODE_UNKNOWN, vec3(0.f, 1.f, 0.f));
+   auto vrBack = addVRPositionAction("VRBack"s, "Move VR view to the back"s, SDL_SCANCODE_UNKNOWN, vec3(0.f, -1.f, 0.f));
+   auto vrLeft = addVRPositionAction("VRFront"s, "Move VR view to the left"s, SDL_SCANCODE_UNKNOWN, vec3(-1.f, 0.f, 0.f));
+   auto vrRight = addVRPositionAction("VRBack"s, "Move VR view to the right"s, SDL_SCANCODE_UNKNOWN, vec3(1.f, -0.f, 0.f));
+   m_vrViewCenterActionId = vrCenter->GetActionId();
+   m_vrViewUpActionId = vrUp;
+   m_vrViewDownActionId = vrDown;
+   #ifdef ENABLE_XR
+   auto vrControllerCalibration = AddAction(std::make_unique<InputAction>(this, "VRControllerCalibration"s, "Align VR view using controllers"s, ""s,
+      [this](InputAction& action, bool wasPressed, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
-            return;
-         if (g_pplayer->m_vrDevice)
-            g_pplayer->m_vrDevice->OffsetTable(0.f, 0.f, 1.f);
+         if (isPressed && m_player->IsVR())
+            m_player->m_vrDevice->EnableControllerViewCentering(!m_player->m_vrDevice->IsControllerViewCenteringEnabled());
       }));
-
-   auto vrDown = AddAction(std::make_unique<InputAction>(this, "VRDown"s, "Move VR view down"s, keyMapping(SDL_SCANCODE_KP_2),
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
-            return;
-         if (g_pplayer->m_vrDevice)
-            g_pplayer->m_vrDevice->OffsetTable(0.f, 0.f, -1.f);
-      }));
-
-   auto vrFront = AddAction(std::make_unique<InputAction>(this, "VRFront"s, "Move VR view to the front"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed || !g_pplayer->m_vrDevice)
-            return;
-         g_pplayer->m_vrDevice->OffsetTable(0.f, 1.f, 0.f);
-      }));
-
-   auto vrBack = AddAction(std::make_unique<InputAction>(this, "VRBack"s, "Move VR view to the back"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed || !g_pplayer->m_vrDevice)
-            return;
-         g_pplayer->m_vrDevice->OffsetTable(0.f, -1.f, 0.f);
-      }));
-
-   auto vrLeft = AddAction(std::make_unique<InputAction>(this, "VRLeft"s, "Move VR view to the left"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed || !g_pplayer->m_vrDevice)
-            return;
-         g_pplayer->m_vrDevice->OffsetTable(-1.f, 0.f, 0.f);
-      }));
-
-   auto vrRight = AddAction(std::make_unique<InputAction>(this, "VRRight"s, "Move VR view to the right"s, ""s,
-      [](const InputAction&, bool, bool isPressed)
-      {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed || !g_pplayer->m_vrDevice)
-            return;
-         g_pplayer->m_vrDevice->OffsetTable(1.f, 0.f, 0.f);
-      }));
+   m_vrControllerViewCenteringActionId = vrControllerCalibration->GetActionId();
+   #endif
 
    AddAction(std::make_unique<InputAction>(this, "GenTournament"s, "Create Tournament File"s, keyMapping(SDL_SCANCODE_LALT) + " & " + keyMapping(SDL_SCANCODE_1),
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
+         if (m_player->m_liveUI->IsInGameUIOpened() || !isPressed)
             return;
-         if (g_pvp->m_ptableActive->TournamentModePossible())
-            g_pvp->GenerateTournamentFile();
+         if (m_player->m_ptable->TournamentModePossible())
+            VPX::TournamentFile::GenerateTournamentFile();
       }));
 
    AddAction(std::make_unique<InputAction>(this, "DebugBalls"s, "Debug Balls"s, keyMapping(SDL_SCANCODE_O),
-      [](const InputAction&, bool, bool isPressed)
+      [this](const InputAction&, bool, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
+         if (m_player->m_liveUI->IsInGameUIOpened() || !isPressed)
             return;
-         g_pplayer->m_debugBalls = !g_pplayer->m_debugBalls;
+         m_player->m_debugBalls = !m_player->m_debugBalls;
       }));
 
    AddAction(std::make_unique<InputAction>(this, "Debugger"s, "Open Debugger"s, keyMapping(SDL_SCANCODE_D),
       [this](const InputAction&, bool, bool isPressed)
       {
          m_gameStartedOnce = true; // disable autostart as player as requested debugger instead
-         if (g_pplayer->m_liveUI->IsInGameUIOpened() || !isPressed)
+         if (m_player->m_liveUI->IsInGameUIOpened() || !isPressed)
             return;
-         g_pplayer->m_showDebugger = true;
+         m_player->m_showDebugger = true;
       }));
 
    AddAction(std::make_unique<InputAction>(this, "ToggleStereo"s, "Select Stereo Mode"s, keyMapping(SDL_SCANCODE_F10),
       [this](const InputAction&, bool, bool isPressed)
       {
-         if (g_pplayer->m_liveUI->IsEditorUIOpened() || !isPressed)
+         if (m_player->m_liveUI->IsEditorUIOpened() || !isPressed)
             return;
-         if (Is3DTVStereoMode(g_pplayer->m_renderer->m_stereo3D) || IsAnaglyphStereoMode(g_pplayer->m_renderer->m_stereo3D))
+         if (Is3DTVStereoMode(m_player->m_renderer->m_stereo3D) || IsAnaglyphStereoMode(m_player->m_renderer->m_stereo3D))
          { // Toggle stereo on/off
-            g_pplayer->m_renderer->m_stereo3Denabled = !g_pplayer->m_renderer->m_stereo3Denabled;
+            m_player->m_renderer->m_stereo3Denabled = !m_player->m_renderer->m_stereo3Denabled;
          }
-         else if (g_pplayer->m_renderer->m_stereo3D == STEREO_VR)
+         else if (m_player->m_renderer->m_stereo3D == STEREO_VR)
          { // Toggle preview mode
-            g_pplayer->m_renderer->m_vrPreview = (VRPreviewMode)((g_pplayer->m_renderer->m_vrPreview + 1) % (VRPREVIEW_BOTH + 1));
-            g_pplayer->m_liveUI->PushNotification(g_pplayer->m_renderer->m_vrPreview == VRPREVIEW_DISABLED ? "Preview disabled"s // Will only display in headset
-                  : g_pplayer->m_renderer->m_vrPreview == VRPREVIEW_LEFT                                   ? "Preview switched to left eye"s
-                  : g_pplayer->m_renderer->m_vrPreview == VRPREVIEW_RIGHT                                  ? "Preview switched to right eye"s
+            m_player->m_renderer->m_vrPreview = (VRPreviewMode)((m_player->m_renderer->m_vrPreview + 1) % (VRPREVIEW_BOTH + 1));
+            m_player->m_liveUI->PushNotification(m_player->m_renderer->m_vrPreview == VRPREVIEW_DISABLED ? "Preview disabled"s // Will only display in headset
+                  : m_player->m_renderer->m_vrPreview == VRPREVIEW_LEFT                                   ? "Preview switched to left eye"s
+                  : m_player->m_renderer->m_vrPreview == VRPREVIEW_RIGHT                                  ? "Preview switched to right eye"s
                                                                                                            : "Preview switched to both eyes"s,
                2000);
          }
-         g_pplayer->m_renderer->InitLayout();
-         g_pplayer->m_renderer->UpdateStereoShaderState();
-         if (g_pplayer->m_renderer->IsUsingStaticPrepass())
+         m_player->m_renderer->InitLayout();
+         m_player->m_renderer->UpdateStereoShaderState();
+         if (m_player->m_renderer->IsUsingStaticPrepass())
          {
-            g_pplayer->m_renderer->DisableStaticPrePass(true);
-            g_pplayer->m_renderer->DisableStaticPrePass(false);
+            m_player->m_renderer->DisableStaticPrePass(true);
+            m_player->m_renderer->DisableStaticPrePass(false);
          }
       }));
 
    auto addJoyCustomAction = [this](const string& settingId, const string& label)
    {
       auto newAction = AddAction(std::make_unique<InputAction>(this, settingId, label, ""s,
-         [](const InputAction& action, bool, bool isPressed)
+         [this](const InputAction& action, bool, bool isPressed)
          {
-            if (g_pplayer->m_liveUI->IsInGameUIOpened())
+            if (m_player->m_liveUI->IsInGameUIOpened())
                return;
             CComVariant rgvar[1] = { CComVariant(0x10000 | static_cast<int>(action.GetActionId())) };
             DISPPARAMS dispparams = { rgvar, nullptr, 1, 0 };
-            g_pplayer->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
+            m_player->m_ptable->FireDispID(isPressed ? DISPID_GameEvents_KeyDown : DISPID_GameEvents_KeyUp, &dispparams);
          }));
       return newAction->GetActionId();
    };
@@ -1077,6 +1121,11 @@ InputAction* InputManager::AddAction(std::unique_ptr<InputAction>&& action)
    return m_inputActions.back().get();
 }
 
+bool InputManager::IsUINavigationActionId(unsigned int id) const
+{
+   return id == m_openInGameUIActionId || id == m_uiUpActionId || id == m_uiDownActionId || id == m_uiLeftActionId || id == m_uiRightActionId;
+}
+
 bool InputManager::IsPressed(int actionId) const
 {
    assert(0 <= actionId && actionId < static_cast<int>(m_inputActions.size()));
@@ -1087,7 +1136,7 @@ int InputManager::GetWindowVirtualKeyForAction(unsigned int actionId) const
 {
    #ifndef __STANDALONE__
       // Very basic and inefficient way of searching for a keyboard mapping, but this is only used once to detect table mirroring
-      assert(0 <= actionId && actionId < static_cast<int>(m_inputActions.size()));
+      assert(0 <= (int)actionId && actionId < static_cast<unsigned int>(m_inputActions.size()));
       vector<ButtonMapping> mapping;
       for (unsigned char vk = VK_ESCAPE; vk <= VK_OEM_3; vk++)
       {
@@ -1122,20 +1171,12 @@ void InputManager::Unregister(ButtonMapping* mapping)
       std::erase(it->second, mapping);
 }
 
-void InputManager::OnInputActionStateChanged(InputAction* action)
+// Allow plugins to react to action event, eventually disabling local processing
+bool InputManager::OnInputActionStateChanged(InputAction* action)
 {
-   // Allow plugins to react to action event, filter, ...
-   VPXActionEvent event { static_cast<VPXAction>(action->GetActionId()), action->IsPressed() };
-   VPXPluginAPIImpl::GetInstance().BroadcastVPXMsg(m_onActionEventMsgId, &event);
-
-   // Update input state
-   if (action->GetActionId() < 64)
-   {
-      if (action->IsPressed())
-         m_inputActionstate.SetPressed(action->GetActionId());
-      else
-         m_inputActionstate.SetReleased(action->GetActionId());
-   }
+   VPXActionEvent event { static_cast<VPXAction>(action->GetActionId()), action->IsPressed(), 1 };
+   m_player->m_pluginAPI.BroadcastVPXMsg(m_onActionEventMsgId, &event);
+   return event.enableVPXProcessing != 0;
 }
 
 void InputManager::Register(SensorMapping* mapping)
@@ -1208,90 +1249,237 @@ void InputManager::StartButtonCapture()
 #pragma endregion
 
 
-#pragma region Plunger and Nudge
-
-////////////////////////////////////////////////////////////////////
-// Plunger and Nudge
-
-void InputManager::SetNudgeFiltered(int index, bool enable)
-{
-   if (m_nudgeFilter[index] == enable)
-      return;
-   m_nudgeFilter[index] = enable;
-   if (enable)
-   {
-      m_nudgeXSensor[index]->SetFilter(std::make_unique<NudgeAccelerationFilter>());
-      m_nudgeYSensor[index]->SetFilter(std::make_unique<NudgeAccelerationFilter>());
-   }
-   else
-   {
-      m_nudgeXSensor[index]->SetFilter(std::make_unique<NoOpSensorFilter>());
-      m_nudgeYSensor[index]->SetFilter(std::make_unique<NoOpSensorFilter>());
-   }
-}
-
-Vertex2D InputManager::GetNudge() const
-{
-   float weight = 0.f;
-   Vertex2D nudge { 0.f, 0.f };
-   for (int i = 0; i < 2; i++)
-   {
-      const std::unique_ptr<PhysicsSensor>& sensorX = GetNudgeXSensor(i);
-      const std::unique_ptr<PhysicsSensor>& sensorY = GetNudgeYSensor(i);
-      if (!sensorX->IsMapped() || !sensorY->IsMapped())
-         continue;
-      const float sensorAngle = m_nudgeOrientation[i];
-      const float cna = cosf(sensorAngle);
-      const float sna = sinf(sensorAngle);
-      const float dx = sensorX->GetValue();
-      const float dy = sensorY->GetValue();
-      nudge.x += dx * cna + dy * sna;
-      nudge.y += dy * cna - dx * sna;
-      weight += 1.f;
-   }
-   if (weight < 1.f)
-      return nudge;
-   return nudge / weight;
-}
-
-void InputManager::SetPlungerPos(bool override, const float pos)
-{
-   // FIXME
-}
-
-void InputManager::SetPlungerSpeed(bool override, const float speed)
-{
-   // FIXME
-}
-
-void InputManager::SetNudge(bool override, const float nudgeAccelerationX, const float nudgeAccelerationY)
-{
-   // FIXME
-}
-
-#pragma endregion
-
-
 
 void InputManager::PlayRumble(const float lowFrequencySpeed, const float highFrequencySpeed, const int ms_duration)
 {
    if (m_rumbleMode == 0)
       return;
 
+   // SDL_RumbleJoystick cancels whatever is playing on every call, so forwarding calls as they come lets the last
+   // caller win, however weak (a plunger release calls every 2 ms while its spring rings down). Pulses are
+   // therefore collected here and mixed per motor.
+   // A slider that did not quite reach zero must not leave a faint pulse behind once the motor curve lifts it
+   float low = saturate(lowFrequencySpeed);
+   float high = saturate(highFrequencySpeed);
+   if (low < RUMBLE_OFF_LEVEL)
+      low = 0.f;
+   if (high < RUMBLE_OFF_LEVEL)
+      high = 0.f;
+   if (low <= 0.f && high <= 0.f)
+      return;
+   const uint32_t now = msec();
+
+   std::lock_guard<std::mutex> lock(m_rumbleMutex);
+   // Take a free slot. With all slots busy, a pulse that would not change the mix - no stronger on either motor
+   // and not outlasting it - is not needed; anything else replaces the weakest.
+   const uint32_t endMs = now + static_cast<uint32_t>(max(ms_duration, 1));
+   int slot = -1;
+   float weakest = 2.f;
+   float mixLow = 0.f;
+   float mixHigh = 0.f;
+   uint32_t mixEndMs = 0;
+   for (int i = 0; i < RUMBLE_PULSE_SLOTS; i++)
+   {
+      const RumblePulse& p = m_rumblePulses[i];
+      if (p.endMs <= now)
+      {
+         slot = i;
+         break;
+      }
+      mixLow = max(mixLow, p.low);
+      mixHigh = max(mixHigh, p.high);
+      mixEndMs = max(mixEndMs, p.endMs);
+      if (max(p.low, p.high) < weakest)
+      {
+         weakest = max(p.low, p.high);
+         slot = i;
+      }
+   }
+   if (m_rumblePulses[slot].endMs > now && low <= mixLow && high <= mixHigh && endMs <= mixEndMs)
+      return;
+   m_rumblePulses[slot] = { low, high, endMs };
+   // Start kick: a new pulse at hit level gets it when it raises the mix or when no kick is running any more. It
+   // is decided here, per event, and not from the size of a step of the mix: the physics delivers one hit as a
+   // ramp of contacts a few milliseconds apart, whose single steps never exceed any threshold on their own, and a
+   // second hit of the same strength as a running one must be felt as its own hit.
+   if (low >= RUMBLE_KICK_MIN_LEVEL && (low > m_rumbleMixLow || now >= m_rumbleKickLowEndMs))
+      m_rumbleKickLowEndMs = now + RUMBLE_KICK_MS;
+   if (high >= RUMBLE_KICK_MIN_LEVEL && (high > m_rumbleMixHigh || now >= m_rumbleKickHighEndMs))
+      m_rumbleKickHighEndMs = now + RUMBLE_KICK_MS;
+   // A pulse that the new one covers on both motors is over: its event has been superseded, and letting it
+   // resurface once the new pulse ends would play a vibration for something long past
+   for (int i = 0; i < RUMBLE_PULSE_SLOTS; i++)
+      if (i != slot && m_rumblePulses[i].endMs > now && m_rumblePulses[i].low <= low && m_rumblePulses[i].high <= high)
+         m_rumblePulses[i].endMs = now;
+   UpdateRumbleOutput(now);
+}
+
+void InputManager::UpdateRumble()
+{
+   std::lock_guard<std::mutex> lock(m_rumbleMutex);
+   if (m_rumbleMode == 0)
+   {
+      // Switched off while something was playing: silence the device and forget the pulses
+      if (m_rumbleSentLow != 0.f || m_rumbleSentHigh != 0.f)
+      {
+         for (RumblePulse& p : m_rumblePulses)
+            p.endMs = 0;
+         UpdateRumbleOutput(msec());
+      }
+      return;
+   }
+   UpdateRumbleOutput(msec());
+}
+
+void InputManager::UpdateRumbleOutput(const uint32_t now)
+{
+   // Strongest active pulse per motor; the output lasts until the last active pulse ends and is re-evaluated
+   // every frame, so it steps down to the next pulse once the strongest has run out.
+   float low = 0.f;
+   float high = 0.f;
+   uint32_t endMs = 0;
+   for (const RumblePulse& p : m_rumblePulses)
+   {
+      if (p.endMs <= now)
+         continue;
+      low = max(low, p.low);
+      high = max(high, p.high);
+      endMs = max(endMs, p.endMs);
+   }
+   // The kick (see PlayRumble) is flagged for RUMBLE_KICK_MS, for handlers driving motors that need it to spin up. It ends
+   // early when the mix falls: the pulse that earned it is over and a weaker remainder must not be kicked.
+   if (low < m_rumbleMixLow)
+      m_rumbleKickLowEndMs = 0;
+   if (high < m_rumbleMixHigh)
+      m_rumbleKickHighEndMs = 0;
+   m_rumbleMixLow = low;
+   m_rumbleMixHigh = high;
+   const bool kickLow = low > 0.f && now < m_rumbleKickLowEndMs;
+   const bool kickHigh = high > 0.f && now < m_rumbleKickHighEndMs;
+   if (low == m_rumbleSentLow && high == m_rumbleSentHigh && endMs == m_rumbleSentEndMs && kickLow == m_rumbleSentKickLow && kickHigh == m_rumbleSentKickHigh)
+      return;
+   m_rumbleSentLow = low;
+   m_rumbleSentHigh = high;
+   m_rumbleSentEndMs = endMs;
+   m_rumbleSentKickLow = kickLow;
+   m_rumbleSentKickHigh = kickHigh;
+   SendRumble(low, high, (endMs > now) ? static_cast<int>(endMs - now) : 0, kickLow, kickHigh);
+}
+
+void InputManager::SendRumble(const float low, const float high, const int ms_duration, const bool kickLow, const bool kickHigh)
+{
    for (const auto& handler : m_inputHandlers)
-      handler->PlayRumble(lowFrequencySpeed, highFrequencySpeed, ms_duration);
+      handler->PlayRumble(low, high, ms_duration, kickLow, kickHigh);
 
-   #ifdef __LIBVPINBALL__
-      if (!g_pvp->m_settings.GetStandalone_Haptics())
-         return;
-
-      VPinballLib::RumbleData rumbleData = {
-         (uint16_t)(saturate(lowFrequencySpeed) * 65535.f),
-         (uint16_t)(saturate(highFrequencySpeed) * 65535.f),
-         (uint32_t)ms_duration
-      };
-      VPinballLib::VPinballLib::SendEvent(VPINBALL_EVENT_RUMBLE, &rumbleData);
+   #if defined(__LIBVPINBALL__) && defined(__APPLE__)
+      VPinballLib::VPinballLib::PlayRumble(low, high, (unsigned int)ms_duration);
    #endif
+}
+
+void InputManager::PlayFlipperContactRumble(const float normalImpactSpeed)
+{
+   if (m_rumbleFlipperContact < RUMBLE_OFF_LEVEL)
+      return;
+
+   // Impact speed summed over the contacts of a hit (see HitFlipper::Collide). Up to two units it is a light touch,
+   // a held ball rolling on the flipper, and stays a faint pulse. From 2 to 5 the scale is steeper so that a ball
+   // dropping back onto the flipper reaches the kick level at 5. Above that the level rises slowly up to 30, where
+   // only a ball arriving at full speed gets, so an ordinary contact stays below a slingshot and only those stand
+   // out. Both motors are driven,
+   // since short pulses on the high frequency motor alone are barely noticeable; the small one at 0.7 of the
+   // impact, like the plunger, so the click does not get sharper than the thump.
+   const float s = fabsf(normalImpactSpeed);
+   const float impact = clamp(s < 2.f ? s * 0.06f : s < 5.f ? 0.12f + (s - 2.f) * 0.14f : 0.54f + (s - 5.f) * (0.46f / 25.f), 0.05f, 1.f);
+   // The level saturates early, so above it the length carries the strength: the motors need longer than the
+   // short touch pulse to reach full amplitude, so that pulse is cut off before they get there. A touch stays
+   // short, a hit runs long enough for the motors to arrive, and the hardest ones run as long as the plunger
+   // strike.
+   const int ms = s < 5.f ? 120 : 150 + static_cast<int>(100.f * clamp((s - 5.f) * (1.f / 25.f), 0.f, 1.f));
+   PlayRumble(impact * 0.8f * m_rumbleFlipperContact, impact * 0.7f * m_rumbleFlipperContact, ms);
+}
+
+void InputManager::PlayBumperRumble()
+{
+   if (m_rumbleBumper < RUMBLE_OFF_LEVEL)
+      return;
+   // The former fixed 0.10/0.05 for 100 ms is below what the motors render
+   PlayRumble(0.6f * m_rumbleBumper, 0.35f * m_rumbleBumper, 150);
+}
+
+void InputManager::PlaySlingshotRumble()
+{
+   if (m_rumbleSlingshot < RUMBLE_OFF_LEVEL)
+      return;
+   // 0.5 was still missed now and then, twice that always comes through
+   PlayRumble(0.8f * m_rumbleSlingshot, 0.5f * m_rumbleSlingshot, 150);
+}
+
+void InputManager::PlayPlungerRumble(const float fireSpeed)
+{
+   if (m_rumblePlunger < RUMBLE_OFF_LEVEL)
+      return;
+   // fireSpeed is signed (negative on the forward stroke) and PlayRumble saturates to 0..1, so the strongest
+   // bounce, the one that strikes the ball, used to be clamped to silence: only the magnitude matters. 0.15
+   // rather than the former 0.05 so the spring rebounds are felt as the rattle after the strike.
+   const float speed = fabsf(fireSpeed) * 0.15f;
+   PlayRumble(speed * m_rumblePlunger, speed * m_rumblePlunger, 60);
+}
+
+void InputManager::PlayPlungerLaunchRumble(const float impact)
+{
+   if (m_rumblePlunger < RUMBLE_OFF_LEVEL)
+      return;
+   // A launch shakes the whole cabinet, so at full impact this is the longest and strongest pulse; a ball
+   // rolling back onto the tip is a short light clack.
+   const float i = clamp(impact, 0.f, 1.f);
+   if (i <= 0.f)
+      return;
+   // A short pulse is only felt with the start kick, so a light contact is told apart from the strike by its
+   // length (the kick alone, 80 ms) rather than by a lower level; the full strike runs 250 ms
+   const float s = (0.45f + 0.55f * i) * m_rumblePlunger;
+   PlayRumble(s, 0.6f * s, 80 + static_cast<int>(170.f * i));
+}
+
+void InputManager::PlayFlipperButtonRumble()
+{
+   if (m_rumbleFlipperButton < RUMBLE_OFF_LEVEL)
+      return;
+   // A solenoid is a thump, not a buzz, so both motors carry it. Kept below the kick level on purpose: the
+   // ball hit that follows a few tens of milliseconds later is the bigger event and must stand out.
+   PlayRumble(0.35f * m_rumbleFlipperButton, 0.2f * m_rumbleFlipperButton, 150);
+}
+
+void InputManager::PlayBallBallRumble(const float impactSpeed)
+{
+   if (m_rumbleBallBall < RUMBLE_OFF_LEVEL)
+      return;
+   // Same scale as the flipper contact (roughly 17 units for a hard hit). Steel on steel is a short, sharp clack,
+   // so the high frequency motor carries most of it.
+   const float impact = clamp(fabsf(impactSpeed) * 0.06f, 0.08f, 1.f);
+   PlayRumble(impact * 0.35f * m_rumbleBallBall, impact * 0.9f * m_rumbleBallBall, 70);
+}
+
+void InputManager::PlayNudgeRumble(const Vertex2D& cabinetAcceleration)
+{
+   if (m_nudgeRumbleCooldownMs > 0)
+   {
+      m_nudgeRumbleCooldownMs--;
+      return;
+   }
+   if (m_rumbleNudge < RUMBLE_OFF_LEVEL)
+      return;
+
+   // The nudge models settle on 0.5g as the peak of a strong nudge, and the intent handler ignores anything below
+   // 1 m/s^2, so the same bounds are used here. The cooldown keeps the decaying cabinet oscillation from retriggering.
+   constexpr float thresholdAcceleration = 1.f; // m/s^2
+   constexpr float fullAcceleration = 0.5f * 9.80665f; // m/s^2
+   const float acceleration = cabinetAcceleration.Length();
+   if (acceleration < thresholdAcceleration)
+      return;
+
+   const float impact = clamp(acceleration / fullAcceleration, 0.1f, 1.f);
+   PlayRumble(impact * m_rumbleNudge, impact * 0.5f * m_rumbleNudge, 80);
+   m_nudgeRumbleCooldownMs = 200;
 }
 
 void InputManager::Autostart(const uint32_t initialDelayMs, const uint32_t retryDelayMs)
@@ -1301,7 +1489,7 @@ void InputManager::Autostart(const uint32_t initialDelayMs, const uint32_t retry
    // while lots of tables do create balls on startup instead.
    if (m_gameStartedOnce)
       return;
-   if (!g_pplayer->m_vball.empty())
+   if (!m_player->m_vball.empty())
    {
       m_gameStartedOnce = true;
       return;
@@ -1352,6 +1540,7 @@ LRESULT CALLBACK InputManager::LowLevelKeyboardProc(int nCode, WPARAM wParam, LP
       && (wParam == WM_KEYDOWN || wParam == WM_KEYUP) //
       && (p->vkCode == VK_LWIN || p->vkCode == VK_RWIN) //
       && g_pplayer //
+      && !g_pplayer->IsVR() // Not yet implemented in VR
       && g_pplayer->m_playfieldWnd->IsFocused())
    {
       // Block further processing and directly send event to SDL for internal processing

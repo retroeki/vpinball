@@ -81,8 +81,8 @@ import org.vpinball.app.jni.VPinballDisplayText
 import org.vpinball.app.jni.VPinballExternalDMD
 import org.vpinball.app.jni.VPinballGfxBackend
 import org.vpinball.app.jni.VPinballMaxTexDimension
+import org.vpinball.app.jni.VPinballPath
 import org.vpinball.app.jni.VPinballStorageMode
-import org.vpinball.app.jni.VPinballViewMode
 import org.vpinball.app.ui.screens.common.RoundedCard
 import org.vpinball.app.ui.theme.VPinballTheme
 import org.vpinball.app.ui.theme.VpxRed
@@ -125,27 +125,7 @@ fun SettingsScreen(
                     SectionHeader(title = "General")
 
                     RoundedCard {
-                        SwitchRow(
-                            label = "Haptics",
-                            isChecked = viewModel.haptics,
-                            onCheckedChange = { viewModel.handleHaptics(value = it) },
-                            description = "Provide haptic feedback when balls collide with flippers, bumpers, and slingshots.",
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                        SwitchRow(
-                            label = "Force VR Rendering Mode",
-                            isChecked = viewModel.renderingModeOverride,
-                            onCheckedChange = { viewModel.handleRenderingModeOverride(value = it) },
-                            description =
-                                "Provide table scripts with `RenderingMode=2` " +
-                                    "so backbox and cabinet are rendered. Useful for tables that do not provide FSS support.",
-                        )
-
                         if (!BuildConfig.IS_QUEST) {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
                             EnumMenuRow(
                                 label = "Graphics Backend",
                                 options = VPinballGfxBackend.entries.toList(),
@@ -188,17 +168,6 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                    }
-                }
-
-                item {
-                    RoundedCard {
-                        EnumMenuRow(
-                            label = "Display",
-                            options = VPinballViewMode.entries.toList(),
-                            option = viewModel.bgSet,
-                            onOptionChanged = { viewModel.handleBGSet(value = it) },
-                        )
                     }
                 }
 
@@ -314,22 +283,31 @@ fun SettingsScreen(
                     }
                 }
 
+                if (!BuildConfig.IS_QUEST) {
+                    item {
+                        SectionHeader(title = "Miscellaneous")
+
+                        RoundedCard {
+                            SwitchRow(
+                                label = "Force VR Rendering Mode",
+                                isChecked = viewModel.renderingModeOverride,
+                                onCheckedChange = { viewModel.handleRenderingModeOverride(value = it) },
+                                description =
+                                    "Provide table scripts with `RenderingMode=2` " +
+                                        "so backbox and cabinet are rendered. Useful for tables that do not provide FSS support.",
+                            )
+                        }
+                    }
+                }
+
                 item {
                     SectionHeader(title = "Advanced")
 
                     RoundedCard {
-                        SwitchRow(
-                            label = "Reset Log on Play",
-                            isChecked = viewModel.resetLogOnPlay,
-                            onCheckedChange = { viewModel.handleResetLogOnPlay(value = it) },
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
                         ActionRow(
                             label = "Export vpinball.log...",
                             labelColor = Color.VpxRed,
-                            onClick = { onViewFile(File(VPinballManager.getFilesDir(), "vpinball.log")) },
+                            onClick = { onViewFile(File(VPinballManager.getPath(VPinballPath.PREFERENCES), "vpinball.log")) },
                             showDisclosure = false,
                         )
                     }
@@ -340,7 +318,7 @@ fun SettingsScreen(
                         ActionRow(
                             label = "Export VPinballX.ini...",
                             labelColor = Color.VpxRed,
-                            onClick = { onViewFile(File(VPinballManager.getFilesDir(), "VPinballX.ini")) },
+                            onClick = { onViewFile(File(VPinballManager.getPath(VPinballPath.PREFERENCES), "VPinballX.ini")) },
                             showDisclosure = false,
                         )
                     }

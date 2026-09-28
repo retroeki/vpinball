@@ -1,6 +1,11 @@
 // license:GPLv3+
 
 #include "core/stdafx.h"
+#include "parts/ball.h"
+
+#include "math/matrix.h"
+#include "physics/cabinet/NudgeHandler.h"
+#include "ui/live/LiveUI.h"
 
 HitBall::HitBall()
 {
@@ -39,6 +44,8 @@ void HitBall::Collide3DWall(const Vertex3Ds& hitNormal, float elasticity, const 
 {
    //speed normal to wall
    float dot = m_d.m_vel.Dot(hitNormal);
+   if (dot < -C_LOWNORMVEL)
+      g_pplayer->m_physics->OnBallWallHit(*this, hitNormal, -dot);
 
    if (dot >= -C_LOWNORMVEL)                          // nearly receding ... make sure of conditions
    {                                                  // otherwise if clearly approaching .. process the collision
@@ -189,10 +196,10 @@ float HitBall::HitTest(const BallS& ball, const float dtime, CollisionEvent& col
    if (infNaN(hittime) || hittime < 0.f || hittime > dtime)
 	   return -1.0f; // .. was some time previous || beyond the next physics tick
 
-   const Vertex3Ds hitPos = ball.m_pos + hittime * dv; // new ball position
+   const Vertex3Ds hitPos = ball.m_pos + hittime * ball.m_vel; // new ball position
 
    //calc unit normal of collision
-   const Vertex3Ds hitnormal = hitPos - m_d.m_pos;
+   const Vertex3Ds hitnormal = hitPos - (m_d.m_pos + hittime * m_d.m_vel);
    if (fabsf(hitnormal.x) <= FLT_MIN && fabsf(hitnormal.y) <= FLT_MIN && fabsf(hitnormal.z) <= FLT_MIN)
       return -1.f;
 
@@ -240,7 +247,10 @@ void HitBall::Collide(const CollisionEvent& coll)
 
    // send ball/ball collision event to script function
    if (dot < -0.25f) // only collisions with at least some small true impact velocity (no contacts)
+   {
       g_pplayer->m_ptable->InvokeBallBallCollisionCallback(this, pball, -dot);
+      g_pplayer->m_pininput.PlayBallBallRumble(-dot);
+   }
 
 #ifdef C_DISP_GAIN
    float edist = -C_DISP_GAIN * coll.m_hitdistance;
@@ -304,7 +314,7 @@ void HitBall::HandleStaticContact(const CollisionEvent& coll, const float fricti
       if (m_vel.Length() < 1.f) //!! 1.f=magic, also see below
       {
          vell = (1.f-vell)*(float)C_BALL_SPIN_HACK2;
-         const float damp = (1.0f - friction * clamp(-coll.m_hit_org_normalvelocity / C_CONTACTVEL, 0.0f,1.0f)) * vell + (1.0f-vell); // do not kill spin completely, otherwise stuck balls will happen during regular gameplay
+         const float damp = (1.0f - friction * saturate(-coll.m_hit_org_normalvelocity / C_CONTACTVEL)) * vell + (1.0f-vell); // do not kill spin completely, otherwise stuck balls will happen during regular gameplay
          m_angularmomentum *= damp;
       }
 #endif
@@ -470,7 +480,7 @@ void HitBall::UpdateVelocities()
 {
    if (!m_d.m_lockedInKicker) // Gravity
    {
-      if (this == g_pplayer->m_liveUI->m_ballControl.GetDraggedBall())
+      if (m_pBall == g_pplayer->m_liveUI->m_ballControl.GetDraggedBall())
       {
          m_d.m_vel.x *= 0.5f; // Null out most of the X/Y velocity, want a little bit so the ball can sort of find its way out of obstacles.
          m_d.m_vel.y *= 0.5f;
@@ -483,7 +493,12 @@ void HitBall::UpdateVelocities()
          // Apply forces (expressed in VPU/VPT) integrated on one physic step (PHYS_FACTOR is one physic step time expressed in VPX time unit)
          // This is standard Newton physics: A = dV/dt = (1/m).(Sum of F) therefore dV = (1/m).(Sum of F).dt
          m_d.m_vel += (float)PHYS_FACTOR * g_pplayer->m_physics->GetGravity() /* * m_d.m_mass / m_d.m_mass */; // Gravity F = m.G
-         m_d.m_vel -= (float)PHYS_FACTOR * g_pplayer->m_physics->GetNudgeAcceleration(); // Table velocity due to nudge (fictitious force due to change of reference frame, therefore mass is not applied)
+
+         // Table velocity due to nudge (fictitious force due to change of reference frame, therefore mass is not applied)
+         const float slope = ANGTORAD(m_pBall->GetPTable()->GetPlayfieldSlope()); // nudge acceleration is in the horizontal cabinet plane, reference frame is the playfield
+         m_d.m_vel.x -= (float)PHYS_FACTOR * MS2TOVPUVPT2(g_pplayer->m_pininput.m_nudgeHandler->GetCabinetAcceleration().x);
+         m_d.m_vel.y -= (float)PHYS_FACTOR * MS2TOVPUVPT2(g_pplayer->m_pininput.m_nudgeHandler->GetCabinetAcceleration().y) * cosf(slope);
+         m_d.m_vel.z -= (float)PHYS_FACTOR * MS2TOVPUVPT2(g_pplayer->m_pininput.m_nudgeHandler->GetCabinetAcceleration().y) * sinf(slope);
       }
    }
 

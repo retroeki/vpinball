@@ -9,7 +9,13 @@
 // no support for the sort of low-level HID access we need.
 
 #include "core/stdafx.h"
+
+#ifndef __LIBVPINBALL__
+
 #include "input/OpenPinDevHandler.h"
+
+#include "input/PlungerHandler.h"
+#include "physics/cabinet/GamepadNudge.h"
 #include <list>
 #include <hidapi/hidapi.h>
 #include <hid-report-parser/hid_report_parser.h>
@@ -301,7 +307,7 @@ OpenPinDevHandler::OpenPinDevHandler(InputManager &pininput)
                         if (f.usageRanges.size() == 1 && f.usageRanges.front().Equals(USAGE_PAGE_GAMECONTROLS, 0)
                            && f.stringRanges.size() == 1 && !f.stringRanges.front().IsRange()
                            && hid_get_indexed_string(hDevice.get(), f.stringRanges.front().GetSingle(), strBuf, nStrBuf) == 0
-                           && strBuf == L"OpenPinballDeviceStruct/"s)
+                           && std::wstring_view(strBuf).starts_with(L"OpenPinballDeviceStruct/"sv))
                         {
                            // matched
                            found = true;
@@ -320,11 +326,11 @@ OpenPinDevHandler::OpenPinDevHandler(InputManager &pininput)
                            const uint16_t deviceId = m_inputManager.RegisterDevice("OpenPinDev"s, InputManager::DeviceType::OpenPinDev, "OpenPinDev"s);
                            m_inputManager.RegisterElementName(deviceId, false, 0, "Start Game"s);
                            m_inputManager.RegisterElementName(deviceId, false, 1, "Quit Game"s);
-                           m_inputManager.RegisterElementName(deviceId, false, 2, "Coin"s);
-                           m_inputManager.RegisterElementName(deviceId, false, 3, "Coin 2"s);
-                           m_inputManager.RegisterElementName(deviceId, false, 4, "Coin 3"s);
-                           m_inputManager.RegisterElementName(deviceId, false, 5, "Coin 4"s);
-                           m_inputManager.RegisterElementName(deviceId, false, 6, "Extra Ball"s);
+                           m_inputManager.RegisterElementName(deviceId, false, 2, "Extra Ball"s);
+                           m_inputManager.RegisterElementName(deviceId, false, 3, "Coin"s);
+                           m_inputManager.RegisterElementName(deviceId, false, 4, "Coin 2"s);
+                           m_inputManager.RegisterElementName(deviceId, false, 5, "Coin 3"s);
+                           m_inputManager.RegisterElementName(deviceId, false, 6, "Coin 4"s);
                            m_inputManager.RegisterElementName(deviceId, false, 7, "Launch Ball"s);
                            m_inputManager.RegisterElementName(deviceId, false, 8, "Fire Button"s);
                            m_inputManager.RegisterElementName(deviceId, false, 9, "Left Flipper"s);
@@ -345,7 +351,8 @@ OpenPinDevHandler::OpenPinDevHandler(InputManager &pininput)
                            m_inputManager.RegisterElementName(deviceId, false, 24, "Right Nudge"s);
                            m_inputManager.RegisterElementName(deviceId, false, 25, "Audio Up"s);
                            m_inputManager.RegisterElementName(deviceId, false, 26, "Audio Down"s);
-                           for (int i = 0; i < 32; i++)
+                           // Generic OPD buttons are numbered 1 through 32 by the protocol.
+                           for (int i = 1; i <= 32; i++)
                               m_inputManager.RegisterElementName(deviceId, false, static_cast<uint16_t>(0x0100 | i), "Button #" + std::to_string(i));
                            m_inputManager.RegisterElementName(deviceId, true, 0x0200, "Plunger Position"s);
                            m_inputManager.RegisterElementName(deviceId, true, 0x0201, "Plunger Speed"s);
@@ -353,45 +360,45 @@ OpenPinDevHandler::OpenPinDevHandler(InputManager &pininput)
                            m_inputManager.RegisterElementName(deviceId, true, 0x0203, "Nudge Y Acceleration"s);
                            m_inputManager.RegisterElementName(deviceId, true, 0x0204, "Nudge X Speed"s);
                            m_inputManager.RegisterElementName(deviceId, true, 0x0205, "Nudge Y Speed"s);
-                           auto defaultMapping = [this, deviceId](
-                              const std::function<bool(const vector<ButtonMapping>&, unsigned int)>& mapButton, //
-                              const std::function<bool(const SensorMapping&, SensorMapping::Type type, bool isLinear)>& mapPlunger, //
-                              const std::function<bool(const SensorMapping&, const SensorMapping&)>& mapNudge)
+                           auto defaultMapping = [this, deviceId](InputManager::MappingSetupHandler& map)
                            {
-                              bool success = true;
-                              success &= mapButton(ButtonMapping::Create(deviceId, 0), m_inputManager.GetStartActionId()); // Start (start game)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 1), m_inputManager.GetExitGameActionId()); // Exit (end game)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 2), m_inputManager.GetAddCreditActionId(0)); // Coin 1 (left coin chute)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 3), m_inputManager.GetAddCreditActionId(1)); // Coin 2 (middle coin chute)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 4), m_inputManager.GetAddCreditActionId(2)); // Coin 3 (right coin chute)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 5), m_inputManager.GetAddCreditActionId(3)); // Coin 4 (fourth coin chute/dollar bill acceptor)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 6), m_inputManager.GetExtraBallActionId()); // Extra Ball/Buy-In
-                              success &= mapButton(ButtonMapping::Create(deviceId, 7), m_inputManager.GetLaunchBallActionId()); // Launch Ball
-                              success &= mapButton(ButtonMapping::Create(deviceId, 8), m_inputManager.GetLockbarActionId()); // Fire button (lock bar top button)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 9), m_inputManager.GetLeftFlipperActionId()); // Left flipper button primary switch
-                              success &= mapButton(ButtonMapping::Create(deviceId, 10), m_inputManager.GetRightFlipperActionId()); // Right flipper button primary switch
-                              success &= mapButton(ButtonMapping::Create(deviceId, 11), m_inputManager.GetStagedLeftFlipperActionId()); // Left flipper button secondary switch (upper flipper actuator)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 12), m_inputManager.GetStagedRightFlipperActionId()); // Right flipper button secondary switch (upper flipper actuator)
-                              success &= mapButton(ButtonMapping::Create(deviceId, 13), m_inputManager.GetLeftMagnaActionId()); // Left MagnaSave button
-                              success &= mapButton(ButtonMapping::Create(deviceId, 14), m_inputManager.GetRightMagnaActionId()); // Right MagnaSave button
-                              success &= mapButton(ButtonMapping::Create(deviceId, 15), m_inputManager.GetTiltActionId()); // Tilt bob
-                              success &= mapButton(ButtonMapping::Create(deviceId, 16), m_inputManager.GetSlamTiltActionId()); // Slam tilt switch
-                              success &= mapButton(ButtonMapping::Create(deviceId, 17), m_inputManager.GetCoinDoorActionId()); // Coin door position switch
-                              success &= mapButton(ButtonMapping::Create(deviceId, 18), m_inputManager.GetServiceActionId(0)); // Service panel Cancel
-                              success &= mapButton(ButtonMapping::Create(deviceId, 19), m_inputManager.GetServiceActionId(1)); // Service panel Down
-                              success &= mapButton(ButtonMapping::Create(deviceId, 20), m_inputManager.GetServiceActionId(2)); // Service panel Up
-                              success &= mapButton(ButtonMapping::Create(deviceId, 21), m_inputManager.GetServiceActionId(3)); // Service panel Enter
-                              success &= mapButton(ButtonMapping::Create(deviceId, 22), m_inputManager.GetLeftNudgeActionId()); // Left Nudge
-                              success &= mapButton(ButtonMapping::Create(deviceId, 23), m_inputManager.GetCenterNudgeActionId()); // Forward Nudge
-                              success &= mapButton(ButtonMapping::Create(deviceId, 24), m_inputManager.GetRightNudgeActionId()); // Right Nudge
-                              success &= mapButton(ButtonMapping::Create(deviceId, 25), m_inputManager.GetVolumeUpActionId()); // Audio volume up
-                              success &= mapButton(ButtonMapping::Create(deviceId, 26), m_inputManager.GetVolumeDownActionId()); // Audio volume down
-                              success &= mapPlunger(SensorMapping::Create(deviceId, 0x200, SensorMapping::Type::Position), SensorMapping::Type::Position, true); // Plunger position
-                              success &= mapPlunger(SensorMapping::Create(deviceId, 0x201, SensorMapping::Type::Velocity), SensorMapping::Type::Velocity, true); // Plunger speed
-                              success &= mapNudge(SensorMapping::Create(deviceId, 0x204, SensorMapping::Type::Velocity), SensorMapping::Create(deviceId, 0x205, SensorMapping::Type::Velocity)); // Nudge speed
-                              return success;
+                              map.MapAction(ButtonMapping::Create(deviceId, 0), m_inputManager.GetStartActionId()); // Start (start game)
+                              map.MapAction(ButtonMapping::Create(deviceId, 1), m_inputManager.GetExitGameActionId()); // Exit (end game)
+                              map.MapAction(ButtonMapping::Create(deviceId, 2), m_inputManager.GetExtraBallActionId()); // Extra Ball/Buy-In
+                              map.MapAction(ButtonMapping::Create(deviceId, 3), m_inputManager.GetAddCreditActionId(0)); // Coin 1 (left coin chute)
+                              map.MapAction(ButtonMapping::Create(deviceId, 4), m_inputManager.GetAddCreditActionId(1)); // Coin 2 (middle coin chute)
+                              map.MapAction(ButtonMapping::Create(deviceId, 5), m_inputManager.GetAddCreditActionId(2)); // Coin 3 (right coin chute)
+                              map.MapAction(ButtonMapping::Create(deviceId, 6), m_inputManager.GetAddCreditActionId(3)); // Coin 4 (fourth coin chute/dollar bill acceptor)
+                              map.MapAction(ButtonMapping::Create(deviceId, 7), m_inputManager.GetLaunchBallActionId()); // Launch Ball
+                              map.MapAction(ButtonMapping::Create(deviceId, 8), m_inputManager.GetLockbarActionId()); // Fire button (lock bar top button)
+                              map.MapAction(ButtonMapping::Create(deviceId, 9), m_inputManager.GetLeftFlipperActionId()); // Left flipper button primary switch
+                              map.MapAction(ButtonMapping::Create(deviceId, 10), m_inputManager.GetRightFlipperActionId()); // Right flipper button primary switch
+                              map.MapAction(ButtonMapping::Create(deviceId, 11), m_inputManager.GetStagedLeftFlipperActionId()); // Left flipper button secondary switch (upper flipper actuator)
+                              map.MapAction(ButtonMapping::Create(deviceId, 12), m_inputManager.GetStagedRightFlipperActionId()); // Right flipper button secondary switch (upper flipper actuator)
+                              map.MapAction(ButtonMapping::Create(deviceId, 13), m_inputManager.GetLeftMagnaActionId()); // Left MagnaSave button
+                              map.MapAction(ButtonMapping::Create(deviceId, 14), m_inputManager.GetRightMagnaActionId()); // Right MagnaSave button
+                              map.MapAction(ButtonMapping::Create(deviceId, 15), m_inputManager.GetTiltActionId()); // Tilt bob
+                              map.MapAction(ButtonMapping::Create(deviceId, 16), m_inputManager.GetSlamTiltActionId()); // Slam tilt switch
+                              map.MapAction(ButtonMapping::Create(deviceId, 17), m_inputManager.GetCoinDoorActionId()); // Coin door position switch
+                              map.MapAction(ButtonMapping::Create(deviceId, 18), m_inputManager.GetServiceActionId(0)); // Service panel Cancel
+                              map.MapAction(ButtonMapping::Create(deviceId, 19), m_inputManager.GetServiceActionId(1)); // Service panel Down
+                              map.MapAction(ButtonMapping::Create(deviceId, 20), m_inputManager.GetServiceActionId(2)); // Service panel Up
+                              map.MapAction(ButtonMapping::Create(deviceId, 21), m_inputManager.GetServiceActionId(3)); // Service panel Enter
+                              map.MapAction(ButtonMapping::Create(deviceId, 22), m_inputManager.GetLeftNudgeActionId()); // Left Nudge
+                              map.MapAction(ButtonMapping::Create(deviceId, 23), m_inputManager.GetCenterNudgeActionId()); // Forward Nudge
+                              map.MapAction(ButtonMapping::Create(deviceId, 24), m_inputManager.GetRightNudgeActionId()); // Right Nudge
+                              map.MapAction(ButtonMapping::Create(deviceId, 25), m_inputManager.GetVolumeUpActionId()); // Audio volume up
+                              map.MapAction(ButtonMapping::Create(deviceId, 26), m_inputManager.GetVolumeDownActionId()); // Audio volume down
+                              std::unique_ptr<PlungerSensor> plunger = std::make_unique<PlungerSensor>(&m_inputManager);
+                              plunger->GetPositionSensor()->SetMapping(SensorMapping::Create(deviceId, 0x200, SensorMapping::Type::Position));
+                              plunger->GetVelocitySensor()->SetMapping(SensorMapping::Create(deviceId, 0x201, SensorMapping::Type::Velocity));
+                              map.MapPlunger(std::move(plunger));
+                              std::unique_ptr<VPX::Physics::GamepadNudge> nudge = std::make_unique<VPX::Physics::GamepadNudge>(&m_inputManager);
+                              nudge->GetXSensor().SetMapping(SensorMapping::Create(deviceId, 0x204, SensorMapping::Type::Velocity));
+                              nudge->GetYSensor().SetMapping(SensorMapping::Create(deviceId, 0x205, SensorMapping::Type::Velocity));
+                              map.MapNudge(std::move(nudge));
                            };
-                           m_inputManager.RegisterDefaultMapping(deviceId, defaultMapping);
+                           m_inputManager.SetDeviceDefaultMapping(deviceId, defaultMapping);
 
                            // Setup new device
                            OpenPinDev* pinDev = new OpenPinDev(hDevice.release(), f.reportID, reportSize, &strBuf[24], deviceId);
@@ -399,7 +406,7 @@ OpenPinDevHandler::OpenPinDevHandler(InputManager &pininput)
                               [this](const OpenPinDev *const pindev, const OpenPinballDeviceReport &prevReport, const OpenPinballDeviceReport &report)
                            {
                               const uint64_t timestampNs = report.timestamp * 1000ULL;
-                              for (unsigned int buttonNum = 1, bit = 1; buttonNum <= 27; ++buttonNum, bit <<= 1)
+                              for (unsigned int buttonNum = 0, bit = 1; buttonNum < 27; ++buttonNum, bit <<= 1)
                               {
                                  const bool isDown = (report.pinballButtons & bit) != 0;
                                  const bool wasDown = (prevReport.pinballButtons & bit) != 0;
@@ -476,3 +483,5 @@ void OpenPinDevHandler::Update()
    for (auto &p : m_OpenPinDevContext->m_openPinDevs)
       p->ReadReport();
 }
+
+#endif

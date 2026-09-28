@@ -16,10 +16,11 @@ Label::Label(const FlexDMD* pFlexDMD, Font* pFont, const string& text, const str
    if (m_pFont)
       m_pFont->AddRef();
    else {
-      LOGW("NULL font specified for label: %s", name.c_str());
+      LOGW("NULL font specified for label: " + name);
    }
 
    m_autopack = pFlexDMD->GetRuntimeVersion() <= 1008;
+   m_text = text + '_'; // To force bounds update
    SetText(text);
    Pack();
 }
@@ -34,8 +35,8 @@ void Label::SetText(const string& szText)
 {
    string szTmp = szText;
 
-   static const std::array<string,1> patterns{ "\r\n"s };
-   static const string replaceWith = "\n"s;
+   static const std::array<std::string_view,1> patterns{ "\r\n"sv };
+   static const std::string_view replaceWith = "\n"sv;
 
    for (const auto& pattern : patterns) {
       size_t pos = 0;

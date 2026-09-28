@@ -1,19 +1,13 @@
 #include "core/stdafx.h"
 #include "codeview.h"
 
-#ifndef __STANDALONE__
 #include "scilexer.h"
 #include <DbgProp.h>
-#endif
 
 #ifdef __LIBVPINBALL__
 #include "lib/src/VPinballLib.h"
 #endif
 
-#ifdef __STANDALONE__
-#include <sstream>
-#include <climits>
-#endif
 
 #include <fstream>
 
@@ -32,7 +26,26 @@ static constexpr char vbsReservedWords[] =
 "boolean byte currency date double integer long object single string type "
 "variant option explicit randomize";
 
-static const string VBvalidChars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"s);
+static const string VBvalidChars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"s); // keep in sync with below
+// Same characters as in VBvalidChars, less overhead
+static constexpr bool IsVBValidChar(const char c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (c == '_');
+}
+
+// Constructs looked for while parsing. SureFind() takes a string, so avoid building one each call
+static const string VBkeyDim("DIM"s);
+static const string VBkeyConst("CONST"s);
+static const string VBkeySub("SUB"s);
+static const string VBkeyFunction("FUNCTION"s);
+static const string VBkeyClass("CLASS"s);
+static const string VBkeyProperty("PROPERTY"s);
+static const string VBkeyGet("GET"s);
+static const string VBkeyLet("LET"s);
+static const string VBkeySet("SET"s);
+static const string VBkeyEnd("END"s);
+static const string VBkeyExit("EXIT"s);
+static const string VBkeyByVal("byval"s); // Lower case, as SureFindNoCase requires
 
 INT_PTR CALLBACK CVPrefProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -80,9 +93,9 @@ inline string ParseRemoveVBSLineComments(string& line)
 }
 
 
-CodeViewer::CodeViewer(PinTable* psh)
+CodeViewer::CodeViewer(PinTableWnd* tableEditor)
+   : m_tableEditor(tableEditor)
 {
-   m_table = psh;
 
    szCaretTextBuff[0] = '\0';
 }
@@ -94,10 +107,8 @@ CodeViewer::~CodeViewer()
    for (size_t i = 0; i < m_vcvd.size(); ++i)
       delete m_vcvd[i];
 
-#ifndef __STANDALONE__
    if (m_haccel)
       DestroyAcceleratorTable(m_haccel);
-#endif
 }
 
 // strSearchData has to be lower case
@@ -183,7 +194,7 @@ static int FindUD(const fi_vector<UserData>& ListIn, const string& strSearchData
 
 //Assumes case insensitive sorted list
 //Returns index or insertion point (-1 == error)
-static size_t FindOrInsertUD(fi_vector<UserData>& ListIn, const UserData& udIn)
+size_t CodeViewer::FindOrInsertUD(fi_vector<UserData>& ListIn, const UserData& udIn)
 {
 	if (ListIn.empty()) // First in
 	{
@@ -208,19 +219,18 @@ static size_t FindOrInsertUD(fi_vector<UserData>& ListIn, const UserData& udIn)
 		else
 		{
 			// detect/warn about duplicate subs/functions (at least rudimentary)
-         if (g_pvp && g_pvp->GetActiveTableEditor() && g_pvp->GetActiveTableEditor()->m_pcv->m_warn_on_dupes &&
-			    (udIn.eTyping == eSub || udIn.eTyping == eFunction) && // only check subs and functions
-			    (iterFound->m_lineNum != udIn.m_lineNum)) // use this simple check as dupe test: are the keys on different lines?
-			{
-#ifndef __STANDALONE__
-            const Sci_Position dwellpos = SendMessage(g_pvp->GetActiveTableEditor()->m_pcv->m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
-            SendMessage(g_pvp->GetActiveTableEditor()->m_pcv->m_hwndScintilla, SCI_CALLTIPSHOW, dwellpos,
-				           (LPARAM)("Duplicate Definition found: " + iterFound->m_description + " (Line: " + std::to_string(iterFound->m_lineNum+1) + ")\n                            " + udIn.m_description + " (Line: " + std::to_string(udIn.m_lineNum+1) + ')').c_str());
-#endif
-            g_pvp->GetActiveTableEditor()->m_pcv->m_warn_on_dupes = false;
-			}
+         if (m_warn_on_dupes && (udIn.eTyping == eSub || udIn.eTyping == eFunction) && // only check subs and functions
+            (iterFound->m_lineNum != udIn.m_lineNum)) // use this simple check as dupe test: are the keys on different lines?
+         {
+            const Sci_Position dwellpos = SendMessage(m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
+            SendMessage(m_hwndScintilla, SCI_CALLTIPSHOW, dwellpos,
+               (LPARAM)("Duplicate Definition found: " + iterFound->m_description + " (Line: " + std::to_string(iterFound->m_lineNum + 1) + ")\n                            "
+                  + udIn.m_description + " (Line: " + std::to_string(udIn.m_lineNum + 1) + ')')
+                  .c_str());
+            m_warn_on_dupes = false;
+         }
 
-			// assign again, as e.g. line of func/sub/var could have been changed by other updates
+         // assign again, as e.g. line of func/sub/var could have been changed by other updates
 			ListIn[Pos] = udIn;
 		}
 		return Pos;
@@ -366,20 +376,17 @@ static bool FindOrInsertStringIntoAutolist(vector<string>& ListIn, const string 
 
 static void GetRange(const HWND hwndScintilla, const size_t start, const size_t end, char * const text)
 {
-#ifndef __STANDALONE__
    Sci_TextRange tr;
    tr.chrg.cpMin = (Sci_PositionCR)start;
    tr.chrg.cpMax = (Sci_PositionCR)end;
    tr.lpstrText = text;
    SendMessage(hwndScintilla, SCI_GETTEXTRANGE, 0, (LPARAM)&tr);
-#endif
 }
 
 // buf must be >= MAX_FIND_LENGTH chars long
 // returns length of word
 size_t CodeViewer::GetWordUnderCaret(char *buf)
 {
-#ifndef __STANDALONE__
    const LRESULT CurPos = ::SendMessage(m_hwndScintilla, SCI_GETCURRENTPOS, 0, 0 );
    m_wordUnderCaret.chrg.cpMin = (Sci_PositionCR)::SendMessage(m_hwndScintilla, SCI_WORDSTARTPOSITION, CurPos, TRUE);
    m_wordUnderCaret.chrg.cpMax = (Sci_PositionCR)::SendMessage(m_hwndScintilla, SCI_WORDENDPOSITION, CurPos, TRUE);
@@ -394,23 +401,17 @@ size_t CodeViewer::GetWordUnderCaret(char *buf)
       buf[0] = '\0';
       return 0;
    }
-#else
-   return 0;
-#endif
 }
 
 void CodeViewer::SetClean(const SaveDirtyState sds)
 {
-#ifndef __STANDALONE__
    if (sds == eSaveClean)
       ::SendMessage(m_hwndScintilla, SCI_SETSAVEPOINT, 0, 0);
-   m_table->m_sdsDirtyScript = sds;
-#endif
+   m_tableEditor->m_table->SetDirtyScript(sds);
 }
 
 void CodeViewer::OnScriptError(ScriptInterpreter::ErrorType type, int line, int column, const string& description, const vector<string>& stackDump)
 {
-#ifndef __STANDALONE__
    // Show the error in the last error log
    AppendLastErrorTextW(MakeWString(description));
    SetLastErrorVisibility(true);
@@ -424,7 +425,7 @@ void CodeViewer::OnScriptError(ScriptInterpreter::ErrorType type, int line, int 
       SetVisible(true);
       ShowWindow(SW_RESTORE);
       ColorError(line, column);
-      g_pvp->EnableWindow(TRUE);
+      GetVpxEditor()->EnableWindow(TRUE);
       ::SetFocus(m_hwndScintilla);
 
       if (g_pplayer == nullptr || g_pplayer->GetCloseState() != Player::CloseState::CS_CLOSE_APP)
@@ -441,17 +442,15 @@ void CodeViewer::OnScriptError(ScriptInterpreter::ErrorType type, int line, int 
                errorStream << L"    " << MakeWString(callSite) << L"\r\n";
          }
          errorStream << L"\r\n";
-         g_pvp->EnableWindow(FALSE);
+         GetVpxEditor()->EnableWindow(FALSE);
          ScriptErrorDialog scriptErrorDialog(errorStream.str());
          scriptErrorDialog.DoModal();
          m_suppressErrorDialogs = scriptErrorDialog.WasSuppressErrorsRequested();
-         g_pvp->EnableWindow(TRUE);
+         GetVpxEditor()->EnableWindow(TRUE);
 
-         if (const auto pt = g_pvp->GetActiveTableEditor(); pt != nullptr)
-            ::SetFocus(pt->m_pcv->m_hwndScintilla);
+         ::SetFocus(m_hwndScintilla);
       }
    }
-#endif
 }
 
 HRESULT CodeViewer::AddItem(IScriptable * const piscript, const bool global)
@@ -475,20 +474,8 @@ HRESULT CodeViewer::AddItem(IScriptable * const piscript, const bool global)
    // Add item to dropdown
    string szT = MakeString(pcvd->m_wName);
 
-#ifdef __STANDALONE__
-   ITypeInfo* ti;
-   if (SUCCEEDED(piscript->GetIDispatch()->GetTypeInfo(NULL, NULL, &ti))) {
-      BSTR bstrTypeName;
-      if (SUCCEEDED(ti->GetDocumentation(MEMBERID_NIL, &bstrTypeName, NULL, NULL, NULL))) {
-         PLOGD << "type=" << MakeString(bstrTypeName) << ", name=" << szT;
-         SysFreeString(bstrTypeName);
-      }
-      ti->Release();
-   }
-#else
    const size_t index = ::SendMessage(m_hwndItemList, CB_ADDSTRING, 0, (size_t)szT.data());
    ::SendMessage(m_hwndItemList, CB_SETITEMDATA, index, (size_t)piscript);
-#endif
    //AndyS - WIP insert new item into autocomplete list??
    return S_OK;
 }
@@ -509,18 +496,15 @@ void CodeViewer::RemoveItem(IScriptable * const piscript)
    m_vcvd.RemoveElementAt(idx);
 
    // Remove item from dropdown
-#ifndef __STANDALONE__
    string szT = MakeString(name);
    const size_t index = ::SendMessage(m_hwndItemList, CB_FINDSTRINGEXACT, ~0u, (size_t)szT.data());
    ::SendMessage(m_hwndItemList, CB_DELETESTRING, index, 0);
-#endif
 
    delete pcvd;
 }
 
 void CodeViewer::SelectItem(IScriptable * const piscript)
 {
-#ifndef __STANDALONE__
    string name = MakeString(piscript->get_Name());
    const LRESULT index = ::SendMessage(m_hwndItemList, CB_FINDSTRINGEXACT, ~0u, (size_t)name.data());
    if (index != CB_ERR)
@@ -529,7 +513,6 @@ void CodeViewer::SelectItem(IScriptable * const piscript)
 
       ListEventsFromItem();
    }
-#endif
 }
 
 HRESULT CodeViewer::ReplaceName(IScriptable *const piscript, const wstring &wzNew)
@@ -554,7 +537,6 @@ HRESULT CodeViewer::ReplaceName(IScriptable *const piscript, const wstring &wzNe
    m_vcvd.AddSortedString(pcvd); // and re-add
 
    // Remove old name from dropdown and replace it with the new
-#ifndef __STANDALONE__
    string szT = MakeString(name);
    size_t index = ::SendMessage(m_hwndItemList, CB_FINDSTRINGEXACT, ~0u, (size_t)szT.data());
    ::SendMessage(m_hwndItemList, CB_DELETESTRING, index, 0);
@@ -565,21 +547,19 @@ HRESULT CodeViewer::ReplaceName(IScriptable *const piscript, const wstring &wzNe
 
    ::SendMessage(m_hwndItemList, CB_SETCURSEL, index, 0);
    ListEventsFromItem(); // Just to get us into a good state
-#endif
 
    return S_OK;
 }
 
 void CodeViewer::SetVisible(const bool visible)
 {
-#ifndef __STANDALONE__
    if (!visible && !m_minimized)
    {
       const CRect rc = GetWindowRect();
-      g_app->m_settings.SetEditor_CodeViewPosX((int)rc.left, false);
-      g_app->m_settings.SetEditor_CodeViewPosY((int)rc.top, false);
-      g_app->m_settings.SetEditor_CodeViewPosWidth(rc.right - rc.left, false);
-      g_app->m_settings.SetEditor_CodeViewPosHeight(rc.bottom - rc.top, false);
+      g_settingsService.GetAppSettings().SetEditor_CodeViewPosX((int)rc.left, false);
+      g_settingsService.GetAppSettings().SetEditor_CodeViewPosY((int)rc.top, false);
+      g_settingsService.GetAppSettings().SetEditor_CodeViewPosWidth(rc.right - rc.left, false);
+      g_settingsService.GetAppSettings().SetEditor_CodeViewPosHeight(rc.bottom - rc.top, false);
    }
 
    if (m_findReplace.IsWindow() && !visible)
@@ -600,10 +580,10 @@ void CodeViewer::SetVisible(const bool visible)
    {
       if (!m_visible)
       {
-         const int x = g_app->m_settings.GetEditor_CodeViewPosX();
-         const int y = g_app->m_settings.GetEditor_CodeViewPosY();
-         const int w = g_app->m_settings.GetEditor_CodeViewPosWidth();
-         const int h = g_app->m_settings.GetEditor_CodeViewPosHeight();
+         const int x = g_settingsService.GetAppSettings().GetEditor_CodeViewPosX();
+         const int y = g_settingsService.GetAppSettings().GetEditor_CodeViewPosY();
+         const int w = g_settingsService.GetAppSettings().GetEditor_CodeViewPosWidth();
+         const int h = g_settingsService.GetAppSettings().GetEditor_CodeViewPosHeight();
          const POINT p { x, y };
          if (MonitorFromPoint(p, MONITOR_DEFAULTTONULL) != NULL) // Do not apply if point is offscreen
             SetWindowPos(HWND_TOP, x, y, w, h, SWP_NOMOVE | SWP_NOSIZE);
@@ -611,53 +591,48 @@ void CodeViewer::SetVisible(const bool visible)
       SetForegroundWindow();
    }
    m_visible = visible;
-#endif
 }
 
 void CodeViewer::SetEnabled(const bool enabled)
 {
-#ifndef __STANDALONE__
    ::SendMessage(m_hwndScintilla, SCI_SETREADONLY, !enabled, 0);
 
    ::EnableWindow(m_hwndItemList, enabled);
    ::EnableWindow(m_hwndEventList, enabled);
-#endif
 }
 
 void CodeViewer::SetCaption(const string& szCaption)
 {
-#ifndef __STANDALONE__
    string szT;
-   if (!m_table->m_external_script_name.empty())
-      szT = "MODIFYING EXTERNAL SCRIPT: " + m_table->m_external_script_name.string();
+   if (!m_tableEditor->m_table->m_external_script_name.empty())
+      szT = "MODIFYING EXTERNAL SCRIPT: " + m_tableEditor->m_table->m_external_script_name.string();
    else
       szT = szCaption + ' ' + LocalString(IDS_SCRIPT).m_szbuffer;
    SetWindowText(szT.c_str());
-#endif
 }
 
 void CodeViewer::UpdatePrefsfromReg()
 {
-   m_bgColor = g_app->m_settings.GetCVEdit_BackGroundColor();
-   m_bgSelColor = g_app->m_settings.GetCVEdit_BackGroundSelectionColor();
-   m_displayAutoComplete = g_app->m_settings.GetCVEdit_DisplayAutoComplete();
-   m_displayAutoCompleteLength = g_app->m_settings.GetCVEdit_DisplayAutoCompleteAfter();
-   m_dwellDisplay = g_app->m_settings.GetCVEdit_DwellDisplay();
-   m_dwellHelp = g_app->m_settings.GetCVEdit_DwellHelp();
-   m_dwellDisplayTime = g_app->m_settings.GetCVEdit_DwellDisplayTime();
+   m_bgColor = g_settingsService.GetAppSettings().GetCVEdit_BackGroundColor();
+   m_bgSelColor = g_settingsService.GetAppSettings().GetCVEdit_BackGroundSelectionColor();
+   m_displayAutoComplete = g_settingsService.GetAppSettings().GetCVEdit_DisplayAutoComplete();
+   m_displayAutoCompleteLength = g_settingsService.GetAppSettings().GetCVEdit_DisplayAutoCompleteAfter();
+   m_dwellDisplay = g_settingsService.GetAppSettings().GetCVEdit_DwellDisplay();
+   m_dwellHelp = g_settingsService.GetAppSettings().GetCVEdit_DwellHelp();
+   m_dwellDisplayTime = g_settingsService.GetAppSettings().GetCVEdit_DwellDisplayTime();
    for (size_t i = 0; i < m_lPrefsList->size(); ++i)
       m_lPrefsList->at(i)->GetPrefsFromReg();
 }
 
 void CodeViewer::UpdateRegWithPrefs()
 {
-   g_app->m_settings.SetCVEdit_BackGroundColor((int)m_bgColor, false);
-   g_app->m_settings.SetCVEdit_BackGroundSelectionColor((int)m_bgSelColor, false);
-   g_app->m_settings.SetCVEdit_DisplayAutoComplete(m_displayAutoComplete, false);
-   g_app->m_settings.SetCVEdit_DisplayAutoCompleteAfter(m_displayAutoCompleteLength, false);
-   g_app->m_settings.SetCVEdit_DwellDisplay(m_dwellDisplay, false);
-   g_app->m_settings.SetCVEdit_DwellHelp(m_dwellHelp, false);
-   g_app->m_settings.SetCVEdit_DwellDisplayTime(m_dwellDisplayTime, false);
+   g_settingsService.GetAppSettings().SetCVEdit_BackGroundColor((int)m_bgColor, false);
+   g_settingsService.GetAppSettings().SetCVEdit_BackGroundSelectionColor((int)m_bgSelColor, false);
+   g_settingsService.GetAppSettings().SetCVEdit_DisplayAutoComplete(m_displayAutoComplete, false);
+   g_settingsService.GetAppSettings().SetCVEdit_DisplayAutoCompleteAfter(m_displayAutoCompleteLength, false);
+   g_settingsService.GetAppSettings().SetCVEdit_DwellDisplay(m_dwellDisplay, false);
+   g_settingsService.GetAppSettings().SetCVEdit_DwellHelp(m_dwellHelp, false);
+   g_settingsService.GetAppSettings().SetCVEdit_DwellDisplayTime(m_dwellDisplayTime, false);
    for (size_t i = 0; i < m_lPrefsList->size(); i++)
       m_lPrefsList->at(i)->SetPrefsToReg();
 }
@@ -670,7 +645,6 @@ void CodeViewer::InitPreferences()
 	m_bgSelColor = RGB(192,192,192);
 	m_lPrefsList = new vector<CVPreference*>();
 
-#ifndef __STANDALONE__
 	m_prefEverythingElse = new CVPreference(RGB(0,0,0), true, "EverythingElse"s,  STYLE_DEFAULT, 0 , IDC_CVP_BUT_COL_EVERYTHINGELSE, IDC_CVP_BUT_FONT_EVERYTHINGELSE);
 	m_lPrefsList->push_back(m_prefEverythingElse);
 	prefDefault = new CVPreference(RGB(0,0,0), true, "Default"s, SCE_B_DEFAULT, 0 , 0, 0);
@@ -687,7 +661,6 @@ void CodeViewer::InitPreferences()
 	m_lPrefsList->push_back(prefLiterals);
 	prefVPcore = new CVPreference(RGB(200,50,60), true, "ShowVPcore"s, SCE_B_KEYWORD4, IDC_CVP_CHKB_VPCORE, IDC_CVP_BUT_COL_VPCORE, IDC_CVP_BUT_FONT_VPCORE);
 	m_lPrefsList->push_back(prefVPcore);
-#endif
 
 	for (size_t i = 0; i < m_lPrefsList->size(); ++i)
 	{
@@ -700,7 +673,6 @@ void CodeViewer::InitPreferences()
 
 int CodeViewer::OnCreate(CREATESTRUCT& cs)
 {
-#ifndef __STANDALONE__
    m_haccel = LoadAccelerators(g_app->GetInstanceHandle(), MAKEINTRESOURCE(IDR_CODEVIEWACCEL)); // Accelerator keys
 
    m_hwndMain = GetHwnd();
@@ -875,20 +847,16 @@ int CodeViewer::OnCreate(CREATESTRUCT& cs)
    ::SendMessage(m_hwndScintilla, SCI_AUTOCSTOPS, 0,(LPARAM) " ");
 
    //
-#endif
 
    ParseVPCore();
-#ifndef __STANDALONE__
    UpdateScinFromPrefs();
 
    SendMessage(WM_SIZE, 0, 0); // Make our window relay itself out
-#endif
    return CWnd::OnCreate(cs);
 }
 
 void CodeViewer::Destroy()
 {
-#ifndef __STANDALONE__
 	delete m_prefEverythingElse;
 	delete prefDefault;
 	delete prefVBS;
@@ -909,37 +877,39 @@ void CodeViewer::Destroy()
 	m_VPcoreDict.clear();
 
 	CWnd::Destroy();
-#endif
 }
 
 void CodeViewer::SetScript(const string& script)
 {
-#ifndef __STANDALONE__
    if (m_hwndScintilla)
    {
       string copy(script); // As the provided string is modified by the call
       ::SendMessage(m_hwndScintilla, SCI_SETTEXT, 0, (size_t)copy.c_str());
+      // The initial fill is not a user edit, so make it the save point and drop the undo history that would allow undoing past it
+      ::SendMessage(m_hwndScintilla, SCI_EMPTYUNDOBUFFER, 0, 0);
+      ::SendMessage(m_hwndScintilla, SCI_SETSAVEPOINT, 0, 0);
    }
    if (m_findReplace.IsWindow())
       m_findReplace.Destroy();
    // Allow updates to take, now that we know the script size
    UpdateScinFromPrefs();
-#endif
 }
 
 BOOL CodeViewer::PreTranslateMessage(MSG &msg)
 {
-#ifndef __STANDALONE__
    if (!IsWindow())
       return FALSE;
-   
+
+   // The Alt combinations are what opens the menu, so they must not be given to IsDialogMessage
+   if (IsAltKeyMessage(msg.message))
+      return FALSE;
+
    if (m_findReplace.IsWindow() && m_findReplace.IsDialogMessage(msg))
       return TRUE;
 
    if (IsDialogMessage(msg))
       return TRUE;
 
-#endif
    return FALSE;
 }
 
@@ -948,19 +918,18 @@ void CodeViewer::Compile(const bool message)
    CComObject<ScriptInterpreter>* interpreter;
    CComObject<ScriptInterpreter>::CreateInstance(&interpreter);
    interpreter->AddRef();
-   interpreter->Start(m_table);
+   interpreter->Start(m_tableEditor->m_table);
    interpreter->SetScriptErrorHandler([this](ScriptInterpreter::ErrorType type, int line, int column, const string& description, const vector<string>& stackDump)
       { OnScriptError(type, line, column, description, stackDump); });
-   interpreter->Evaluate(m_table->m_script_text, false);
+   interpreter->Evaluate(m_tableEditor->m_table->m_script_text, false);
    if (message && !interpreter->HasError())
       MessageBox("Compilation successful", "Compile", MB_OK);
-   interpreter->Stop(m_table);
+   interpreter->Stop(m_tableEditor->m_table);
    interpreter->Release();
 }
 
 void CodeViewer::AddToDebugOutput(const string &szText)
 {
-#ifndef __STANDALONE__
    if (g_pplayer)
    {
       ::SendMessage(g_pplayer->m_hwndDebugOutput, SCI_ADDTEXT, szText.length(), (LPARAM)szText.c_str());
@@ -970,34 +939,28 @@ void CodeViewer::AddToDebugOutput(const string &szText)
       const size_t line = ::SendMessage(g_pplayer->m_hwndDebugOutput, SCI_LINEFROMPOSITION, pos, 0);
       ::SendMessage(g_pplayer->m_hwndDebugOutput, SCI_ENSUREVISIBLEENFORCEPOLICY, line, 0);
    }
-#endif
 }
 
 void CodeViewer::ShowFindDialog()
 {
-#ifndef __STANDALONE__
    if (m_findReplace.IsWindow())
       m_findReplace.Destroy();
    char szFindString[MAX_FIND_LENGTH];
    GetWordUnderCaret(szFindString);
    m_findReplace.Create(true, szFindString, nullptr, FR_DOWN | FR_HIDEWHOLEWORD | FR_ENABLEHOOK, m_hwndMain);
-#endif
 }
 
 void CodeViewer::ShowFindReplaceDialog()
 {
-#ifndef __STANDALONE__
    if (m_findReplace.IsWindow())
       m_findReplace.Destroy();
    char szFindString[MAX_FIND_LENGTH];
    GetWordUnderCaret(szFindString);
    m_findReplace.Create(false, szFindString, nullptr, FR_DOWN | FR_HIDEWHOLEWORD | FR_ENABLEHOOK, m_hwndMain);
-#endif
 }
 
 void CodeViewer::Find()
 {
-#ifndef __STANDALONE__
    const size_t selstart = ::SendMessage(m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
    const size_t selend = ::SendMessage(m_hwndScintilla, SCI_GETSELECTIONEND, 0, 0);
 
@@ -1067,12 +1030,10 @@ void CodeViewer::Find()
       MessageBeep(MB_ICONEXCLAMATION);
       ::SendMessage(m_hwndStatus, SB_SETTEXT, 1 | 0, (size_t)(string(LocalString(IDS_FINDFAILED).m_szbuffer) + findWhat.c_str() + LocalString(IDS_FINDFAILED2).m_szbuffer).c_str());
    }
-#endif
 }
 
 void CodeViewer::Replace()
 {
-#ifndef __STANDALONE__
    const size_t selstart = ::SendMessage(m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
    const size_t selend = ::SendMessage(m_hwndScintilla, SCI_GETSELECTIONEND, 0, 0);
 
@@ -1116,47 +1077,6 @@ void CodeViewer::Replace()
          }
       }
    }
-#endif
-}
-
-void CodeViewer::SaveToStream(IStream *pistream, const HCRYPTHASH hcrypthash)
-{
-#ifndef __STANDALONE__
-   size_t cchar = ::SendMessage(m_hwndScintilla, SCI_GETTEXTLENGTH, 0, 0);
-   char * szText = new char[cchar + 1];
-   ::SendMessage(m_hwndScintilla, SCI_GETTEXT, cchar + 1, (size_t)szText);
-
-   // if there was an external vbs loaded, save the script to that file
-   // and ask if to save the original script also to the table
-   bool save_external_script_to_table = true;
-   if (!m_table->m_external_script_name.empty())
-   {
-      FILE* fScript;
-      if ((fopen_s(&fScript, m_table->m_external_script_name.string().c_str(), "wb") == 0) && fScript)
-      {
-         fwrite(szText, 1, cchar, fScript);
-         fclose(fScript);
-      }
-
-      save_external_script_to_table = (MessageBox("Save externally loaded .vbs script also to .vpx table?", "Visual Pinball", MB_YESNO | MB_DEFBUTTON2) == IDYES);
-
-      if (!save_external_script_to_table)
-      {
-         delete[] szText;
-         szText = m_table->m_original_table_script.data();
-         cchar = m_table->m_original_table_script.size();
-      }
-   }
-
-   ULONG writ = 0;
-   pistream->Write(&cchar, (ULONG)sizeof(int), &writ);
-   pistream->Write(szText, (ULONG)(cchar*sizeof(char)), &writ);
-
-   CryptHashData(hcrypthash, (BYTE *)szText, (DWORD)cchar, 0);
-
-   if (save_external_script_to_table)
-      delete[] szText;
-#endif
 }
 
 void CodeViewer::ColorLine(const int line)
@@ -1166,42 +1086,35 @@ void CodeViewer::ColorLine(const int line)
 
 void CodeViewer::UncolorError()
 {
-#ifndef __STANDALONE__
    const size_t startChar = ::SendMessage(m_hwndScintilla, SCI_POSITIONFROMLINE, m_errorLineNumber, 0);
    const size_t length = ::SendMessage(m_hwndScintilla, SCI_LINELENGTH, m_errorLineNumber, 0);
 
    ::SendMessage(m_hwndScintilla, SCI_INDICATORCLEARRANGE, startChar, length);
 
    m_errorLineNumber = -1;
-#endif
 }
 
 void CodeViewer::ColorError(const int line, const int nchar)
 {
    m_errorLineNumber = line - 1;
 
-#ifndef __STANDALONE__
    const size_t startChar = ::SendMessage(m_hwndScintilla, SCI_POSITIONFROMLINE, line - 1, 0);
    const size_t length = ::SendMessage(m_hwndScintilla, SCI_LINELENGTH, line - 1, 0);
 
    ::SendMessage(m_hwndScintilla, SCI_INDICATORFILLRANGE, startChar, length);
    ::SendMessage(m_hwndScintilla, SCI_GOTOLINE, line, 0);
-#endif
 }
 
 void CodeViewer::TellHostToSelectItem()
 {
-#ifndef __STANDALONE__
    const size_t index = ::SendMessage(m_hwndItemList, CB_GETCURSEL, 0, 0);
    IScriptable * const pscript = (IScriptable *)::SendMessage(m_hwndItemList, CB_GETITEMDATA, index, 0);
 
-   m_table->SelectItem(pscript);
-#endif
+   m_tableEditor->SelectItem(pscript);
 }
 
-string CodeViewer::GetParamsFromEvent(const UINT iEvent)
+string CodeViewer::GetParamsFromEvent(const UINT iEvent) const
 {
-#ifndef __STANDALONE__
    const size_t index = ::SendMessage(m_hwndItemList, CB_GETCURSEL, 0, 0);
    IScriptable * const pscript = (IScriptable *)::SendMessage(m_hwndItemList, CB_GETITEMDATA, index, 0);
    IDispatch * const pdisp = pscript->GetIDispatch();
@@ -1265,13 +1178,11 @@ string CodeViewer::GetParamsFromEvent(const UINT iEvent)
       pClassInfo->Release();
       return szParams;
    }
-#endif
    return string();
 }
 
 void CodeViewer::ListEventsFromItem()
 {
-#ifndef __STANDALONE__
    ::SendMessage(m_hwndEventList, CB_RESETCONTENT, 0, 0);
    const size_t index = ::SendMessage(m_hwndItemList, CB_GETCURSEL, 0, 0);
    IScriptable * const pscript = (IScriptable *)::SendMessage(m_hwndItemList, CB_GETITEMDATA, index, 0);
@@ -1280,31 +1191,38 @@ void CodeViewer::ListEventsFromItem()
       string method = MakeString(event);
       const size_t listindex = ::SendMessage(m_hwndEventList, CB_ADDSTRING, 0, (size_t)method.c_str());
    }
-#endif
+}
+
+// Fetches the text of a combo box item. CB_GETLBTEXT takes no destination size, so it has to be sized beforehand
+// from CB_GETLBTEXTLEN, plus the one byte for the null terminator which is written as well
+static string GetComboBoxItemText(const HWND combo, const WPARAM index)
+{
+   const LRESULT length = ::SendMessage(combo, CB_GETLBTEXTLEN, index, 0);
+   if (length <= 0) // CB_ERR (no such item) or empty text
+      return string();
+   string text;
+   text.resize(length + 1);
+   ::SendMessage(combo, CB_GETLBTEXT, index, (LPARAM)text.data());
+   text.resize(length);
+   return text;
 }
 
 void CodeViewer::FindCodeFromEvent()
 {
-#ifndef __STANDALONE__
    bool found = false;
 
-   char szItemName[512]; // Can't be longer than 32 chars, but use this buffer for concatenating
-   szItemName[0] = '\0';
-   char szEventName[512];
-   szEventName[0] = '\0';
    size_t index = ::SendMessage(m_hwndItemList, CB_GETCURSEL, 0, 0);
-   ::SendMessage(m_hwndItemList, CB_GETLBTEXT, index, (size_t)szItemName);
+   string szItemName = GetComboBoxItemText(m_hwndItemList, index);
    index = ::SendMessage(m_hwndEventList, CB_GETCURSEL, 0, 0);
-   ::SendMessage(m_hwndEventList, CB_GETLBTEXT, index, (size_t)szEventName);
    const size_t iEventIndex = ::SendMessage(m_hwndEventList, CB_GETITEMDATA, index, 0);
-   strcat_s(szItemName, "_"); // VB Specific event names
-   strcat_s(szItemName, szEventName);
+   szItemName += '_'; // VB Specific event names
+   szItemName += GetComboBoxItemText(m_hwndEventList, index);
    size_t codelen = ::SendMessage(m_hwndScintilla, SCI_GETTEXTLENGTH, 0, 0);
    const size_t stopChar = codelen;
    ::SendMessage(m_hwndScintilla, SCI_TARGETWHOLEDOCUMENT, 0, 0);
    ::SendMessage(m_hwndScintilla, SCI_SETSEARCHFLAGS, SCFIND_WHOLEWORD, 0);
    LRESULT posFind;
-   while ((posFind = ::SendMessage(m_hwndScintilla, SCI_SEARCHINTARGET, strlen(szItemName), (LPARAM)szItemName)) != -1)
+   while ((posFind = ::SendMessage(m_hwndScintilla, SCI_SEARCHINTARGET, szItemName.length(), (LPARAM)szItemName.c_str())) != -1)
    {
       const size_t line = ::SendMessage(m_hwndScintilla, SCI_LINEFROMPOSITION, posFind, 0);
       // Check for 'sub' and make sure we're not in a comment
@@ -1412,14 +1330,12 @@ void CodeViewer::FindCodeFromEvent()
    }
 
    ::SetFocus(m_hwndScintilla);
-#endif
 }
 
 void CodeViewer::ShowAutoComplete(const SCNotification *pSCN)
 {
 	if (!pSCN) return;
 
-#ifndef __STANDALONE__
 	const char KeyPressed = pSCN->ch;
 	if (KeyPressed != '.')
 	{
@@ -1459,7 +1375,6 @@ void CodeViewer::ShowAutoComplete(const SCNotification *pSCN)
 		//display
 		::SendMessage(m_hwndScintilla, SCI_AUTOCSHOW, 0, (LPARAM)m_autoCompMembersString.c_str());
 	}
-#endif
 
 }
 
@@ -1479,7 +1394,6 @@ void CodeViewer::GetMembers(const fi_vector<UserData>& ListIn, const string& str
 // if tooltip then show tooltip, otherwise jump to function/sub/variable definition
 bool CodeViewer::ShowTooltipOrGoToDefinition(const SCNotification *pSCN, const bool tooltip)
 {
-#ifndef __STANDALONE__
 	//get word under pointer
 	const Sci_Position dwellpos = pSCN ? pSCN->position : ::SendMessage(m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
 	const LRESULT wordstart = ::SendMessage(m_hwndScintilla, SCI_WORDSTARTPOSITION, dwellpos, TRUE);
@@ -1577,11 +1491,9 @@ bool CodeViewer::ShowTooltipOrGoToDefinition(const SCNotification *pSCN, const b
 			return false;
 		return true;
 	}
-#endif
 	return false;
 }
 
-#ifndef __STANDALONE__
 void CodeViewer::MarginClick(const Sci_Position position, const int modifiers)
 {
    const size_t lineClick = ::SendMessage(m_hwndScintilla, SCI_LINEFROMPOSITION, position, 0);
@@ -1623,11 +1535,9 @@ void CodeViewer::MarginClick(const Sci_Position position, const int modifiers)
       }
    }
 }
-#endif
 
 static void AddComment(const HWND m_hwndScintilla)
 {
-#ifndef __STANDALONE__
    constexpr char comment[] = "'";
 
    const size_t startSel = SendMessage(m_hwndScintilla, SCI_GETSELECTIONSTART, 0, 0);
@@ -1660,10 +1570,8 @@ static void AddComment(const HWND m_hwndScintilla)
       }
    }
    SendMessage(m_hwndScintilla, SCI_ENDUNDOACTION, 0, 0);
-#endif
 }
 
-#ifndef __STANDALONE__
 static void RemoveComment(const HWND m_hwndScintilla)
 {
    //const char * const comment = "\b";
@@ -1699,36 +1607,37 @@ static void RemoveComment(const HWND m_hwndScintilla)
    }
    SendMessage(m_hwndScintilla, SCI_ENDUNDOACTION, 0, 0);
 }
-#endif
 
-// Makes sure what is found has only VBS Chars in..
+// Makes sure the match of 'Length' chars at 'Pos' is a whole VB word, and not part of a longer identifier
+static bool IsWholeVBWord(const string &LineIn, const size_t Pos, const size_t Length)
+{
+	return !IsVBValidChar(LineIn[Pos + Length]) // Extra char on end - not what we want
+	    && (Pos == 0 || !IsVBValidChar(LineIn[Pos - 1]));
+}
+
 size_t CodeViewer::SureFind(const string &LineIn, const string &ToFind)
 {
 	const size_t Pos = LineIn.find(ToFind);
-	if (Pos == string::npos)
+	return (Pos != string::npos) && IsWholeVBWord(LineIn, Pos, ToFind.length()) ? Pos : string::npos;
+}
+
+// Case insensitive SureFind. Only the line is lowercased, so 'ToFind' has to be given in lower case
+size_t CodeViewer::SureFindNoCase(const string &LineIn, const string &ToFind)
+{
+	const auto match = std::ranges::search(LineIn, ToFind, [](const char a, const char b) { return cLower(a) == b; });
+	if (match.empty())
 		return string::npos;
 
-	const char EndChr = LineIn[Pos + ToFind.length()];
-	size_t IsValidVBChr = VBvalidChars.find(EndChr);
-	if (IsValidVBChr != string::npos) // Extra char on end - not what we want
-		return string::npos;
-
-	if (Pos > 0)
-	{
-		const char StartChr = LineIn[Pos - 1];
-		IsValidVBChr = VBvalidChars.find(StartChr);
-		if (IsValidVBChr != string::npos)
-			return string::npos;
-	}
-	return Pos;
+	const size_t Pos = (size_t)std::distance(LineIn.begin(), match.begin());
+	return IsWholeVBWord(LineIn, Pos, ToFind.length()) ? Pos : string::npos;
 }
 
 void CodeViewer::PreCreate(CREATESTRUCT& cs)
 {
-   const int x = g_app->m_settings.GetEditor_CodeViewPosX();
-   const int y = g_app->m_settings.GetEditor_CodeViewPosY();
-   const int w = g_app->m_settings.GetEditor_CodeViewPosWidth();
-   const int h = g_app->m_settings.GetEditor_CodeViewPosHeight();
+   const int x = g_settingsService.GetAppSettings().GetEditor_CodeViewPosX();
+   const int y = g_settingsService.GetAppSettings().GetEditor_CodeViewPosY();
+   const int w = g_settingsService.GetAppSettings().GetEditor_CodeViewPosWidth();
+   const int h = g_settingsService.GetAppSettings().GetEditor_CodeViewPosHeight();
 
    cs.x = x;
    cs.y = y;
@@ -1744,22 +1653,18 @@ void CodeViewer::PreRegisterClass(WNDCLASS& wc)
 {
    wc.style = CS_DBLCLKS;
    wc.hInstance = g_app->GetInstanceHandle();
-#ifndef __STANDALONE__
    wc.hIcon = LoadIcon(g_app->GetInstanceHandle(), MAKEINTRESOURCE(IDI_SCRIPT));
-#endif
    wc.lpszClassName = "CVFrame";
-#ifndef __STANDALONE__
    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
    wc.lpszMenuName = MAKEINTRESOURCE(IDR_SCRIPTMENU);//nullptr;
    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-#endif
 }
 
 //false is a fail/syntax error
 bool CodeViewer::ParseStructureName(fi_vector<UserData>& ListIn, const UserData& ud_org, const string& UCline, const string& line, const int Lineno)
 {
-	const size_t endIdx = SureFind(UCline,"END"s); 
-	const size_t exitIdx = SureFind(UCline,"EXIT"s); 
+	const size_t endIdx = SureFind(UCline,VBkeyEnd); 
+	const size_t exitIdx = SureFind(UCline,VBkeyExit); 
 
 	if (endIdx == string::npos && exitIdx == string::npos)
 	{
@@ -1913,60 +1818,60 @@ bool CodeViewer::ParseStructureName(fi_vector<UserData>& ListIn, const UserData&
 	return false;
 }
 
-string CodeViewer::ParseDelimtByColon(string &wholeline)
+// Returns the next ':' separated statement of 'wholeline' from 'pos', advancing 'pos' past the delimiter.
+// A statement which itself starts with ':' is returned whole, which is what the previous implementation did.
+// Walking an index instead of erasing from the front of the line keeps this linear in its length
+string CodeViewer::ParseDelimtByColon(const string &wholeline, size_t &pos)
 {
-	string result;
-	const size_t idx = wholeline.find(':');
-	if (idx == string::npos || idx == 0)
+	const size_t idx = wholeline.find(':', pos);
+	if (idx == string::npos || idx == pos)
 	{
-		result = wholeline;
-		wholeline.clear();
-	}
-	else
-	{
-		result = wholeline.substr(0, idx);
-		wholeline.erase(0, idx + 1);
+		string result = wholeline.substr(pos);
+		pos = wholeline.length();
+		return result;
 	}
 
+	string result = wholeline.substr(pos, idx - pos);
+	pos = idx + 1;
 	return result;
 }
 
 void CodeViewer::ParseFindConstruct(size_t &Pos, const string &UCLineIn, WordType &Type, int &ConstructSize)
 {
-	if ((Pos = SureFind(UCLineIn, "DIM"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeyDim)) != string::npos)
 	{
 		ConstructSize = 3;
 		Type = eDim;
 		return;
 	}
-	if ((Pos = SureFind(UCLineIn, "CONST"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeyConst)) != string::npos)
 	{
 		ConstructSize = 5;
 		Type = eConst;
 		return;
 	}
-	if ((Pos = SureFind(UCLineIn, "SUB"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeySub)) != string::npos)
 	{
 		ConstructSize = 3;
 		Type = eSub;
 		return;
 	}
-	if ((Pos = SureFind(UCLineIn, "FUNCTION"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeyFunction)) != string::npos)
 	{
 		ConstructSize = 8;
 		Type = eFunction;
 		return;
 	}
-	if ((Pos = SureFind(UCLineIn, "CLASS"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeyClass)) != string::npos)
 	{
 		ConstructSize = 5;
 		Type = eClass;
 		return;
 	}
-	if ((Pos = SureFind(UCLineIn, "PROPERTY"s)) != string::npos)
+	if ((Pos = SureFind(UCLineIn, VBkeyProperty)) != string::npos)
 	{
 		size_t GetLetPos;
-		if ((GetLetPos = SureFind(UCLineIn, "GET"s)) != string::npos)
+		if ((GetLetPos = SureFind(UCLineIn, VBkeyGet)) != string::npos)
 		{
 			if (Pos < GetLetPos)
 			{
@@ -1976,7 +1881,7 @@ void CodeViewer::ParseFindConstruct(size_t &Pos, const string &UCLineIn, WordTyp
 				return;
 			}
 		}
-		if ((GetLetPos = SureFind(UCLineIn, "LET"s)) != string::npos)
+		if ((GetLetPos = SureFind(UCLineIn, VBkeyLet)) != string::npos)
 		{
 			if (Pos < GetLetPos)
 			{
@@ -1986,7 +1891,7 @@ void CodeViewer::ParseFindConstruct(size_t &Pos, const string &UCLineIn, WordTyp
 				return;
 			}
 		}
-		if ((GetLetPos = SureFind(UCLineIn, "SET"s)) != string::npos)
+		if ((GetLetPos = SureFind(UCLineIn, VBkeySet)) != string::npos)
 		{
 			if (Pos < GetLetPos)
 			{
@@ -2006,9 +1911,10 @@ void CodeViewer::ParseFindConstruct(size_t &Pos, const string &UCLineIn, WordTyp
 void CodeViewer::ReadLineToParseBrain(string wholeline, const int linecount, fi_vector<UserData>& ListIn)
 {
 	const string comment = ParseRemoveVBSLineComments(wholeline);
-	while (wholeline.length() > 1)
+	size_t pos = 0;
+	while (wholeline.length() - pos > 1)
 	{
-		string line = ParseDelimtByColon(wholeline);
+		string line = ParseDelimtByColon(wholeline, pos);
 		RemovePadding(line);
 		const string UCline = upperCase(line);
 		UserData UD;
@@ -2034,10 +1940,10 @@ void CodeViewer::ReadLineToParseBrain(string wholeline, const int linecount, fi_
 void CodeViewer::RemoveByVal(string &line)
 {
 	const size_t LL = line.length();
-	size_t Pos = SureFind(lowerCase(line), "byval"s);
+	size_t Pos = SureFindNoCase(line, VBkeyByVal);
 	if (Pos != string::npos)
 	{
-		Pos += 5;
+		Pos += VBkeyByVal.length();
 		if ((SSIZE_T)(LL-Pos) < 0) return;
 		line = line.substr(Pos, (LL-Pos));
 	}
@@ -2067,7 +1973,6 @@ void CodeViewer::RemoveNonVBSChars(string &line)
 
 void CodeViewer::ParseForFunction() // Subs & Collections WIP 
 {
-#ifndef __STANDALONE__
 	const int scriptLines = (int)::SendMessage(m_hwndScintilla, SCI_GETLINECOUNT, 0, 0);
 
 	m_parentLevel = 0; //root
@@ -2102,13 +2007,12 @@ void CodeViewer::ParseForFunction() // Subs & Collections WIP
 	size_t CBCount = ::SendMessage(m_hwndItemList, CB_GETCOUNT, 0, 0)-1; //Zero Based
 	while ((SSIZE_T)CBCount >= 0)
 	{
-		const LRESULT s = ::SendMessage(m_hwndItemList, CB_GETLBTEXTLEN, CBCount, 0);
-		if (s > 1)
+		string keyName = GetComboBoxItemText(m_hwndItemList, CBCount);
+		if (keyName.length() > 1)
 		{
 			UserData ud;
-			ud.m_keyName.resize(s, '\0');
-			::SendMessage(m_hwndItemList, CB_GETLBTEXT, CBCount, (LPARAM)ud.m_keyName.data());
-			ud.m_uniqueKey = lowerCase(ud.m_keyName);
+			ud.m_uniqueKey = lowerCase(keyName);
+			ud.m_keyName = std::move(keyName);
 			FindOrInsertUD(m_componentsDict,ud);
 		}
 		CBCount--;
@@ -2162,7 +2066,6 @@ void CodeViewer::ParseForFunction() // Subs & Collections WIP
 	::SendMessage(m_hwndScintilla, SCI_SETKEYWORDS, 2, (LPARAM)strCompOut.c_str());
 	StrToLower(strVPcoreWords);
 	::SendMessage(m_hwndScintilla, SCI_SETKEYWORDS, 3, (LPARAM)strVPcoreWords.c_str());
-#endif
 }
 
 void CodeViewer::ParseVPCore()
@@ -2212,16 +2115,16 @@ string CodeViewer::ExtractWordOperand(const string &line, const size_t StartPos)
 
 CodeViewer* CodeViewer::GetCodeViewerPtr()
 {
-#ifndef __STANDALONE__
    return (CodeViewer *)GetWindowLongPtr(GWLP_USERDATA);
-#else
-   return nullptr;
-#endif
+}
+
+WinEditor* CodeViewer::GetVpxEditor() const
+{
+   return m_tableEditor->m_vpxEditor;
 }
 
 BOOL CodeViewer::ParseClickEvents(const int id, const SCNotification *pSCN)
 {
-#ifndef __STANDALONE__
    CodeViewer* const pcv = GetCodeViewerPtr();
    switch (id)
    {
@@ -2231,7 +2134,7 @@ BOOL CodeViewer::ParseClickEvents(const int id, const SCNotification *pSCN)
       case ID_SCRIPT_TOGGLE_LAST_ERROR_VISIBILITY:
          SetLastErrorVisibility(!m_lastErrorWidgetVisible); return TRUE;
       case ID_SCRIPT_PREFERENCES:
-         DialogBox(g_app->GetInstanceHandle(), MAKEINTRESOURCE(IDD_CODEVIEW_PREFS), GetHwnd(), CVPrefProc); return TRUE;
+         DialogBoxParam(g_app->GetInstanceHandle(), MAKEINTRESOURCE(IDD_CODEVIEW_PREFS), GetHwnd(), CVPrefProc, (LPARAM)pcv); return TRUE;
       case ID_FIND:
          pcv->ShowFindDialog(); return TRUE;
       case ID_REPLACE:
@@ -2253,13 +2156,11 @@ BOOL CodeViewer::ParseClickEvents(const int id, const SCNotification *pSCN)
       case ID_GO_TO_DEFINITION:
          ShowTooltipOrGoToDefinition(pSCN,false); return TRUE;
    }
-#endif
    return FALSE;
 }
 
 BOOL CodeViewer::ParseSelChangeEvent(const int id, const SCNotification *pSCN)
 {
-#ifndef __STANDALONE__
    CodeViewer* const pcv = GetCodeViewerPtr();
    switch (id)
    {
@@ -2268,11 +2169,10 @@ BOOL CodeViewer::ParseSelChangeEvent(const int id, const SCNotification *pSCN)
          pcv->ShowFindDialog();
          return TRUE;
       }
-      case ID_SAVE:
+      case ID_SAVE: pcv->GetVpxEditor()->ParseCommand(IDM_SAVE, false); return TRUE; // accelerator, the frame only knows the menu's save command, fixes ctrl+s in script editor
       case ID_TABLE_CAMERAMODE:
       case ID_TABLE_LIVEEDIT:
-      case ID_TABLE_PLAY:
-         pcv->m_table->DoCodeViewCommand(id); return TRUE;
+      case ID_TABLE_PLAY: pcv->GetVpxEditor()->ParseCommand(id, false); return TRUE;
       case ID_EDIT_FINDNEXT:
          pcv->Find(); return TRUE;
       case ID_REPLACE:
@@ -2315,13 +2215,11 @@ BOOL CodeViewer::ParseSelChangeEvent(const int id, const SCNotification *pSCN)
       case ID_SHOWAUTOCOMPLETE:
          pcv->ShowAutoComplete(pSCN); return TRUE;
    }//switch (id)
-#endif
    return FALSE;
 }
 
 LRESULT CodeViewer::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-#ifndef __STANDALONE__
    CodeViewer* const pcv = GetCodeViewerPtr();
 
    if (uMsg == UWM_FINDMSGSTRING)
@@ -2357,10 +2255,10 @@ LRESULT CodeViewer::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
          pcv->SetVisible(false); return TRUE;
       case WM_SYSCOMMAND:
       {
-         if (wParam == SC_MINIMIZE && g_pvp != nullptr)
+         if (wParam == SC_MINIMIZE && pcv->GetVpxEditor() != nullptr)
               pcv->m_minimized = true;
 
-         if (wParam == SC_RESTORE && g_pvp != nullptr)
+         if (wParam == SC_RESTORE && pcv->GetVpxEditor() != nullptr)
               pcv->m_minimized = false;
          break;
       }
@@ -2377,14 +2275,10 @@ LRESULT CodeViewer::WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam)
    }
 
    return WndProcDefault(uMsg, wParam, lParam);
-#else
-   return 0;
-#endif
 }
 
 BOOL CodeViewer::OnCommand(WPARAM wparam, LPARAM lparam)
 {
-#ifndef __STANDALONE__
    UNREFERENCED_PARAMETER(lparam);
 
    CodeViewer* const pcv = GetCodeViewerPtr();
@@ -2405,20 +2299,14 @@ BOOL CodeViewer::OnCommand(WPARAM wparam, LPARAM lparam)
          //also see SCN_MODIFIED handling which does more finegrained updating calls
          if (pcv->m_errorLineNumber != -1)
             pcv->UncolorError();
-         pcv->m_table->m_sdsDirtyScript = eSaveDirty;
-         
+         pcv->m_tableEditor->m_table->SetDirtyScript(eSaveDirty);
+
+         // Called on every single edit, so fetch straight into the table's script
          const size_t cchar = ::SendMessage(m_hwndScintilla, SCI_GETTEXTLENGTH, 0, 0);
-         if (cchar == 0)
-         {
-            pcv->m_table->m_script_text = "";
-         }
-         else
-         {
-            string script;
-            script.resize(cchar + 1);
-            ::SendMessage(m_hwndScintilla, SCI_GETTEXT, cchar + 1, (LPARAM)script.data());
-            pcv->m_table->m_script_text = script;
-         }
+         string& script = pcv->m_tableEditor->m_table->m_script_text;
+         script.resize(cchar + 1); // Scintilla expects a buffer with an extra byte for the null terminator
+         ::SendMessage(m_hwndScintilla, SCI_GETTEXT, cchar + 1, (LPARAM)script.data());
+         script.resize(cchar); // remove that terminator again
          return TRUE;
       }
       case CBN_SETFOCUS:
@@ -2435,13 +2323,11 @@ BOOL CodeViewer::OnCommand(WPARAM wparam, LPARAM lparam)
       case BN_CLICKED:
          return ParseClickEvents(id, (SCNotification *)lparam);
    }
-#endif
    return FALSE;
 }
 
 LRESULT CodeViewer::OnNotify(WPARAM wparam, LPARAM lparam)
 {
-#ifndef __STANDALONE__
    const NMHDR* const pnmh = (LPNMHDR)lparam;
    const SCNotification* const pscn = (SCNotification*)lparam;
 
@@ -2450,9 +2336,15 @@ LRESULT CodeViewer::OnNotify(WPARAM wparam, LPARAM lparam)
    CodeViewer* const pcv = GetCodeViewerPtr();
    switch (code)
    {
+      // Scintilla tracks the save point itself, so undoing/redoing back across it also updates the table dirty state
       case SCN_SAVEPOINTREACHED:
       {
-         pcv->m_table->m_sdsDirtyScript = eSaveClean;
+         pcv->m_tableEditor->m_table->SetDirtyScript(eSaveClean);
+         break;
+      }
+      case SCN_SAVEPOINTLEFT:
+      {
+         pcv->m_tableEditor->m_table->SetDirtyScript(eSaveDirty);
          break;
       }
       case SCN_DWELLSTART:
@@ -2510,15 +2402,13 @@ LRESULT CodeViewer::OnNotify(WPARAM wparam, LPARAM lparam)
       }
    }
    return CWnd::OnNotify(wparam, lparam);
-#else 
-   return 0;
-#endif
 }
 
 INT_PTR CALLBACK CVPrefProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-#ifndef __STANDALONE__
-   std::unique_ptr<CodeViewer>& pcv = g_pvp->GetActiveTableEditor()->m_pcv;
+   if (uMsg == WM_INITDIALOG)
+      SetWindowLongPtr(hwndDlg, GWLP_USERDATA, lParam);
+   CodeViewer *const pcv = (CodeViewer *)GetWindowLongPtr(hwndDlg, GWLP_USERDATA);
    switch (uMsg)
    {
    case WM_INITDIALOG:
@@ -2539,8 +2429,8 @@ INT_PTR CALLBACK CVPrefProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
 				pcv->m_lPrefsList->at(i)->GetPrefsFromReg();
 				pcv->m_lPrefsList->at(i)->SetCheckBox(hwndDlg);
 			}
-			pcv->m_bgColor = g_app->m_settings.GetCVEdit_BackGroundColor();
-			pcv->m_bgSelColor = g_app->m_settings.GetCVEdit_BackGroundSelectionColor();
+			pcv->m_bgColor = g_settingsService.GetAppSettings().GetCVEdit_BackGroundColor();
+			pcv->m_bgSelColor = g_settingsService.GetAppSettings().GetCVEdit_BackGroundSelectionColor();
 			pcv->UpdateScinFromPrefs();
 			SNDMSG(GetDlgItem(hwndDlg, IDC_CVP_CHKBOX_SHOWAUTOCOMPLETE), BM_SETCHECK, pcv->m_displayAutoComplete ? BST_CHECKED : BST_UNCHECKED, 0L);
 			SNDMSG(GetDlgItem(hwndDlg, IDC_CVP_CHKBOX_DISPLAYDWELL), BM_SETCHECK, pcv->m_dwellDisplay ? BST_CHECKED : BST_UNCHECKED, 0L);
@@ -2591,19 +2481,19 @@ INT_PTR CALLBACK CVPrefProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
 				case IDC_CVP_CHKBOX_DISPLAYDWELL:
 				{
 					pcv->m_dwellDisplay = !!IsDlgButtonChecked(hwndDlg, IDC_CVP_CHKBOX_DISPLAYDWELL);
-					g_app->m_settings.SetCVEdit_DwellDisplay(pcv->m_dwellDisplay, false);
+					g_settingsService.GetAppSettings().SetCVEdit_DwellDisplay(pcv->m_dwellDisplay, false);
 				}
 				break;
 				case IDC_CVP_CHKBOX_HELPWITHDWELL:
 				{
 					pcv->m_dwellHelp = !!IsDlgButtonChecked(hwndDlg, IDC_CVP_CHKBOX_HELPWITHDWELL);
-					g_app->m_settings.SetCVEdit_DwellHelp(pcv->m_dwellHelp, false);
+					g_settingsService.GetAppSettings().SetCVEdit_DwellHelp(pcv->m_dwellHelp, false);
 				}
 				break;
 				case IDC_CVP_CHKBOX_SHOWAUTOCOMPLETE:
 				{
 					pcv->m_displayAutoComplete = !!IsDlgButtonChecked(hwndDlg, IDC_CVP_CHKBOX_SHOWAUTOCOMPLETE);
-					g_app->m_settings.SetCVEdit_DisplayAutoComplete(pcv->m_displayAutoComplete, false);
+					g_settingsService.GetAppSettings().SetCVEdit_DisplayAutoComplete(pcv->m_displayAutoComplete, false);
 				}
 				break;
 				case IDC_CVP_BUT_COL_BACKGROUND:
@@ -2733,14 +2623,12 @@ INT_PTR CALLBACK CVPrefProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
       EndDialog(hwndDlg, TRUE);
    break;
    }
-#endif
    return FALSE; // be selfish - consume all
    //return DefWindowProc(hwndDlg, uMsg, wParam, lParam);
 }
 
 void CodeViewer::UpdateScinFromPrefs()
 {
-#ifndef __STANDALONE__
 	::SendMessage(m_hwndScintilla, SCI_SETMOUSEDWELLTIME, m_dwellDisplayTime, 0);
 	::SendMessage(m_hwndScintilla, SCI_STYLESETBACK, m_prefEverythingElse->m_sciKeywordID, m_bgColor);
 	::SendMessage(m_hwndScintilla, SCI_SETSELBACK, m_prefEverythingElse->m_sciKeywordID, m_bgSelColor);
@@ -2761,12 +2649,10 @@ void CodeViewer::UpdateScinFromPrefs()
 	const int scriptLines = (int)::SendMessage(m_hwndScintilla, SCI_GETLINECOUNT, 0, 0);
 	//Update the margin width to fit the number of characters required to display the line number * font size
 	::SendMessage(m_hwndScintilla, SCI_SETMARGINWIDTHN, 0, (scriptLines > 0 ? (int)ceil(log10((double)scriptLines) + 3.) : 1) * m_prefEverythingElse->m_pointSize);
-#endif
 }
 
 void CodeViewer::ResizeScintillaAndLastError()
 {
-#ifndef __STANDALONE__
 	const CodeViewer* const pcv = GetCodeViewerPtr();
 
 	const CRect rc = GetClientRect();
@@ -2787,12 +2673,10 @@ void CodeViewer::ResizeScintillaAndLastError()
 			rc.right - rc.left, LAST_ERROR_WIDGET_HEIGHT,
 			SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
 	}
-#endif
 }
 
 void CodeViewer::SetLastErrorVisibility(bool show)
 {
-#ifndef __STANDALONE__
    if (!IsWindow())
       return;
    if (show == m_lastErrorWidgetVisible)
@@ -2802,27 +2686,23 @@ void CodeViewer::SetLastErrorVisibility(bool show)
 	ResizeScintillaAndLastError();
 
 	::ShowWindow(m_hwndLastErrorTextArea, show ? SW_SHOW : SW_HIDE);
-#endif
 }
 
 void CodeViewer::SetLastErrorTextW(const LPCWSTR text)
 {
-#ifndef __STANDALONE__
-   if (!IsWindow())
-      return;
+	if (!IsWindow())
+		return;
 
-   ::SetWindowTextW(m_hwndLastErrorTextArea, text);
+	::SetWindowTextW(m_hwndLastErrorTextArea, text);
 
 	// Scroll to the bottom
 	::SendMessage(m_hwndLastErrorTextArea, EM_LINESCROLL, 0, 9999);
-#endif
 }
 
 void CodeViewer::AppendLastErrorTextW(const wstring& text)
 {
-#ifndef __STANDALONE__
-   if (!IsWindow())
-      return;
+	if (!IsWindow())
+		return;
 
 	const int requiredLength = ::GetWindowTextLength(m_hwndLastErrorTextArea) + (int)text.length() + 1;
 	wchar_t* buf = new wchar_t[requiredLength];
@@ -2839,7 +2719,4 @@ void CodeViewer::AppendLastErrorTextW(const wstring& text)
 	::SendMessage(m_hwndLastErrorTextArea, EM_LINESCROLL, 0, 9999);
 
 	delete[] buf;
-#else
-	PLOGE << MakeString(text);
-#endif
 }

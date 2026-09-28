@@ -8,7 +8,7 @@
 class InputAction final : public ButtonMapping::ButtonMappingHandler
 {
 public:
-   InputAction(class InputManager* eventManager, const string& settingId, const string& label, const string& defaultMappings, const std::function<void(const InputAction&, bool, bool)>& onChange)
+   InputAction(class InputManager* eventManager, const string& settingId, const string& label, const string& defaultMappings, const std::function<void(InputAction&, bool, bool)>& onChange)
       : m_settingId(settingId)
       , m_label(label)
       , m_defaultMappings(defaultMappings)
@@ -24,6 +24,8 @@ public:
    void SaveMapping(Settings& settings) const;
    void SetMapping(const string& mappingString);
    void AddMapping(const vector<ButtonMapping>& mapping);
+   void UnmapDevice(uint16_t deviceId);
+   bool IsMappedToDevice(uint16_t deviceId) const;
    bool HasMapping(const vector<ButtonMapping>& mapping) const;
    bool IsMapped() const { return !m_inputMappings.empty(); }
    const string& GetDefaultMappingString() const { return m_defaultMappings; }
@@ -34,6 +36,7 @@ public:
    void OnInputChanged(ButtonMapping* mapping) override;
    bool IsPressed() const { return m_isPressed; }
    void SetPressed(bool isPressed) { m_isPressed = isPressed; }
+   uint64_t GetLastStateChange() const { return m_lastOnChangeUs; }
 
    void SetActionId(unsigned int id) { m_actionId = id; }
    unsigned int GetActionId() const { return m_actionId; }
@@ -53,13 +56,13 @@ private:
    const string m_settingId;
    const string m_label;
    const string m_defaultMappings;
-   const std::function<void(const InputAction&, bool, bool)> m_onStateChange;
+   const std::function<void(InputAction&, bool, bool)> m_onStateChange;
    class InputManager* const m_eventManager;
    
    vector<vector<ButtonMapping>> m_inputMappings;
    vector<bool> m_directStates;
    bool m_isPressed = false;
-   unsigned int m_lastOnChangeMs = 0;
-   int m_repeatPeriodMs = -1;
+   uint64_t m_lastOnChangeUs = 0;
+   int64_t m_repeatPeriodUs = -1;
    unsigned int m_actionId = 0xFFFFFFFF;
 };

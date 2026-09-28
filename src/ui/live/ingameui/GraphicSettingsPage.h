@@ -14,7 +14,7 @@ public:
    void Close(bool isBackwardAnimation) override;
 
 private:
-   void BuildPage();
+   void BuildPage() override;
    void OnStaticRenderDirty();
 
    unsigned int m_notificationId = 0;

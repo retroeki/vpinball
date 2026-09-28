@@ -4,6 +4,9 @@
 
 #include "common.h"
 #include "plugins/ScriptablePlugin.h"
+#include "SettingsDefaults.h"
+
+#include <unordered_map>
 
 namespace PinMAME {
 
@@ -15,8 +18,11 @@ public:
 
    PSC_IMPLEMENT_REFCOUNT()
 
-   int GetValue(const string& key) const { return 0; }
-   void SetValue(const string& key, int v) { }
+   int GetValue(const string& key) const;
+   void SetValue(const string& key, int v);
+
+private:
+   std::unordered_map<string, int> m_values;
 };
 
 }

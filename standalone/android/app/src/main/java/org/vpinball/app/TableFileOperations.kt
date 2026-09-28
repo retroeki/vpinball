@@ -5,9 +5,8 @@ import android.net.Uri
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import org.vpinball.app.jni.VPinballLogLevel
+import org.vpinball.app.jni.VPinballPath
 
 class TableFileOperations(private val getTablesPath: () -> String) {
     private fun toRelativePath(path: String): String {
@@ -152,14 +151,20 @@ class TableFileOperations(private val getTablesPath: () -> String) {
             return files
         }
 
+        val preferencesPath = VPinballManager.getPath(VPinballPath.PREFERENCES)
+        val assetsPath = VPinballManager.getPath(VPinballPath.ASSETS)
+
         try {
-            File(path).walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    if (ext.isEmpty() || file.extension.lowercase() == ext.lowercase().removePrefix(".")) {
-                        files.add(file.absolutePath)
+            File(path)
+                .walkTopDown()
+                .onEnter { dir -> dir.absolutePath != preferencesPath && dir.absolutePath != assetsPath }
+                .forEach { file ->
+                    if (file.isFile) {
+                        if (ext.isEmpty() || file.extension.lowercase() == ext.lowercase().removePrefix(".")) {
+                            files.add(file.absolutePath)
+                        }
                     }
                 }
-            }
         } catch (e: Exception) {
             VPinballManager.log(VPinballLogLevel.ERROR, "Error listing files in $path: ${e.message}")
         }
@@ -201,35 +206,6 @@ class TableFileOperations(private val getTablesPath: () -> String) {
             true
         } catch (_: Exception) {
             false
-        }
-    }
-
-    fun addDirectoryToZip(zip: ZipOutputStream, directoryPath: String, basePath: String, onProgress: ((Int) -> Unit)? = null) {
-        val allFiles = File(directoryPath).walkTopDown().toList()
-        val fileCount = allFiles.count { it.isFile }
-        var processedFiles = 0
-
-        allFiles.forEach { file ->
-            val relativePath = file.absolutePath.drop(basePath.length + 1)
-
-            if (relativePath.isEmpty()) {
-                return@forEach
-            }
-
-            if (file.isDirectory) {
-                zip.putNextEntry(ZipEntry("$relativePath/"))
-                zip.closeEntry()
-            } else {
-                zip.putNextEntry(ZipEntry(relativePath))
-                FileInputStream(file).use { input -> input.copyTo(zip) }
-                zip.closeEntry()
-
-                processedFiles++
-                if (fileCount > 0) {
-                    val progress = (processedFiles * 100) / fileCount
-                    onProgress?.invoke(progress)
-                }
-            }
         }
     }
 

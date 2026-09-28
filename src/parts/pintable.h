@@ -4,26 +4,29 @@
 
 #pragma once
 
-#include "unordered_dense.h"
 
-#include <atomic>
-#include "utils/hash.h"
+#include "math/matrix.h"
+#include "parts/Collection.h"
+#include "parts/pinbinary.h"
 #include "renderer/RenderProbe.h"
 #include "renderer/ViewSetup.h"
+#include "unordered_dense.h"
+#include "utils/eventproxy.h"
+#include "utils/fileio.h"
+#include "utils/hash.h"
 
-#include "input/InputManager.h"
+#include "pole/pole.h"
 
-#include "ui/win/PinTableMDI.h"
+#include <atomic>
 
-#ifndef __STANDALONE__
-#include "ui/dialogs/SearchSelectDialog.h"
-#else
+#ifdef __STANDALONE__
 #include <iostream>
 class Light;
 #endif
 
-#define VIEW_PLAYFIELD 1
-#define VIEW_BACKGLASS 2
+class TableHash;
+
+
 
 #define MIN_ZOOM 0.126f // purposely make them offset from powers to 2 to account for roundoff error
 #define MAX_ZOOM 63.9f
@@ -44,12 +47,19 @@ struct WhereUsedInfo
    string whereUsedPropertyName; // Property name where used (If searching for images this could be 'Image', 'Side Image' etc.  If search for materials this could be 'Material', 'Cap Material, 'Base Material' etc.
 };
 
+namespace VPX
+{
+class Sound;
+};
+class Texture;
+class Material;
+class Collection;
+class Flipper;
 
 class VPXFileFeedback;
 namespace VPX::InGameUI { class InGameUIItem; }
 
-class PinTable : public CWnd,
-                 public CComObjectRootEx<CComSingleThreadModel>,
+class PinTable : public CComObjectRootEx<CComSingleThreadModel>,
                  public IDispatchImpl<ITable, &IID_ITable, &LIBID_VPinballLib>,
                  public IConnectionPointContainerImpl<PinTable>,
                  public EventProxy<PinTable, &DIID_ITableEvents>,
@@ -57,17 +67,15 @@ class PinTable : public CWnd,
                  // allowing VBScript to get the set of events to sync to.
                  // VBA does not need this interface for some reason
                  public IProvideClassInfo2Impl<&CLSID_Table, &DIID_ITableEvents, &LIBID_VPinballLib>,
-                 public ISelect,
                  public IScriptable,
-                 public IScriptableHost,
                  public IEditable,
                  public IPerPropertyBrowsing // Ability to fill in dropdown in property browser
 {
 public:
-#ifdef __STANDALONE__
+#ifdef VPX_MANUAL_SCRIPT_DISPATCH
    STDMETHOD(GetIDsOfNames)(REFIID /*riid*/, LPOLESTR* rgszNames, UINT cNames, LCID lcid,DISPID* rgDispId);
    STDMETHOD(Invoke)(DISPID dispIdMember, REFIID /*riid*/, LCID lcid, WORD wFlags, DISPPARAMS* pDispParams, VARIANT* pVarResult, EXCEPINFO* pExcepInfo, UINT* puArgErr);
-   STDMETHOD(GetDocumentation)(INT index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
+   STDMETHOD(GetDocumentation)(MEMBERID index, BSTR *pBstrName, BSTR *pBstrDocString, DWORD *pdwHelpContext, BSTR *pBstrHelpFile);
    HRESULT FireDispID(const DISPID dispid, DISPPARAMS * const pdispparams) final;
 #endif
    STDMETHOD(get_BallFrontDecal)(/*[out, retval]*/ BSTR *pVal);
@@ -186,10 +194,6 @@ public:
    STDMETHOD(put_GlassHeight)(/*[in]*/ float newVal);
    STDMETHOD(get_TableHeight)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_TableHeight)(/*[in]*/ float newVal);
-   STDMETHOD(get_DisplayBackdrop)(/*[out, retval]*/ VARIANT_BOOL *pVal);
-   STDMETHOD(put_DisplayBackdrop)(/*[in]*/ VARIANT_BOOL newVal);
-   STDMETHOD(get_DisplayGrid)(/*[out, retval]*/ VARIANT_BOOL *pVal);
-   STDMETHOD(put_DisplayGrid)(/*[in]*/ VARIANT_BOOL newVal);
    STDMETHOD(get_Image)(/*[out, retval]*/ BSTR *pVal);
    STDMETHOD(put_Image)(/*[in]*/ BSTR newVal);
 
@@ -200,7 +204,6 @@ public:
 
    STDMETHOD(get_FileName)(/*[out, retval]*/ BSTR *pVal);
 
-   const WCHAR *get_Name() const final;
    STDMETHOD(get_Name)(/*[out, retval]*/ BSTR *pVal);
    STDMETHOD(put_Name)(/*[in]*/ BSTR newVal);
    STDMETHOD(get_EnableAntialiasing)(/*[out, retval]*/ UserDefaultOnOff *pVal);
@@ -219,9 +222,6 @@ public:
    STDMETHOD(put_OverridePhysics)(/*[in]*/ PhysicsSet newVal);
    STDMETHOD(get_OverridePhysicsFlippers)(/*[out, retval]*/ VARIANT_BOOL *pVal);
    STDMETHOD(put_OverridePhysicsFlippers)(/*[in]*/ VARIANT_BOOL newVal);
-
-   STDMETHOD(ImportPhysics)();
-   STDMETHOD(ExportPhysics)();
 
    STDMETHOD(get_MaxSeparation)(/*[out, retval]*/ float *pVal);
    STDMETHOD(put_MaxSeparation)(/*[in]*/ float newVal);
@@ -301,51 +301,31 @@ public:
    PinTable();
    ~PinTable() override;
 
-   PinTable *CopyForPlay();
-
-   void ClearForOverwrite() final;
-   void InitBuiltinTable(const size_t tableId);
-   void InitTablePostLoad();
+public:
    void RemoveInvalidReferences();
 
-   HRESULT GetTypeName(BSTR *pVal) const final;
-
-   void SetCaption(const string &szCaption);
-   void SetMouseCapture();
-   int ShowMessageBox(const char *text) const;
-   POINT GetScreenPoint() const;
-
-   void UIRenderPass2(Sur *const psur) final;
-   void Paint(HDC hdc);
-   ISelect *HitTest(const int x, const int y);
-   void SetDirtyDraw() final;
-
-   void Render3DProjection(Sur *const psur);
+   void SetDirtyDraw();
 
    bool GetDecalsEnabled()  const { return m_renderDecals; }  // Enable backdrop image, decals and lights on backdrop
    bool GetEMReelsEnabled() const { return m_renderEMReels; } // Enable dispreel on backdrop
 
-   void Copy(int x, int y);
-   void Paste(const bool atLocation, const int x, const int y);
-
-   void ExportBlueprint();
-   void ExportTableMesh();
-   void ImportBackdropPOV(const string &filename);
-   void ExportBackdropPOV() const;
+   void ImportBackdropPOV(const std::filesystem::path &filename, const bool toUserSettings);
+   void ExportBackdropPOV(const std::filesystem::path &filename) const;
 
    static std::array<string, 18> VPPelementNames; // names of the fields in a .vpp file
-   void ImportVPP(const string &filename);
+   void ImportVPP(const std::filesystem::path &filename);
+   void ExportVPP(const std::filesystem::path &filename, Flipper *const flipper);
 
    enum class OptionEventType { Initialized, Changed, Reseted, EndOfEdit };
    void FireOptionEvent(OptionEventType event);
 
-   VPX::Sound *ImportSound(const string &filename);
-   void ReImportSound(VPX::Sound *const pps, const string &filename);
-   bool ExportSound(VPX::Sound *const pps, const string &filename);
+   VPX::Sound *ImportSound(const std::filesystem::path &filename);
+   void ReImportSound(VPX::Sound *const pps, const std::filesystem::path &filename);
+   bool ExportSound(VPX::Sound *const pps, const std::filesystem::path &filename);
    void RemoveSound(VPX::Sound *const pps);
-   bool ExportImage(const Texture *const ppi, const string &filename);
-   Texture* ImportImage(const string &filename, const string &imageName);
+   Texture* ImportImage(const std::filesystem::path &filename, const string &imageName);
    void RemoveImage(Texture *const ppi);
+
    Texture *GetImage(const string &szName) const;
    bool GetImageLink(const Texture *const ppi) const;
    PinBinary *GetImageLinkBinary(const int id);
@@ -357,142 +337,109 @@ public:
    void ShowWhereMaterialsUsed(vector<WhereUsedInfo> &);
    void ShowWhereMaterialUsed(vector<WhereUsedInfo> &, Material *const ppi);
 
+   void ParseScript(const string &script, vector<string> &functions, vector<string> &identifiers, const std::function<void(const string &, int)>& onDuplicate) const;
    string AuditTable(bool log) const;
 
-   void ListCustomInfo(HWND hwndListView);
-   int AddListItem(HWND hwndListView, const string &szName, const string &szValue1, LPARAM lparam);
-
-   void ImportFont(HWND hwndListView, const string &filename);
-   void ListFonts(HWND hwndListView);
-   int AddListBinary(HWND hwndListView, PinBinary *ppb);
+   void AddFont(PinFont *const ppf);
    void RemoveFont(PinFont *const ppf);
+   const vector<PinFont *> &GetFontList() const { return m_vfont; }
 
-   void NewCollection(const HWND hwndListView, const bool fFromSelection);
-   void ListCollections(HWND hwndListView);
-   int AddListCollection(HWND hwndListView, CComObject<Collection> *pcol);
-   void RemoveCollection(CComObject<Collection> *pcol);
-   void SetCollectionName(Collection *pcol, string name, HWND hwndList, int index);
+   // Expected by CodeViewer
+   void SetDirtyScript(SaveDirtyState sds);
 
-   void DoContextMenu(int x, int y, const int menuid, ISelect *psel);
-   void DoCommand(int icmd, int x, int y) final;
-   bool FMutilSelLocked();
-
-   void SelectItem(IScriptable *piscript) final;
-   void DoCodeViewCommand(int command) final;
-   void SetDirtyScript(SaveDirtyState sds) final;
-   string GetTableFilename() const final { return m_filename; }
    void ExportMesh(ObjLoader &loader) final;
 
-   // Multi-object manipulation
-   Vertex2D GetCenter() const final;
-   void PutCenter(const Vertex2D &pv) final;
-   void FlipY(const Vertex2D &pvCenter) final;
-   void FlipX(const Vertex2D &pvCenter) final;
-   void Rotate(const float ang, const Vertex2D &pvCenter, const bool useElementCenter) final;
-   void Scale(const float scalex, const float scaley, const Vertex2D &pvCenter, const bool useElementCenter) final;
-   void Translate(const Vertex2D &pvOffset) final;
-
-   // IEditable (mostly bogus for now)
-   void UIRenderPass1(Sur *const psur) final { }
-   ItemTypeEnum GetItemType() const final { return eItemTable; }
-   HRESULT InitLoad(IStream *pstm, PinTable *ptable, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey) final;
-   HRESULT InitPostLoad() final { return S_OK; }
-   HRESULT InitVBA(bool fNew, WCHAR *const wzName) final { return S_OK; }
-   ISelect *GetISelect() final { return (ISelect *)this; }
-   const ISelect *GetISelect() const final { return (const ISelect *)this; }
-   void SetDefaults(const bool fromMouseClick) final { }
-   IScriptable *GetScriptable() final { return (IScriptable *)this; }
-   const IScriptable *GetScriptable() const final { return (const IScriptable *)this; }
-   void SetDefaultPhysics(const bool fromMouseClick) final;
-
+#pragma region IEditable
+public:
    PinTable *GetPTable() final { return this; }
    const PinTable *GetPTable() const final { return this; }
-   static string GetElementName(IEditable *pedit);
+   IHitable *GetIHitable() final { return nullptr; }
+   const IHitable *GetIHitable() const final { return nullptr; }
+   IRenderable *GetIRenderable() final { return nullptr; }
+   const IRenderable *GetIRenderable() const final { return nullptr; }
+   IScriptable *GetIScriptable() final { return static_cast<IScriptable *>(this); }
+   const IScriptable *GetIScriptable() const final { return static_cast<const IScriptable *>(this); }
+   IFireEvents *GetIFireEvents() final { return nullptr; }
+   ItemTypeEnum GetItemType() const final { return eItemTable; }
+   static inline constexpr ItemTypeEnum ItemType = eItemTable;
+   void SetDefaults(const bool fromMouseClick) final { }
+   void SetDefaultPhysics(const bool fromMouseClick) final;
+   void WriteRegDefaults() final { }
+   EventProxyBase *GetEventProxyBase() final { return static_cast<EventProxyBase *>(this); }
+   void Save(IObjectWriter &writer, const bool saveForUndo) final;
+   void ClearForOverwrite() final;
+   void Load(IObjectReader &reader) final;
+   PinTable *CopyForPlay() const final; // Not exactly const as we add a reference, and copied table keeps a non const reference on this
+   Vertex2D GetCenter() const final { return { 0.f, 0.f }; }
+   void FlipY(const Vertex2D &pvCenter) final { }
+   void FlipX(const Vertex2D &pvCenter) final { }
+   void Rotate(const float ang, const Vertex2D &pvCenter, const bool useElementCenter) final { }
+   void Scale(const float scalex, const float scaley, const Vertex2D &pvCenter, const bool useElementCenter) final { }
+   void Translate(const Vertex2D &offset) final { }
+#pragma endregion
 
-   IEditable *GetElementByName(const char *const name) const;
-   void OnDelete();
+#pragma region IScriptable
+   IDispatch *GetIDispatch() final { return static_cast<IDispatch *>(this); }
+   const IDispatch *GetIDispatch() const final { return static_cast<const IDispatch *>(this); }
+#pragma endregion
 
-   void DoLeftButtonDown(int x, int y, bool zoomIn);
-   void OnLeftButtonUp(int x, int y);
-   void OnRightButtonDown(int x, int y);
-   void FillCollectionContextMenu(CMenu &mainMenu, CMenu &colSubMenu, ISelect *psel);
-   void FillLayerContextMenu(CMenu &mainMenu, CMenu &layerSubMenu, ISelect *psel);
-   void AssignSelectionToPartGroup(PartGroup *group);
-   void OnRightButtonUp(int x, int y);
-   void DoMouseMove(int x, int y);
-   void OnLeftDoubleClick(int x, int y);
-   void UseTool(int x, int y, int tool);
-   void OnKeyDown(int key);
+#pragma region IPerPropertyBrowsing
+   // FIXME Remove as this is unmaintained deadcode (no internal property page, no will for VPX to offer a data model for an external COM editor)
+   STDMETHOD(GetDisplayString)(DISPID dispID, BSTR *pbstr) { return ResultFromScode(E_NOTIMPL); }
+   STDMETHOD(MapPropertyToPage)(DISPID dispID, CLSID *pclsid) { return ResultFromScode(E_NOTIMPL); }
+   STDMETHOD(GetPredefinedStrings)(DISPID dispID, CALPOLESTR *pcaStringsOut, CADWORD *pcaCookiesOut);
+   STDMETHOD(GetPredefinedValue)(DISPID dispID, DWORD dwCookie, VARIANT *pVarOut);
+   STDMETHOD(GetPredefinedStrings)(DISPID dispID, CALPOLESTR *pcaStringsOut, CADWORD *pcaCookiesOut, IEditable *piedit);
+   STDMETHOD(GetPredefinedValue)(DISPID dispID, DWORD dwCookie, VARIANT *pVarOut, IEditable *piedit);
+#pragma endregion
 
-   // Transform editor window coordinates to table coordinates
-   Vertex2D TransformPoint(int x, int y) const;
+   HRESULT Save(VPXFileFeedback &feedback);
+   HRESULT SaveToStorage(InMemStructuredStorage *pstg, VPXFileFeedback &feedback);
+   HRESULT LoadGameFromFilename(const std::filesystem::path &filename, VPXFileFeedback &feedback);
+   void LoadScriptOverride(const std::filesystem::path& scriptPath);
 
-   void ClearMultiSel(ISelect *newSel = nullptr);
-   bool MultiSelIsEmpty() const;
-   ISelect *GetSelectedItem() const { return m_vmultisel.ElementAt(0); }
-   void AddMultiSel(ISelect *psel, const bool add, const bool update, const bool contextClick);
+private:
+   HRESULT SaveInfo(InMemStructuredStorage *pstg, TableHash *const hash);
+   HRESULT SaveCustomInfo(InMemStructuredStorage *pstg, InMemStream *pstmTags, TableHash *const hash);
+   static HRESULT WriteInfoValue(InMemStructuredStorage *pstg, const string &name, const string &szValue, TableHash *const hash);
+   static void ReadInfoValue(POLE::Storage &storage, const string &wzName, string &output, TableHash *const hash);
+   void LoadInfo(POLE::Storage &storage, TableHash *const hash, int version);
+   void LoadCustomInfo(POLE::Storage &storage, TableHash *const hash, int version);
 
-   void BeginAutoSaveCounter();
-   void EndAutoSaveCounter();
-   void AutoSave();
-
-   HRESULT TableSave();
-   HRESULT SaveAs();
-   HRESULT Save(const bool saveAs);
-   HRESULT SaveToStorage(IStorage *pstg);
-   HRESULT SaveToStorage(IStorage *pstg, VPXFileFeedback& feedback);
-   HRESULT SaveInfo(IStorage *pstg, HCRYPTHASH hcrypthash);
-   HRESULT SaveCustomInfo(IStorage *pstg, IStream *pstmTags, HCRYPTHASH hcrypthash);
-   static HRESULT WriteInfoValue(IStorage *pstg, const wstring& wzName, const string &szValue, HCRYPTHASH hcrypthash);
-   static HRESULT ReadInfoValue(IStorage *pstg, const wstring& wzName, string &output, HCRYPTHASH hcrypthash);
-   HRESULT SaveData(IStream *pstm, HCRYPTHASH hcrypthash, const bool saveForUndo) final;
-   HRESULT LoadGameFromFilename(const string &filename);
-   HRESULT LoadGameFromFilename(const string &filename, VPXFileFeedback& feedback);
-   HRESULT LoadInfo(IStorage *pstg, HCRYPTHASH hcrypthash, int version);
-   HRESULT LoadCustomInfo(IStorage *pstg, IStream *pstmTags, HCRYPTHASH hcrypthash, int version);
-   HRESULT LoadData(IStream *pstm, int version, HCRYPTHASH hcrypthash, HCRYPTKEY hcryptkey);
-   IEditable *GetIEditable() final { return (IEditable *)this; }
-   const IEditable *GetIEditable() const final { return (const IEditable *)this; }
-   void Delete() final { } // Can't delete table itself
-   void Uncreate() final { }
-   bool LoadToken(const int id, BiffReader *const pbr) final;
-
-   virtual IDispatch *GetPrimary() { return GetDispatch(); }
-   IDispatch *GetDispatch() final { return (IDispatch *)this; }
-   const IDispatch *GetDispatch() const final { return (const IDispatch *)this; }
-   IFireEvents *GetIFireEvents() final { return (IFireEvents *)this; }
-
-   void SetZoom(float zoom);
-   void SetMyScrollInfo();
-
-   void BeginUndo() final;
-   void EndUndo() final;
-   void Undo();
-
+public:
    void Uncreate(IEditable *pie);
    void Undelete(IEditable *pie);
 
-   STDMETHOD(GetDisplayString)(DISPID dispID, BSTR *pbstr) { return hrNotImplemented; }
-   STDMETHOD(MapPropertyToPage)(DISPID dispID, CLSID *pclsid) { return hrNotImplemented; }
-   STDMETHOD(GetPredefinedStrings)(DISPID dispID, CALPOLESTR *pcaStringsOut, CADWORD *pcaCookiesOut);
-   STDMETHOD(GetPredefinedValue)(DISPID dispID, DWORD dwCookie, VARIANT *pVarOut);
+   void ReorderParts(bool isDrawingOrder);
 
-   STDMETHOD(GetPredefinedStrings)(DISPID dispID, CALPOLESTR *pcaStringsOut, CADWORD *pcaCookiesOut, IEditable *piedit);
-   STDMETHOD(GetPredefinedValue)(DISPID dispID, DWORD dwCookie, VARIANT *pVarOut, IEditable *piedit);
+#pragma region Scene Parts
+public:
+   const vector<IEditable *> &GetParts() const { return m_vedit; }
+   bool HasPart(IEditable *part) const { return std::ranges::find(m_vedit, part) != m_vedit.end(); }
+   void AddPart(IEditable *part);
+   void RemovePart(IEditable *part);
+   void RenamePart(IEditable *part, const wstring& newName);
+   void MovePartToFront(IEditable *part);
+   void MovePartToBack(IEditable *part);
+   IEditable *GetElementByName(const char *const name) const;
 
-   void OnLButtonDown(int x, int y) final;
-   void OnLButtonUp(int x, int y) final;
-   void OnMouseMove(int x, int y) final;
-   void OnMouseMove(const short x, const short y);
+private:
+   vector<IEditable *> m_vedit;
+#pragma endregion
 
-   void SetDefaultView();
-   void GetViewRect(FRect *pfrect) const;
 
-   bool IsNameUnique(const wstring& wzName) const;
-   void GetUniqueName(const ItemTypeEnum type, WCHAR *const wzUniqueName, const size_t wzUniqueName_maxlength) const;
-   void GetUniqueName(const wstring& wzRoot, WCHAR *const wzUniqueName, const size_t wzUniqueName_maxlength) const;
-   void GetUniqueNamePasting(const int type, WCHAR *const wzUniqueName, const size_t wzUniqueName_maxlength) const;
+#pragma region Unique name ids
+public:
+   bool IsNameUnique(const wstring &wzName) const;
+   void GetUniqueName(const ItemTypeEnum type, wstring &wzUniqueName) const;
+   wstring GetUniqueName(const wstring &wzRoot) const;
 
+private:
+   ankerl::unordered_dense::set<wstring> m_scriptableNames;
+#pragma endregion
+
+
+public:
    float GetSurfaceHeight(const string &name, float x, float y) const;
 
    void SetLoadDefaults();
@@ -502,15 +449,8 @@ public:
    void CheckDirty();
    bool FDirty() const;
 
-   void FVerifySaveToClose();
-
    VPX::Sound *GetSound(const string &name) const;
 
-   void UpdateCollection(const int index);
-   void MoveCollectionUp(CComObject<Collection> *pcol);
-   void MoveCollectionDown(CComObject<Collection> *pcol);
-   void UpdatePropertyImageList();
-   void UpdatePropertyMaterialList();
    int GetDetailLevel() const { return m_settings.GetPlayer_AlphaRampAccuracy(); } // used for rubber, ramp and ball
 
    FRect3D GetBoundingBox() const;
@@ -519,7 +459,7 @@ public:
 
    bool RenderSolid() const { return m_renderSolid; }
 
-   void InvokeBallBallCollisionCallback(const class HitBall *b1, const class HitBall *b2, float hitVelocity);
+   static void InvokeBallBallCollisionCallback(const class HitBall *b1, const class HitBall *b2, float hitVelocity);
 
    BEGIN_COM_MAP(PinTable)
    COM_INTERFACE_ENTRY(ITable)
@@ -534,70 +474,120 @@ public:
    CONNECTION_POINT_ENTRY(DIID_ITableEvents)
    END_CONNECTION_POINT_MAP()
 
-   void ListMaterials(HWND hwndListView);
-   int AddListMaterial(HWND hwndListView, Material *const pmat);
+#pragma region Material
+public:
    void RemoveMaterial(Material *const pmat);
    void AddMaterial(Material *const pmat);
-
    bool IsMaterialNameUnique(const string &name) const;
    Material *GetMaterial(const string &name) const;
-   Material *GetSurfaceMaterial(const string &name) const;
-   Texture *GetSurfaceImage(const string &name) const;
+   Material *GetSurfaceMaterial(const wstring &name) const;
+   Texture *GetSurfaceImage(const wstring &name) const;
+   bool IsDummyMaterial(const Material *const mat) const { return mat == m_dummyMaterial.get(); }
 
-   bool GetCollectionIndex(const ISelect *const element, int &collectionIndex, int &elementIndex);
+private:
+   std::unique_ptr<Material> m_dummyMaterial;
+#pragma endregion
 
-   void LockElements();
 
-   string m_filename;
+#pragma region Collection
+public:
+   void AddCollection(CComObject<Collection> *collection);
+   void RemoveCollection(CComObject<Collection> *collection);
+   void RenameCollection(Collection *collection, const wstring &newName);
+   void MoveCollectionUp(CComObject<Collection> *pcol);
+   void MoveCollectionDown(CComObject<Collection> *pcol);
+   const vector<CComObject<Collection> *> &GetCollections() const { return m_vcollection; }
+   bool GetCollectionIndex(const IEditable *const element, int &collectionIndex, int &elementIndex);
+   void ToggleCollectionMembership(const int colIndex, const vector<IEditable *> &selection);
+   const wstring &GetCollectionNameByElement(const IEditable *const element) const;
+
+private:
+   vector<CComObject<Collection> *> m_vcollection;
+#pragma endregion
+
+
+public:
+   std::filesystem::path m_filename;
    string m_title;
 
    // Flag that disables all table edition. Lock toggles are counted to identify version changes in a table (for example to guarantee untouched table for tournament)
    bool IsLocked() const { return (m_tablelocked & 1) != 0; }
-   void ToggleLock() { BeginUndo(); MarkForUndo(); m_tablelocked++; EndUndo(); SetDirtyDraw(); }
+   void ToggleLock() { m_tablelocked++; }
 
-   bool TournamentModePossible() const { return IsLocked() && !FDirty() && m_pcv->external_script_name.empty(); }
+   bool TournamentModePossible() const { return IsLocked() && !FDirty() && m_external_script_name.empty(); }
 
-   void SetSettingsFileName(const string &path)
+   // Override automatic ini path (used for commandline override)
+   void SetSettingsFileName(const std::filesystem::path &path)
    {
-      m_iniFileName = FileExists(path) ? path : string();
+      m_iniFileName = FileExists(path) ? path : std::filesystem::path();
       m_settings.SetIniPath(GetSettingsFileName());
       m_settings.Load(false);
    }
 
-   string GetSettingsFileName() const
+   // Get the ini file name to use for this table (either overridden or derived from table or folder name)
+   std::filesystem::path GetSettingsFileName() const
    {
+      // Overriden externally (on command line)
       if (!m_iniFileName.empty() && FileExists(m_iniFileName))
          return m_iniFileName;
-      string INIFilename = m_filename;
-      if (ReplaceExtensionFromFilename(INIFilename, "ini"s))
-         return INIFilename;
-      return string();
+
+      // File not yet saved => No table ini file available
+      if (!FileExists(m_filename))
+         return std::filesystem::path();
+
+      // Table ini file alongside table file, name matching table filename
+      std::filesystem::path tableIni = m_filename;
+      tableIni.replace_extension(".ini");
+      if (FileExists(tableIni))
+         return tableIni;
+
+      // Table ini file alongside table file, name matching folder name
+      const auto folder = m_filename.parent_path();
+      auto fn = folder.filename();
+      fn += ".ini"sv;
+      std::filesystem::path folderIni = folder / fn;
+      folderIni = find_case_insensitive_file_path(folderIni);
+      if (!folderIni.empty())
+         return folderIni;
+
+      // No existing file: defaults to ini file alongside table file, name matching table filename
+      return tableIni;
    }
 
-   string m_iniFileName;
-   Settings m_settings; // Settings for this table (apply overrides above application settings)
+   // Settings for this table (apply overrides above application settings)
+   Settings &GetSettings() { return m_settings; }
+   const Settings &GetSettings() const { return m_settings; }
 
    PinTable * m_liveBaseTable = nullptr; // Defined when this table is a live shallow copy of another table
-   template <class T> T *GetLiveFromStartup(T *obj) { return static_cast<T *>(m_startupToLive[obj]); }
-   template <class T> T *GetStartupFromLive(T *obj) { return static_cast<T *>(m_liveToStartup[obj]); }
+   template <class T> T *GetLiveFromStartup(T *obj)
+   {
+      const auto it = m_startupToLive.find(obj);
+      return it != m_startupToLive.end() ? static_cast<T *>(it->second) : nullptr;
+   }
+   template <class T> T *GetStartupFromLive(T *obj)
+   {
+      const auto it = m_liveToStartup.find(obj);
+      return it != m_liveToStartup.end() ? static_cast<T *>(it->second) : nullptr;
+   }
+
+   // FIXME circular dependency with PinTableWnd, needed while splitting Win32 editor from core parts, but must be removed afterward
+   // Only ever set by PinTableWnd's constructor, so this stays null in a build without the Win32 editor
+   class PinTableWnd *m_tableEditor = nullptr;
 
 private:
+   Settings m_settings;
+   std::filesystem::path m_iniFileName;
+
    ankerl::unordered_dense::map<void *, void *> m_startupToLive; // For live table, maps back and forth to startup table editable parts, materials,...
    ankerl::unordered_dense::map<void *, void *> m_liveToStartup;
 
 public:
-
-   // editor viewport
-   Vertex2D m_offset;
-   float m_zoom;
-
-   VectorProtected<ISelect> m_vmultisel;
-
    float m_left = 0.f; // always zero for now
    float m_top = 0.f; // always zero for now
    float m_right = 0.f;
    float m_bottom = 0.f;
 
+   Vertex2D EvaluateGlassHeight() const;
    float m_glassBottomHeight = 210.f; // Height of glass above playfield at bottom of playfield
    float m_glassTopHeight = 210.f; // Height of glass above playfield at top of playfield
 
@@ -613,7 +603,6 @@ public:
    const ViewSetup& GetViewSetup() const { return mViewSetups[GetViewMode()]; }
    ViewSetup mViewSetups[NUM_BG_SETS];
    string m_BG_image[NUM_BG_SETS];
-   ViewSetupID m_currentBackglassMode; // POV shown in the UI (not persisted)
 private:
    void UpdateCurrentBGSet();
    bool m_isFSSViewModeEnabled = false; // Flag telling if this table supports Full Single Screen POV (defaults is to use it in desktop mode if available)
@@ -654,14 +643,10 @@ public:
    uint32_t m_tblAutoStartRetry; // msecs before retrying to autostart.
    bool m_tblAutoStartEnabled;
 
-   bool m_tblMirrorEnabled = false; // Mirror tables left to right.  This is activated by a cheat during table selection.
-
    bool m_script_protected = false; // To be able to decrypt old tables with protected script
 
    float m_difficulty = 0.2f; // table difficulty Level
    float m_globalDifficulty;  // global difficulty, i.e. table difficulty optionally overriden by settings
-
-   short2 m_oldMousePos;
 
    string m_image;
    string m_playfieldMaterial;
@@ -677,9 +662,6 @@ public:
 
    string m_envImage;
 
-   vector<IEditable *> m_vedit;
-   vector<ISelect *> m_allHitElements;
-
    vector<Texture *> m_vimage;
    vector<Texture *> m_vliveimage;
    const vector<Texture *> &GetImageList() const { return m_vimage; }
@@ -689,10 +671,6 @@ public:
    const vector<Material *> &GetMaterialList() const { return m_materials; }
 
    vector<VPX::Sound *> m_vsound;
-
-   vector<PinFont *> m_vfont;
-
-   VectorProtected<CComObject<Collection>> m_vcollection;
 
    vector<RenderProbe *> m_vrenderprobe;
    void RemoveRenderProbe(RenderProbe *pb) { std::erase(m_vrenderprobe, pb); }
@@ -712,9 +690,9 @@ public:
 
    FRect m_rcDragRect; // Multi-select
 
-   PinUndo m_undo;
-
-   CComObject<CodeViewer> *m_pcv;
+   string m_original_table_script; // Script defined in the loaded file
+   std::filesystem::path m_external_script_name; // if defined, file that override internal script
+   string m_script_text; // Actual script (either a copy of the original or the one loaded from the override file)
 
    CComObject<class ScriptGlobalTable> *m_psgt; // Object to expose to script for global functions
 
@@ -740,8 +718,6 @@ public:
    vector<string> m_vCustomInfoTag;
    vector<string> m_vCustomInfoContent;
 
-   vector<HANDLE> m_vAsyncHandles;
-
    LightSource m_Light[MAX_LIGHT_SOURCES];
    COLORREF m_lightAmbient;
    float m_lightHeight;
@@ -766,25 +742,11 @@ public:
    bool m_enableSSR;
    float m_bloom_strength;
 
-   SearchSelectDialog m_searchSelectDlg;
-
    volatile std::atomic<bool> m_savingActive = false;
 
    bool m_renderSolid = true;
-
-   bool m_grid = true; // Display grid or not
-   bool m_backdrop = true;
    bool m_renderDecals = true;
    bool m_renderEMReels = true;
-
-   void OnInitialUpdate() final;
-   LRESULT WndProc(UINT uMsg, WPARAM wParam, LPARAM lParam) final;
-   BOOL OnEraseBkgnd(CDC &dc) final;
-
-   void SetMouseCursor();
-   void OnLeftButtonDown(const short x, const short y);
-   void OnMouseWheel(const short x, const short y, const short zDelta);
-   void OnSize();
    int GetGlobalEmissionScale() const;
    void SetGlobalEmissionScale(const int value);
    float GetGlobalDifficulty() const;
@@ -806,12 +768,6 @@ public:
    float GetPlayfieldSlope() const;
    float GetPlayfieldOverridenSlope() const;
 
-   void SetMDITable(PinTableMDI *const table) { m_mdiTable = table; }
-   PinTableMDI *GetMDITable() const { return m_mdiTable; }
-
-   const WCHAR *GetCollectionNameByElement(const ISelect *const element) const;
-   void RefreshProperties();
-
    void SetNotesText(const string &text)
    {
       m_notesText = text;
@@ -824,24 +780,29 @@ public:
    float GetExposure() const { return m_exposure; }
    void SetExposure(const float exposure) { m_exposure = exposure; }
 
+   void SetupLookUpTables(bool isPlaying);
+
+   // Win32 editor state which is persisted in the table file
+   Vertex2D m_winEditorViewOffset;
+   float m_winEditorZoom = 1.f;
+   bool m_winEditorGrid = true;
+   bool m_winEditorBackdrop = true;
+
 private:
    unsigned int m_tablelocked = 0;
 
-   PinTableMDI *m_mdiTable = nullptr;
    string m_notesText;
    ankerl::unordered_dense::map<string, Texture *, StringHashFunctor, StringComparator> m_textureMap; // hash table to speed up texture lookup by name
    ankerl::unordered_dense::map<string, Material *, StringHashFunctor, StringComparator> m_materialMap; // hash table to speed up material lookup by name
    ankerl::unordered_dense::map<string, Light *, StringHashFunctor, StringComparator> m_lightMap; // hash table to speed up light lookup by name
    ankerl::unordered_dense::map<string, RenderProbe *, StringHashFunctor, StringComparator> m_renderprobeMap; // hash table to speed up renderprobe lookup by name
-   bool m_moving = false;
 
    PinBinary *m_pbTempScreenshot = nullptr; // Holds contents of screenshot image until the image asks for it
    int m_loadTemp[5] = { 0, 0, 0, 0, 0 }; // Used to temporarily store the number of elements loaded for each type (subobjects, sounds, textures, fonts, collections) during loading phase
 
-   ankerl::unordered_dense::set<std::string> m_loggedSoundErrors;
+   vector<PinFont *> m_vfont;
 
-   bool m_dirtyDraw = true; // Whether our background bitmap is up to date
-   HBITMAP m_hbmOffScreen = nullptr; // Buffer for drawing the editor window
+   ankerl::unordered_dense::set<std::string> m_loggedSoundErrors;
 
    ToneMapper m_toneMapper = ToneMapper::TM_AGX;
    float m_exposure = 1.f;

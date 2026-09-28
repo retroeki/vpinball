@@ -10,7 +10,7 @@
  * - Class_Initialize and Class_Terminate bodies
  */
 
-#include "stdafx.h"
+#include "core/stdafx.h"
 
 #ifdef __STANDALONE__
 

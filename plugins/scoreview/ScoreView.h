@@ -10,21 +10,25 @@
 #include <unordered_dense.h>
 
 namespace ScoreView {
-   
-class vec2i
+
+LPI_USE_CPP();
+#ifndef LOGD
+#define LOGD LPI_LOGD_CPP
+#define LOGI LPI_LOGI_CPP
+#define LOGW LPI_LOGW_CPP
+#define LOGE LPI_LOGE_CPP
+#endif
+
+class ivec2 final
 {
 public:
-   constexpr vec2i() { }
-   constexpr vec2i(const int _x, const int _y)
-      : x(_x)
-      , y(_y)
-   {
-   }
+   constexpr ivec2() { }
+   constexpr ivec2(const int _x, const int _y) : x(_x), y(_y) { }
 
    int x, y;
 };
 
-class vec3
+class vec3 final
 {
 public:
    constexpr vec3() { }
@@ -38,7 +42,7 @@ public:
    float x, y, z;
 };
 
-class vec4
+class vec4 final
 {
 public:
    constexpr vec4() { }
@@ -61,13 +65,13 @@ public:
 
    bool HasLayouts() const { return !m_layouts.empty(); }
    bool IsMatched() const { return m_bestLayout != nullptr && m_bestLayout->unmatchedVisuals == 0; }
-   void Load(const string& path);
+   void Load(const std::filesystem::path& path);
    void Reset() { m_layouts.clear(); }
 
    bool Render(VPXRenderContext2D* ctx);
 
 private:
-   void Parse(const std::filesystem::path& path, std::istream& content);
+   void Parse(const std::filesystem::path& path);
    void Select(const float scoreW, const float scoreH);
 
    enum Fit
@@ -80,7 +84,7 @@ private:
    };
    enum VisualType
    {
-      DMD, SegDisplay, Image
+      DMD, Screen, SegDisplay, Image
    };
    struct Visual
    {
@@ -101,12 +105,16 @@ private:
       VPXSegDisplayHint segFamilyHint;
       int nElements;
       std::vector<float> xOffsets;
-      // For DMD displays
-      vec2i dmdSize;
+      // For DMD & screen displays
+      ivec2 displaySize;
       // Live data (not serialized)
       VPXTexture glass;
       VPXTexture dmdTex;
       int liveStyle;
+      // Identity of the frame last uploaded to dmdTex, to avoid a full copy plus a GPU re-upload every frame
+      DisplaySrcId uploadedSrc;
+      unsigned int uploadedFrameId;
+      bool hasUploadedFrame;
    };
    struct Layout
    {
@@ -129,7 +137,7 @@ private:
    bool m_lastReelAvailable = false;
    Layout* m_bestLayout = nullptr;
 
-   ResURIResolver m_resURIResolver;
+   PinballPlugin::ResURIResolver m_resURIResolver;
 
    void LoadGlass(Visual& visual);
    ankerl::unordered_dense::map<string, VPXTexture> m_images;

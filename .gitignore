@@ -15,7 +15,6 @@ fastlane/
 
 tmp
 
-CMakeLists.txt
 external
 third-party/*
 
@@ -31,4 +30,6 @@ VisualPinball.sln
 /*.vcxproj
 /*.vcxproj.filters
 /.build
+
+/.cache/
 nul

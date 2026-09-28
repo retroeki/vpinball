@@ -36,15 +36,11 @@ typedef enum {
 } VPINBALL_VIEW_MODE;
 
 typedef enum {
-   VPINBALL_EVENT_LOADING_ITEMS,
-   VPINBALL_EVENT_LOADING_SOUNDS,
-   VPINBALL_EVENT_LOADING_IMAGES,
-   VPINBALL_EVENT_LOADING_FONTS,
-   VPINBALL_EVENT_LOADING_COLLECTIONS,
+   VPINBALL_EVENT_INIT_COMPLETE,
+   VPINBALL_EVENT_EXTRACT_SCRIPT,
+   VPINBALL_EVENT_LOADING,
    VPINBALL_EVENT_PRERENDERING,
    VPINBALL_EVENT_PLAYER_STARTED,
-   VPINBALL_EVENT_RUMBLE,
-   VPINBALL_EVENT_SCRIPT_ERROR,
    VPINBALL_EVENT_PLAYER_CLOSED,
    VPINBALL_EVENT_WEB_SERVER,
    VPINBALL_EVENT_COMMAND,
@@ -55,20 +51,28 @@ typedef enum {
    VPINBALL_EVENT_WEB_UPLOAD
 } VPINBALL_EVENT;
 
+typedef enum {
+   VPINBALL_PATH_ROOT,
+   VPINBALL_PATH_TABLES,
+   VPINBALL_PATH_PREFERENCES,
+   VPINBALL_PATH_ASSETS
+} VPINBALL_PATH;
+
 // Callbacks
 
 typedef void (*VPinballEventCallback)(VPINBALL_EVENT, const char*);
+typedef void (*VPinballRumbleCallback)(float lowFrequencySpeed, float highFrequencySpeed, unsigned int durationMs);
+typedef void (*VPinballZipCallback)(int current, int total, const char* filename);
 
 // Functions
 
 VPINBALLAPI const char* VPinballGetVersionStringFull();
-VPINBALLAPI void VPinballInit(VPinballEventCallback callback);
+VPINBALLAPI void VPinballInit(VPinballEventCallback eventCallback, VPinballRumbleCallback rumbleCallback);
 VPINBALLAPI void VPinballInitHeadless(VPinballEventCallback callback);  // Init without SDL main thread (for services)
 VPINBALLAPI void VPinballUpdateEventCallback(VPinballEventCallback callback);  // Update callback without reinit
 VPINBALLAPI void VPinballShutdown();  // Clean up all state for fresh reinit
 VPINBALLAPI int VPinballIsInitialized();  // Check if already initialized
 VPINBALLAPI void VPinballLog(VPINBALL_LOG_LEVEL level, const char* message);
-VPINBALLAPI void VPinballResetLog();
 
 // Settings
 
@@ -88,11 +92,15 @@ VPINBALLAPI VPINBALL_STATUS VPinballResetTableIni();
 VPINBALLAPI void VPinballUpdateWebServer();
 VPINBALLAPI void VPinballRefreshWebServer();
 
+// Paths
+
+VPINBALLAPI const char* VPinballGetPath(VPINBALL_PATH pathType);
+
 // Player
 
 VPINBALLAPI VPINBALL_STATUS VPinballLoadTable(const char* pPath);
 VPINBALLAPI void VPinballCancelLoading();
-VPINBALLAPI VPINBALL_STATUS VPinballExtractTableScript();
+VPINBALLAPI VPINBALL_STATUS VPinballExtractTableScript(const char* pPath);
 VPINBALLAPI VPINBALL_STATUS VPinballPlay();
 VPINBALLAPI VPINBALL_STATUS VPinballStop();
 VPINBALLAPI VPINBALL_STATUS VPinballPause();
@@ -208,3 +216,7 @@ VPINBALLAPI VPINBALL_STATUS VPinballSetSwitch(int switchNum, int state);
 // open or closed in the ROM's view.
 VPINBALLAPI int VPinballGetSwitch(int switchNum);
 
+// Zip
+
+VPINBALLAPI VPINBALL_STATUS VPinballZipCreate(const char* pSourcePath, const char* pDestPath, VPinballZipCallback callback);
+VPINBALLAPI VPINBALL_STATUS VPinballZipExtract(const char* pSourcePath, const char* pDestPath, VPinballZipCallback callback);

@@ -16,8 +16,7 @@ Scene::Scene(FlexDMD* pFlexDMD, AnimationType animateIn, float pauseS, Animation
 
 Scene::~Scene()
 {
-   for (auto it = m_tweens.begin(); it != m_tweens.end();)
-      m_tweens.erase(it);
+   m_tweens.clear();
 }
 
 void Scene::OnStageStateChanged()
@@ -38,8 +37,7 @@ void Scene::UpdateState()
    }
    else if (!shouldBeActive && m_active) {
       m_active = false;
-      for (auto it = m_tweens.begin(); it != m_tweens.end();)
-         m_tweens.erase(it);
+      m_tweens.clear();
    }
 }
 
@@ -182,7 +180,7 @@ float Scene::StartAnimation(AnimationType animation)
       case AnimationType_None:
          return 0.0f;
       default:
-         LOGE("Unsupported animation in scene '%s': %d", GetName().c_str(), animation);
+         LOGE("Unsupported animation in scene '" + GetName() + "': " + std::to_string(animation));
          return 0.0f;
    }
 }
@@ -197,9 +195,9 @@ void Scene::Update(float secondsElapsed)
    for (auto it = m_tweens.begin(); it != m_tweens.end();) {
       it->step((int)(secondsElapsed * 1000.0f));
       if (it->progress() >= 1.0f)
-         m_tweens.erase(it);
+         it = m_tweens.erase(it);
       else
-        ++it;
+         ++it;
    }
 }
 

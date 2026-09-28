@@ -40,7 +40,7 @@ public:
 
    PropId Register(std::unique_ptr<PropertyDef> prop)
    {
-      const string& id = prop->m_groupId + '.' + prop->m_propId;
+      const string id = prop->m_groupId + '.' + prop->m_propId;
       const auto it = m_idToIndexMap.find(id);
       PropId propId;
       if (it != m_idToIndexMap.end())
@@ -50,7 +50,10 @@ public:
          if (*existing == *prop)
             return propId;
          // Dynamic properties must be epxlicitely defined to allow correct handling (saving without a stable default for example)
-         assert(prop->m_contextualProperty);
+         // Redefining is also allowed when the existing definition is contextual: it may be a placeholder registered
+         // before its owner defines it (e.g. mobile UI reading a plugin setting before the plugin is loaded)
+         assert(prop->m_contextualProperty || existing->m_contextualProperty);
+         assert(GetStoreType(prop->m_type) == propId.type);
          switch (propId.type)
          {
          case StoreType::Float: m_floatProperties[propId.index] = std::move(prop); break;

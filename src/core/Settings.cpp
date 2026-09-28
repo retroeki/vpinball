@@ -60,7 +60,8 @@ void Settings::Set(VPX::Properties::PropertyRegistry::PropId propId, float v, bo
 
 void Settings::Set(VPX::Properties::PropertyRegistry::PropId propId, int v, bool asTableOverride)
 {
-   assert(GetRegistry().GetProperty(propId)->m_type == VPX::Properties::PropertyDef::Type::Int || GetRegistry().GetProperty(propId)->m_type == VPX::Properties::PropertyDef::Type::Enum);
+   assert(GetRegistry().GetProperty(propId)->m_type == VPX::Properties::PropertyDef::Type::Int || GetRegistry().GetProperty(propId)->m_type == VPX::Properties::PropertyDef::Type::Enum
+      || GetRegistry().GetProperty(propId)->m_type == VPX::Properties::PropertyDef::Type::Bool);
    if (asTableOverride)
    {
       assert(m_parent != nullptr);
@@ -115,12 +116,12 @@ void Settings::Set(VPX::Properties::PropertyRegistry::PropId propId, const strin
    }
 }
 
-void Settings::SetIniPath(const string &path)
+void Settings::SetIniPath(const std::filesystem::path &path)
 {
    m_store.SetIniPath(path);
 }
 
-const string& Settings::GetIniPath() const
+const std::filesystem::path& Settings::GetIniPath() const
 {
    return m_store.GetIniPath();
 }
@@ -134,6 +135,7 @@ void Settings::UpdateDefaults()
    auto& reg = GetRegistry();
 
    // Windows default depends on the display device specs
+   SDL_InitSubSystem(SDL_INIT_VIDEO);
    for (int i = 0; i < 4; i++)
    {
       VPX::RenderOutput::OutputMode mode = i == VPXWindowId::VPXWINDOW_Playfield ? VPX::RenderOutput::OutputMode::OM_WINDOW : (VPX::RenderOutput::OutputMode)GetWindow_Mode(i);
@@ -148,22 +150,28 @@ void Settings::UpdateDefaults()
             break;
 
          const auto& conf = VPX::Window::GetDisplayConfig(GetWindow_Display(i));
-         reg.Register(GetWindow_FSWidth_Property(i)->WithDefault(conf.width));
-         reg.Register(GetWindow_FSHeight_Property(i)->WithDefault(conf.height));
-         reg.Register(GetWindow_Width_Property(i)->WithDefault(i == 0 ? conf.width : (conf.width / 4)));
-         reg.Register(GetWindow_Height_Property(i)->WithDefault(i == 0 ? conf.height : min(conf.width * 4 / 9, conf.height)));
+         reg.Register(GetWindow_FSWidth_Property(i)->WithDefault(conf.videomode.GetPixelWidth()));
+         reg.Register(GetWindow_FSHeight_Property(i)->WithDefault(conf.videomode.GetPixelHeight()));
+         reg.Register(GetWindow_Width_Property(i)->WithDefault(i == 0 ? conf.videomode.GetPixelWidth() : (conf.videomode.GetPixelWidth() / 4)));
+         reg.Register(GetWindow_Height_Property(i)->WithDefault(i == 0 ? conf.videomode.GetPixelHeight() : min(conf.videomode.GetPixelWidth() * 4 / 9, conf.videomode.GetPixelHeight())));
          break;
       }
       case VPX::RenderOutput::OutputMode::OM_EMBEDDED:
       {
+         #ifdef ENABLE_BGFX
+         const auto w = GetWindow_Width(VPXWindowId::VPXWINDOW_Playfield);
+         const auto h = GetWindow_Height(VPXWindowId::VPXWINDOW_Playfield);
+         #else
          const auto w = GetWindow_FullScreen(VPXWindowId::VPXWINDOW_Playfield) ? GetWindow_FSWidth(VPXWindowId::VPXWINDOW_Playfield) : GetWindow_Width(VPXWindowId::VPXWINDOW_Playfield);
          const auto h = GetWindow_FullScreen(VPXWindowId::VPXWINDOW_Playfield) ? GetWindow_FSHeight(VPXWindowId::VPXWINDOW_Playfield) : GetWindow_Height(VPXWindowId::VPXWINDOW_Playfield);
+         #endif
          reg.Register(GetWindow_Width_Property(i)->WithDefault(w / 4));
          reg.Register(GetWindow_Height_Property(i)->WithDefault(min(w * 4 / 9, h)));
          break;
       }
       }
    }
+   SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
 void Settings::Reset() { m_store.Reset(); }
@@ -179,8 +187,6 @@ bool Settings::Load(const bool createDefault)
    else if (createDefault)
    {
       PLOGI << "Settings file was not found at '" << m_store.GetIniPath() << "', creating a default one";
-
-      // Load failed: generate a default setting file
       try
       {
          m_store.GenerateTemplate(m_store.GetIniPath());
@@ -193,84 +199,6 @@ bool Settings::Load(const bool createDefault)
       {
          PLOGE << "Loading of default settings file failed";
       }
-
-      #ifdef _WIN32
-      /*
-      // For Windows, get settings values from windows registry (which was used to store settings before 10.8)
-      for (unsigned int j = 0; j < Section::Plugin00; j++)
-      {
-         // We do not save version of played tables in the ini file
-         if (j == Section::Version)
-            continue;
-
-         const string regpath = (j == Section::Controller ? "Software\\Visual Pinball\\" : "Software\\Visual Pinball\\VP10\\") + m_settingKeys[j];
-
-         HKEY hk;
-         LSTATUS res = RegOpenKeyEx(HKEY_CURRENT_USER, regpath.c_str(), 0, KEY_READ, &hk);
-         if (res != ERROR_SUCCESS)
-            continue;
-
-         for (DWORD Index = 0;; ++Index)
-         {
-            DWORD dwSize = MAX_PATH;
-            TCHAR szName[MAX_PATH];
-            res = RegEnumValue(hk, Index, szName, &dwSize, nullptr, nullptr, nullptr, nullptr);
-            if (res == ERROR_NO_MORE_ITEMS)
-               break;
-            if (res != ERROR_SUCCESS || dwSize == 0 || szName[0] == '\0')
-               continue;
-
-            BYTE pvalue[MAXSTRING];
-            dwSize = std::size(pvalue);
-            DWORD type = REG_NONE;
-            res = RegQueryValueEx(hk, szName, nullptr, &type, pvalue, &dwSize);
-            if (res != ERROR_SUCCESS)
-            {
-               PLOGI << "Settings '" << m_settingKeys[j] << '/' << szName << "' was not imported. Failure cause: failed to get value";
-               continue;
-            }
-
-            // old Win32xx and Win32xx 9+ docker keys
-            if ((char *)pvalue == "Dock Windows"s) // should not happen, as a folder, not value.. BUT also should save these somehow and restore for Win32++, or not ?
-               continue;
-            if ((char *)pvalue == "Dock Settings"s) // should not happen, as a folder, not value.. BUT also should save these somehow and restore for Win32++, or not ?
-               continue;
-
-            string copy;
-            if (type == REG_SZ)
-               copy = reinterpret_cast<char*>(pvalue);
-            else if (type == REG_DWORD)
-               copy = std::to_string(*reinterpret_cast<uint32_t *>(pvalue));
-            else
-            {
-               continue;
-               assert(!"Bad Registry Key");
-            }
-
-            string name(szName);
-            if (!m_ini[m_settingKeys[j]].has(name))
-            {
-               // Search for a case insensitive match
-               for (const auto& item : m_ini[m_settingKeys[j]])
-               {
-                  if (StrCompareNoCase(name, item.first))
-                  {
-                     name = item.first;
-                     break;
-                  }
-               }
-            }
-
-            if (m_ini[m_settingKeys[j]].has(name))
-               m_ini[m_settingKeys[j]][name] = copy;
-            else
-            {
-               PLOGI << "Settings '" << m_settingKeys[j] << '/' << szName << "' was not imported (value in registry: " << copy << "). Failure cause: name not found";
-            }
-         }
-         RegCloseKey(hk);
-      }*/
-      #endif
       UpdateDefaults();
       return true;
    }
@@ -330,7 +258,7 @@ void Settings::Load(const Settings &settings)
 
 #define PropFloatStepped(groupId, propId, label, comment, minVal, maxVal, step, defVal) PropFloatBase(groupId, propId, label, comment, false, minVal, maxVal, step, defVal)
 #define PropFloatSteppedDyn(groupId, propId, label, comment, minVal, maxVal, step, defVal) PropFloatBase(groupId, propId, label, comment, true, minVal, maxVal, step, defVal)
-#define PropFloatUnbounded(groupId, propId, label, comment, defVal) PropFloatBase(groupId, propId, label, comment, false, FLT_MIN, FLT_MAX, 0.f, defVal)
+#define PropFloatUnbounded(groupId, propId, label, comment, defVal) PropFloatBase(groupId, propId, label, comment, false, -FLT_MAX, FLT_MAX, 0.f, defVal)
 #define PropFloat(groupId, propId, label, comment, minVal, maxVal, defVal) PropFloatBase(groupId, propId, label, comment, false, minVal, maxVal, 0.f, defVal)
 #define PropFloatDyn(groupId, propId, label, comment, minVal, maxVal, defVal) PropFloatBase(groupId, propId, label, comment, true, minVal, maxVal, 0.f, defVal)
 
